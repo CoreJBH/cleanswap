@@ -22,7 +22,7 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
 
     private static final String APP_URL = "file:///android_asset/index.html";
-    private static final int BG = 0xFF040E09;
+    private static final int BG = 0xFF07130D;
 
     private WebView web;
 

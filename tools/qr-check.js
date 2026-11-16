@@ -17,9 +17,13 @@ const texts = [
   ['liquidnetwork:lq1qq' + 'x'.repeat(60) + '?amount=45.00', 'M'],
   ['lq1' + 'q'.repeat(100), 'M'],
   ['https://example.org/pay?to=' + 'z'.repeat(40), 'M'],
-  /* a full-length BOLT11 hold invoice: exercises version 10 at level L,
-     which is what the app falls back to when a request is too long for M */
-  ['lnbc500u1p4' + 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'.repeat(8), 'L']
+  /* a full-length BOLT11 hold invoice: exercises the interleaved blocks at
+     level L, which is what the app falls back to when a request is too long */
+  ['lnbc500u1p4' + 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'.repeat(8), 'L'],
+  /* BOLT12 lengths: a swap offer sits near the level-M ceiling and a
+     full invoice near the level-L ceiling (versions 12-13) */
+  ['lno1' + 'q'.repeat(240), 'M'],
+  ['lni1' + 'q'.repeat(320), 'L']
 ];
 let seq = 0;
 for (const [text, level] of texts) {

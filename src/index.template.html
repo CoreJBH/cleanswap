@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#040e09">
+<meta name="theme-color" content="#07130d">
 <meta name="application-name" content="CLEANSWAP">
 <meta name="description" content="Non-custodial Lightning bitcoin to USDT atomic swap prototype with a real hashlock escrow simulator.">
 <meta name="apple-mobile-web-app-title" content="CLEANSWAP">
@@ -19,7 +19,7 @@
 <div class="wrap">
 
   <header class="top">
-    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="28" height="28"><span>CLEANSWAP</span><em class="ver">v0.2</em></div>
+    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="30" height="30"><span>CLEANSWAP</span></div>
     <div class="seg" role="group" aria-label="Escrow mode">
       <button id="modePractice" data-act="mode" data-v="practice" class="on" type="button">Practice</button>
       <button id="modeWallet" data-act="mode" data-v="wallet" type="button">Wallet</button>
@@ -39,12 +39,12 @@
 
       <article class="card" id="cardBtc">
         <div class="head">
-          <span class="lbl">Bitcoin · Lightning</span>
+          <span class="lbl">Lightning BTC</span>
           <span class="chip" id="chipBtc"><i></i><em id="chipBtcTxt">Unlocked</em></span>
         </div>
-        <div class="amt"><b class="mono" id="btcAmt">50,000</b><span>sats</span></div>
+        <div class="amt"><b id="btcAmt">50,000</b><span>sats</span></div>
         <div class="sub" id="btcSub">≈ 47.52 USDT at the live rate</div>
-        <div class="tl">
+        <div class="tl" id="t1Row">
           <div class="tl-row"><span>T1 · block <b class="mono" id="t1H">—</b></span><b class="mono" id="t1Left">—</b></div>
           <div class="meter" id="t1Meter"><i id="t1Bar"></i></div>
         </div>
@@ -56,17 +56,18 @@
           <span class="rail-line"><i id="railFill"></i></span>
           <span class="lk" id="lkUsdt"><i></i>USDT</span>
         </div>
+        <button class="swapdir" id="swapDir" data-act="direction" data-v="toggle" type="button" aria-label="Switch direction">⇅</button>
         <p class="rail-state" id="railState">Neither side locked</p>
       </div>
 
       <article class="card" id="cardUsdt">
         <div class="head">
-          <span class="lbl">USDT · escrow contract</span>
+          <span class="lbl">USDT</span>
           <span class="chip" id="chipUsdt"><i></i><em id="chipUsdtTxt">Unlocked</em></span>
         </div>
-        <div class="amt"><b class="mono" id="usdtAmt">—</b><span>USDT</span></div>
-        <div class="sub" id="usdtSub">Liquid / EVM escrow, same hashlock</div>
-        <div class="tl">
+        <div class="amt"><b id="usdtAmt">—</b><span>USDT</span></div>
+        <div class="sub" id="usdtSub">≈ 50,000 sats</div>
+        <div class="tl" id="t2Row">
           <div class="tl-row"><span>T2 · unix <b class="mono" id="t2U">—</b></span><b class="mono" id="t2Left">—</b></div>
           <div class="meter" id="t2Meter"><i id="t2Bar"></i></div>
         </div>
@@ -79,7 +80,7 @@
         <span class="actor" id="stepActor">You · bitcoin side</span>
       </div>
       <h2 class="step-title" id="stepTitle">Choose an amount</h2>
-      <p class="step-desc" id="stepDesc">Open a swap, then lock each side against the same hashlock before any value can move.</p>
+      <p class="step-desc" id="stepDesc"></p>
 
       <div class="panel" id="pCreate">
         <div class="presets" id="presets">
@@ -88,39 +89,33 @@
           <button data-act="sats" data-v="100000" type="button">100,000</button>
           <button data-act="sats" data-v="250000" type="button">250,000</button>
         </div>
+        <label class="fl" for="swapIn" id="swapRow" hidden>Offer or invoice from the other side</label>
+        <textarea class="input" id="swapIn" rows="3" hidden placeholder="lno1… / lni1… / lnbc… — the app reads both" autocomplete="off" spellcheck="false"></textarea>
         <ol class="howto">
-          <li><b>1</b><span>The bitcoin side picks a secret <code>R</code> and publishes <code>H = SHA256(R)</code>.</span></li>
-          <li><b>2</b><span>The USDT side mints a hold invoice for that <code>H</code>; bitcoin locks into its HTLC.</span></li>
-          <li><b>3</b><span>USDT locks in escrow; revealing <code>R</code> settles both legs, expiry refunds them.</span></li>
+          <li><b>1</b><span>Pick an amount and open the swap.</span></li>
+          <li><b>2</b><span>Lock both sides against the same secret.</span></li>
+          <li><b>3</b><span>Reveal the secret, both legs settle.</span></li>
         </ol>
       </div>
 
       <div class="panel" id="pInvoice" hidden>
-        <label class="fl" for="invIn">Hold invoice from the USDT side</label>
-        <textarea class="input" id="invIn" rows="3" placeholder="lnbc500u1… (BOLT11 with payment_hash = H)" autocomplete="off" spellcheck="false"></textarea>
-
-        <div class="tools" id="invTools">
-          <button class="btn ghost sm" data-act="copyCounter" type="button">Copy invoice</button>
-          <button class="btn ghost sm" data-act="fillCounter" type="button">Use invoice</button>
-          <button class="btn ghost sm" data-act="fillWrong" type="button">Try a mismatched one</button>
+        <textarea class="input" id="invIn" rows="3" placeholder="lno1… / lni1… / lnbc… — the app reads both" autocomplete="off" spellcheck="false"></textarea>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="fillOffer" type="button">Use sample offer</button>
+          <button class="btn ghost sm" data-act="wrongOffer" type="button">Try a mismatched one</button>
         </div>
 
-        <div class="src" id="counterSrc">
-          <span>Counterparty hold invoice</span>
-          <code class="mono clamp" id="counterInv">—</code>
-        </div>
+        <label class="fl" for="receiptIn" id="receiptLbl">Wallet receipt · payment hash</label>
+        <input class="input mono" id="receiptIn" placeholder="the hash your wallet shows after paying" autocomplete="off" spellcheck="false" hidden>
 
-        <label class="fl" for="receiptIn" id="receiptLbl">Wallet receipt · payment_hash</label>
-        <input class="input mono" id="receiptIn" placeholder="the hash your wallet shows after paying" autocomplete="off" spellcheck="false">
-
-        <div class="wrow" id="wRow">
-          <a class="btn ghost" id="walletLink" href="#dTech">Open in wallet</a>
-          <button class="btn ghost" data-act="qrInv" type="button">QR</button>
+        <div class="wrow" id="wRow" hidden>
+          <a class="btn ghost" id="walletLink" href="#">Open in wallet</a>
+          <button class="btn ghost" data-act="qrIn" type="button">QR</button>
           <button class="btn ghost" data-act="webln" id="btnWebln" type="button">Pay with WebLN</button>
         </div>
-        <div class="qrbox" id="qrInvBox"></div>
+        <div class="qrbox" id="qrInBox"></div>
 
-        <div class="share" id="shareRow">
+        <div class="share" id="shareRow" hidden>
           <span class="share-h">Invite the USDT side</span>
           <code class="mono clamp" id="shareLink">—</code>
           <div class="tools">
@@ -132,36 +127,28 @@
       </div>
 
       <div class="panel" id="pIssue" hidden>
-        <p class="hint">Mint a BOLT11 hold invoice for this swap: same <code>H</code>, same amount, one hour to expire. The bitcoin side pays it, so the HTLC can only be settled with <code>R</code>.</p>
         <code class="out mono" id="issueOut">—</code>
         <div class="tools">
-          <button class="btn ghost sm" data-act="copyMine" type="button">Copy invoice</button>
-          <button class="btn ghost sm" data-act="qrMine" type="button">QR</button>
-          <button class="btn ghost sm" data-act="regenMine" type="button">Re-mint</button>
+          <button class="btn ghost sm" data-act="qrOut" type="button">QR</button>
         </div>
-        <div class="qrbox" id="qrMineBox"></div>
+        <div class="qrbox" id="qrOutBox"></div>
       </div>
 
       <div class="panel" id="pProof" hidden>
-        <label class="fl" for="proofIn">USDT escrow proof</label>
-        <textarea class="input" id="proofIn" rows="3" placeholder="0x91644b2b… lock() calldata, a swap JSON record, lq1… lock URI or the lock tx hash" autocomplete="off" spellcheck="false"></textarea>
+        <textarea class="input" id="proofIn" rows="3" placeholder="Escrow proof from the USDT side" autocomplete="off" spellcheck="false"></textarea>
         <div class="tools">
-          <button class="btn ghost sm" data-act="genProof" type="button">Generate escrow lock</button>
-          <button class="btn ghost sm" data-act="copyProof" type="button">Copy</button>
-          <button class="btn ghost sm" data-act="fillWrongProof" type="button">Try a mismatched lock</button>
-        </div>
-        <div class="expect">
-          Expects hashlock <code class="mono" id="expH">—</code> · timelock <code class="mono" id="expT2">—</code> · <code class="mono" id="expAmt">—</code> USDT
+          <button class="btn ghost sm" data-act="fillProof" type="button">Generate escrow lock</button>
+          <button class="btn ghost sm" data-act="wrongProof" type="button">Try a mismatched lock</button>
         </div>
       </div>
 
       <div class="panel" id="pClaim" hidden>
         <label class="fl" for="preIn">Preimage R <span class="mini" id="preHint"></span></label>
-        <input class="input mono" id="preIn" placeholder="64 hex characters — the secret behind H" autocomplete="off" spellcheck="false">
+        <input class="input mono" id="preIn" placeholder="The secret behind H" autocomplete="off" spellcheck="false">
         <div class="tools">
           <button class="btn ghost sm" data-act="reveal" type="button">Reveal my secret</button>
           <button class="btn ghost sm" data-act="fillPre" type="button">Use it</button>
-          <button class="btn ghost sm" data-act="fillWrongPre" type="button">Try a wrong R</button>
+          <button class="btn ghost sm" data-act="wrongPre" type="button">Try a wrong R</button>
         </div>
         <div class="seal" id="seal" hidden><span>Sealed on this device</span><code class="mono" id="sealR">—</code></div>
       </div>
@@ -172,74 +159,13 @@
       </div>
     </section>
 
-    <details class="tech" id="dTech">
-      <summary><span>Swap parameters, requests and contract</span><span class="chev">›</span></summary>
-      <div class="body">
+    <div class="history" id="history" hidden>
+      <p class="hist-h">Recent swaps</p>
+      <p class="hint" id="histEmpty">Nothing settled yet.</p>
+      <div id="histList"></div>
+    </div>
 
-        <h2 class="sect">Swap parameters</h2>
-        <div class="kv">
-          <div><span class="k">hashlock H</span><span class="v mono" id="vH">—</span></div>
-          <div><span class="k">preimage R</span><span class="v mono" id="vR">—</span></div>
-          <div><span class="k">timelock T1 · lightning</span><span class="v mono" id="vT1">—</span></div>
-          <div><span class="k">timelock T2 · USDT</span><span class="v mono" id="vT2">—</span></div>
-          <div><span class="k">swapId</span><span class="v mono" id="vId">—</span></div>
-          <div><span class="k">rate</span><span class="v" id="vRate">—</span></div>
-          <div><span class="k">share link</span><span class="v mono" id="vLink">—</span></div>
-        </div>
-
-        <h2 class="sect">Event log</h2>
-        <ol class="log" id="log"></ol>
-
-        <h2 class="sect">Payment request decoder</h2>
-        <p class="hint">Paste any BOLT11 invoice (<code>lnbc…</code>, <code>lntb…</code>, <code>lnbcrt…</code>) or BOLT12 offer (<code>lno1…</code>). The decoder is local: bech32 checksum, 35-bit timestamp, tagged fields.</p>
-        <label class="fl" for="invoice">payment request
-          <input class="input mono" id="invoice" placeholder="lnbc… / lntb… / lno1… / lightning:…" autocomplete="off" spellcheck="false">
-        </label>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="decode" type="button">Decode</button>
-          <button class="btn ghost sm" data-act="sample11" type="button">BOLT11 sample</button>
-          <button class="btn ghost sm" data-act="sample12" type="button">BOLT12 sample</button>
-        </div>
-        <div class="kv" id="decodeOut"></div>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="copyUri" type="button">Copy lightning: URI</button>
-          <button class="btn ghost sm" data-act="qrUri" type="button">QR</button>
-        </div>
-        <div class="qrbox" id="qrUriBox"></div>
-        <p class="hint">A BOLT12 offer has no <code>payment_hash</code>, so preimage matching only holds with a BOLT11 invoice. BOLT12 is decoded here as the Lexe offer shape.</p>
-        <div class="kv">
-          <div><span class="k">WebLN</span><span class="v" id="weblnInfo">not connected</span></div>
-          <div><span class="k">NWC</span><span class="v" id="nwcInfo">—</span></div>
-        </div>
-        <label class="fl" for="nwcInput">NWC URI<input class="input mono" id="nwcInput" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false"></label>
-        <div class="tools"><button class="btn ghost sm" data-act="nwc" type="button">Parse NWC</button></div>
-
-        <h2 class="sect">USDT request · Liquid</h2>
-        <p class="hint">Give the escrow an address and the app builds an amount-bearing <code>liquidnetwork:</code> request with a QR for AQUA or any Liquid wallet.</p>
-        <label class="fl" for="liquidAddr">Liquid address<input class="input mono" id="liquidAddr" placeholder="lq1… / VJ…" autocomplete="off" spellcheck="false"></label>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="copyAddr" type="button">Copy address</button>
-          <button class="btn ghost sm" data-act="copyReq" type="button">Copy request</button>
-          <button class="btn ghost sm" data-act="qrAddr" type="button">QR</button>
-        </div>
-        <div class="kv"><div><span class="k">request</span><span class="v mono" id="vRequest">—</span></div></div>
-        <div class="qrbox" id="qrAddrBox"></div>
-
-        <h2 class="sect">EVM HTLC · reference</h2>
-        <p class="hint">Optional. The same sha256 hashlock enforced on-chain — solc 0.8.26, runtime about 3.1 KB, no owner and no fees.</p>
-        <label class="fl" for="htlcAddr">HTLC contract<input class="input mono" id="htlcAddr" placeholder="0x… (optional)" autocomplete="off" spellcheck="false"></label>
-        <label class="fl" for="tokenAddr">USDT token<input class="input mono" id="tokenAddr" autocomplete="off" spellcheck="false"></label>
-        <div class="kv"><div><span class="k">next calldata</span><span class="v mono" id="calldata">—</span></div></div>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="copyData" type="button">Copy calldata</button>
-          <button class="btn ghost sm" data-act="copyPayload" type="button">Copy swap JSON</button>
-          <button class="btn ghost sm" data-act="copySol" type="button">Copy contract</button>
-        </div>
-        <pre class="sol" id="solSrc"></pre>
-      </div>
-    </details>
-
-    <p class="foot">No fees · non-custodial · locks are enforced by the timelock, not by trust</p>
+    <p class="foot">No fees · non-custodial · nothing here is a bank</p>
   </main>
 </div>
 
@@ -252,6 +178,12 @@
 </div></div>
 
 <div class="toast" id="toast"></div>
+
+<!-- records kept out of the screen: the event log and the counterparty
+     string live in the DOM (the log is what a support question would ask
+     for) but nothing renders them -->
+<ol class="log" id="log" hidden></ol>
+<code id="counterInv" hidden></code>
 
 <script type="text/plain" id="sol-source">/*__SOL__*/</script>
 <script type="text/plain" id="sample-bolt11">/*__BOLT11__*/</script>
