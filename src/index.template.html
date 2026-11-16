@@ -1,149 +1,253 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#040e09">
 <meta name="application-name" content="CLEANSWAP">
+<meta name="description" content="Non-custodial Lightning bitcoin to USDT atomic swap prototype with a real hashlock escrow simulator.">
 <meta name="apple-mobile-web-app-title" content="CLEANSWAP">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CLEANSWAP — Lightning BTC / USDT atomic swap</title>
 <link rel="icon" type="image/png" sizes="64x64" href="data:image/png;base64,__ICON64__">
 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,__ICON180__">
 <style>/*__CSS__*/</style>
 </head>
-<body data-phase="idle">
+<body data-phase="idle" data-mode="practice" data-role="maker">
 <div class="wrap">
 
   <header class="top">
-    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="28" height="28"><span>CLEANSWAP</span></div>
-    <button class="mode" id="modeBtn" data-act="mode" data-v="practice">연습 모드</button>
+    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="28" height="28"><span>CLEANSWAP</span><em class="ver">v0.2</em></div>
+    <div class="seg" role="group" aria-label="Escrow mode">
+      <button id="modePractice" data-act="mode" data-v="practice" class="on" type="button">Practice</button>
+      <button id="modeWallet" data-act="mode" data-v="wallet" type="button">Wallet</button>
+    </div>
   </header>
 
-  <div class="badge">
-    <span class="dot" id="rateDot"></span>
-    <span class="mono" id="rateTxt">1 BTC ≈ — USDT</span>
+  <div class="meta">
+    <span class="badge"><span class="dot" id="rateDot"></span><span class="mono" id="rateTxt">1 BTC ≈ — USDT</span></span>
+    <span class="badge" id="roleBadge" hidden><span class="dot live"></span><span id="roleTxt">USDT side</span></span>
   </div>
 
-  <h1 class="headline" id="statusTxt">얼마를 교환할까요?</h1>
-  <p class="note" id="note">연습 모드 · 실제 자금이 오가지 않아요</p>
+  <h1 class="headline" id="statusTxt">Swap bitcoin for USDT</h1>
+  <p class="note" id="note">Practice escrow · no real funds move</p>
 
   <main>
-    <section class="trade" aria-label="trade window">
-      <article class="card" id="cardMaker">
+    <section class="board" aria-label="Escrow board">
+
+      <article class="card" id="cardBtc">
         <div class="head">
-          <span class="lbl">보내는 쪽 · 비트코인</span>
-          <span class="chip" id="chipMaker"><i></i><em id="chipMakerTxt">대기 중</em></span>
+          <span class="lbl">Bitcoin · Lightning</span>
+          <span class="chip" id="chipBtc"><i></i><em id="chipBtcTxt">Unlocked</em></span>
         </div>
-        <div class="amt"><b class="mono" id="makerAmt">50,000</b><span>sats</span></div>
-        <div class="sub" id="makerSub">≈ 47.52 USDT</div>
+        <div class="amt"><b class="mono" id="btcAmt">50,000</b><span>sats</span></div>
+        <div class="sub" id="btcSub">≈ 47.52 USDT at the live rate</div>
+        <div class="tl">
+          <div class="tl-row"><span>T1 · block <b class="mono" id="t1H">—</b></span><b class="mono" id="t1Left">—</b></div>
+          <div class="meter" id="t1Meter"><i id="t1Bar"></i></div>
+        </div>
       </article>
 
-      <div class="mid"><span class="line"></span><span class="glyph">동시 교환</span><span class="glyph-v" aria-hidden="true">⇄</span><span class="line"></span></div>
-
-      <article class="card" id="cardTaker">
-        <div class="head">
-          <span class="lbl">받는 쪽 · USDT</span>
-          <span class="chip" id="chipTaker"><i></i><em id="chipTakerTxt">대기 중</em></span>
+      <div class="rail" id="rail">
+        <div class="locks">
+          <span class="lk" id="lkBtc"><i></i>BTC</span>
+          <span class="rail-line"><i id="railFill"></i></span>
+          <span class="lk" id="lkUsdt"><i></i>USDT</span>
         </div>
-        <div class="amt"><b class="mono" id="takerAmt">—</b><span>USDT</span></div>
-        <div class="sub" id="takerSub">Liquid · AQUA 지갑</div>
+        <p class="rail-state" id="railState">Neither side locked</p>
+      </div>
+
+      <article class="card" id="cardUsdt">
+        <div class="head">
+          <span class="lbl">USDT · escrow contract</span>
+          <span class="chip" id="chipUsdt"><i></i><em id="chipUsdtTxt">Unlocked</em></span>
+        </div>
+        <div class="amt"><b class="mono" id="usdtAmt">—</b><span>USDT</span></div>
+        <div class="sub" id="usdtSub">Liquid / EVM escrow, same hashlock</div>
+        <div class="tl">
+          <div class="tl-row"><span>T2 · unix <b class="mono" id="t2U">—</b></span><b class="mono" id="t2Left">—</b></div>
+          <div class="meter" id="t2Meter"><i id="t2Bar"></i></div>
+        </div>
       </article>
     </section>
 
-    <section class="presets" id="presets" aria-label="amount">
-      <button data-act="sats" data-v="10000">10,000</button>
-      <button data-act="sats" data-v="50000" class="on">50,000</button>
-      <button data-act="sats" data-v="100000">100,000</button>
-      <button data-act="sats" data-v="250000">250,000</button>
-    </section>
+    <section class="step" id="step" aria-live="polite">
+      <div class="step-head">
+        <span class="kicker" id="stepKicker">START</span>
+        <span class="actor" id="stepActor">You · bitcoin side</span>
+      </div>
+      <h2 class="step-title" id="stepTitle">Choose an amount</h2>
+      <p class="step-desc" id="stepDesc">Open a swap, then lock each side against the same hashlock before any value can move.</p>
 
-    <div class="walletrow" id="walletRow">
-      <a class="btn ghost" id="openWallet" href="#dTech">라이트닝 결제 요청 열기</a>
-      <button class="btn ghost" data-act="qrAddr">USDT 요청 QR</button>
-    </div>
+      <div class="panel" id="pCreate">
+        <div class="presets" id="presets">
+          <button data-act="sats" data-v="10000" type="button">10,000</button>
+          <button data-act="sats" data-v="50000" class="on" type="button">50,000</button>
+          <button data-act="sats" data-v="100000" type="button">100,000</button>
+          <button data-act="sats" data-v="250000" type="button">250,000</button>
+        </div>
+        <ol class="howto">
+          <li><b>1</b><span>The bitcoin side picks a secret <code>R</code> and publishes <code>H = SHA256(R)</code>.</span></li>
+          <li><b>2</b><span>The USDT side mints a hold invoice for that <code>H</code>; bitcoin locks into its HTLC.</span></li>
+          <li><b>3</b><span>USDT locks in escrow; revealing <code>R</code> settles both legs, expiry refunds them.</span></li>
+        </ol>
+      </div>
+
+      <div class="panel" id="pInvoice" hidden>
+        <label class="fl" for="invIn">Hold invoice from the USDT side</label>
+        <textarea class="input" id="invIn" rows="3" placeholder="lnbc500u1… (BOLT11 with payment_hash = H)" autocomplete="off" spellcheck="false"></textarea>
+
+        <div class="tools" id="invTools">
+          <button class="btn ghost sm" data-act="copyCounter" type="button">Copy invoice</button>
+          <button class="btn ghost sm" data-act="fillCounter" type="button">Use invoice</button>
+          <button class="btn ghost sm" data-act="fillWrong" type="button">Try a mismatched one</button>
+        </div>
+
+        <div class="src" id="counterSrc">
+          <span>Counterparty hold invoice</span>
+          <code class="mono clamp" id="counterInv">—</code>
+        </div>
+
+        <label class="fl" for="receiptIn" id="receiptLbl">Wallet receipt · payment_hash</label>
+        <input class="input mono" id="receiptIn" placeholder="the hash your wallet shows after paying" autocomplete="off" spellcheck="false">
+
+        <div class="wrow" id="wRow">
+          <a class="btn ghost" id="walletLink" href="#dTech">Open in wallet</a>
+          <button class="btn ghost" data-act="qrInv" type="button">QR</button>
+          <button class="btn ghost" data-act="webln" id="btnWebln" type="button">Pay with WebLN</button>
+        </div>
+        <div class="qrbox" id="qrInvBox"></div>
+
+        <div class="share" id="shareRow">
+          <span class="share-h">Invite the USDT side</span>
+          <code class="mono clamp" id="shareLink">—</code>
+          <div class="tools">
+            <button class="btn ghost sm" data-act="copyLink" type="button">Copy link</button>
+            <button class="btn ghost sm" data-act="qrLink" type="button">QR</button>
+          </div>
+          <div class="qrbox" id="qrLinkBox"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="pIssue" hidden>
+        <p class="hint">Mint a BOLT11 hold invoice for this swap: same <code>H</code>, same amount, one hour to expire. The bitcoin side pays it, so the HTLC can only be settled with <code>R</code>.</p>
+        <code class="out mono" id="issueOut">—</code>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyMine" type="button">Copy invoice</button>
+          <button class="btn ghost sm" data-act="qrMine" type="button">QR</button>
+          <button class="btn ghost sm" data-act="regenMine" type="button">Re-mint</button>
+        </div>
+        <div class="qrbox" id="qrMineBox"></div>
+      </div>
+
+      <div class="panel" id="pProof" hidden>
+        <label class="fl" for="proofIn">USDT escrow proof</label>
+        <textarea class="input" id="proofIn" rows="3" placeholder="0x91644b2b… lock() calldata, a swap JSON record, lq1… lock URI or the lock tx hash" autocomplete="off" spellcheck="false"></textarea>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="genProof" type="button">Generate escrow lock</button>
+          <button class="btn ghost sm" data-act="copyProof" type="button">Copy</button>
+          <button class="btn ghost sm" data-act="fillWrongProof" type="button">Try a mismatched lock</button>
+        </div>
+        <div class="expect">
+          Expects hashlock <code class="mono" id="expH">—</code> · timelock <code class="mono" id="expT2">—</code> · <code class="mono" id="expAmt">—</code> USDT
+        </div>
+      </div>
+
+      <div class="panel" id="pClaim" hidden>
+        <label class="fl" for="preIn">Preimage R <span class="mini" id="preHint"></span></label>
+        <input class="input mono" id="preIn" placeholder="64 hex characters — the secret behind H" autocomplete="off" spellcheck="false">
+        <div class="tools">
+          <button class="btn ghost sm" data-act="reveal" type="button">Reveal my secret</button>
+          <button class="btn ghost sm" data-act="fillPre" type="button">Use it</button>
+          <button class="btn ghost sm" data-act="fillWrongPre" type="button">Try a wrong R</button>
+        </div>
+        <div class="seal" id="seal" hidden><span>Sealed on this device</span><code class="mono" id="sealR">—</code></div>
+      </div>
+
+      <div class="gate" id="gate" data-state="idle" role="status">
+        <span class="gate-ico" aria-hidden="true"></span>
+        <span id="gateTxt">Press Create swap to generate the hashlock.</span>
+      </div>
+    </section>
 
     <details class="tech" id="dTech">
-      <summary><span>기술 상세 / 컨트랙트 보기</span><span class="chev">›</span></summary>
+      <summary><span>Swap parameters, requests and contract</span><span class="chev">›</span></summary>
       <div class="body">
 
-        <h2 class="sect">거래 정보</h2>
+        <h2 class="sect">Swap parameters</h2>
         <div class="kv">
-          <div><span class="k">해시락 H</span><span class="v mono" id="vH">—</span></div>
-          <div><span class="k">프리이미지 R</span><span class="v mono" id="vR">—</span></div>
-          <div><span class="k">타임락 T1 · 라이트닝</span><span class="v mono" id="vT1">—</span></div>
-          <div><span class="k">타임락 T2 · USDT</span><span class="v mono" id="vT2">—</span></div>
+          <div><span class="k">hashlock H</span><span class="v mono" id="vH">—</span></div>
+          <div><span class="k">preimage R</span><span class="v mono" id="vR">—</span></div>
+          <div><span class="k">timelock T1 · lightning</span><span class="v mono" id="vT1">—</span></div>
+          <div><span class="k">timelock T2 · USDT</span><span class="v mono" id="vT2">—</span></div>
           <div><span class="k">swapId</span><span class="v mono" id="vId">—</span></div>
-          <div><span class="k">기준 환율</span><span class="v" id="vRate">—</span></div>
+          <div><span class="k">rate</span><span class="v" id="vRate">—</span></div>
+          <div><span class="k">share link</span><span class="v mono" id="vLink">—</span></div>
         </div>
-        <p class="hint" style="margin:16px 0 8px">단계 기록</p>
+
+        <h2 class="sect">Event log</h2>
         <ol class="log" id="log"></ol>
 
-        <h2 class="sect">라이트닝 결제 요청</h2>
-        <p class="hint">인보이스(<span class="mono">lnbc…</span>)나 Lexe 오퍼(<span class="mono">lno1…</span>)를 붙여넣으세요. 브라우저 확장 없이 표준 <span class="mono">lightning:</span> 딥링크와 복사로 BlueWallet, Wallet of Satoshi, Lexe, AQUA, Blockstream Green에서 그대로 열립니다.</p>
-        <label class="fl">payment request
-          <input class="input mono" id="invoice" placeholder="lnbc… / lno1… / lightning:…" autocomplete="off" spellcheck="false">
+        <h2 class="sect">Payment request decoder</h2>
+        <p class="hint">Paste any BOLT11 invoice (<code>lnbc…</code>, <code>lntb…</code>, <code>lnbcrt…</code>) or BOLT12 offer (<code>lno1…</code>). The decoder is local: bech32 checksum, 35-bit timestamp, tagged fields.</p>
+        <label class="fl" for="invoice">payment request
+          <input class="input mono" id="invoice" placeholder="lnbc… / lntb… / lno1… / lightning:…" autocomplete="off" spellcheck="false">
         </label>
-        <div class="row2">
-          <button class="btn ghost" data-act="decode">디코드</button>
-          <button class="btn ghost" data-act="sample11">BOLT11</button>
-          <button class="btn ghost" data-act="sample12">BOLT12</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="decode" type="button">Decode</button>
+          <button class="btn ghost sm" data-act="sample11" type="button">BOLT11 sample</button>
+          <button class="btn ghost sm" data-act="sample12" type="button">BOLT12 sample</button>
         </div>
         <div class="kv" id="decodeOut"></div>
-        <div class="row2">
-          <a class="btn ghost" id="openWalletDeep" href="#">지갑 앱으로 열기</a>
-          <button class="btn ghost" data-act="copyUri">복사</button>
-          <button class="btn ghost" data-act="qrUri">QR</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyUri" type="button">Copy lightning: URI</button>
+          <button class="btn ghost sm" data-act="qrUri" type="button">QR</button>
         </div>
-        <div class="row2"><button class="btn ghost" data-act="useHash">H로 쓰기</button></div>
         <div class="qrbox" id="qrUriBox"></div>
-        <p class="hint" style="margin-top:14px">BOLT12 오퍼에는 <span class="mono">payment_hash</span>가 없습니다. 크로스체인 HTLC의 프리이미지 매칭은 BOLT11 인보이스로 성립하고, BOLT12는 Lexe 오퍼 엔드포인트/샌드박스 흐름으로 씁니다.</p>
-        <div class="row2">
-          <button class="btn ghost" data-act="webln" id="btnWebln">Connect WebLN</button>
-          <button class="btn ghost" data-act="nwc">Parse NWC</button>
-        </div>
+        <p class="hint">A BOLT12 offer has no <code>payment_hash</code>, so preimage matching only holds with a BOLT11 invoice. BOLT12 is decoded here as the Lexe offer shape.</p>
         <div class="kv">
-          <div><span class="k">webln</span><span class="v" id="weblnInfo">not connected</span></div>
-          <div><span class="k">nwc</span><span class="v" id="nwcInfo">—</span></div>
+          <div><span class="k">WebLN</span><span class="v" id="weblnInfo">not connected</span></div>
+          <div><span class="k">NWC</span><span class="v" id="nwcInfo">—</span></div>
         </div>
-        <label class="fl">NWC URI<input class="input mono" id="nwcInput" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false"></label>
+        <label class="fl" for="nwcInput">NWC URI<input class="input mono" id="nwcInput" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false"></label>
+        <div class="tools"><button class="btn ghost sm" data-act="nwc" type="button">Parse NWC</button></div>
 
-        <h2 class="sect">USDT 받기 · AQUA / Liquid</h2>
-        <p class="hint">받을 Liquid 주소를 넣으면 금액이 붙은 결제 요청과 QR이 만들어집니다. AQUA·Liquid 지갑으로 스캔하거나 복사해 주고받으세요.</p>
-        <label class="fl">Liquid address<input class="input mono" id="liquidAddr" placeholder="lq1… / VJ…" autocomplete="off" spellcheck="false"></label>
-        <div class="row2">
-          <button class="btn ghost" data-act="copyAddr">주소 복사</button>
-          <button class="btn ghost" data-act="copyReq">요청 복사</button>
-          <button class="btn ghost" data-act="qrAddr">QR</button>
+        <h2 class="sect">USDT request · Liquid</h2>
+        <p class="hint">Give the escrow an address and the app builds an amount-bearing <code>liquidnetwork:</code> request with a QR for AQUA or any Liquid wallet.</p>
+        <label class="fl" for="liquidAddr">Liquid address<input class="input mono" id="liquidAddr" placeholder="lq1… / VJ…" autocomplete="off" spellcheck="false"></label>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyAddr" type="button">Copy address</button>
+          <button class="btn ghost sm" data-act="copyReq" type="button">Copy request</button>
+          <button class="btn ghost sm" data-act="qrAddr" type="button">QR</button>
         </div>
-        <div class="kv"><div><span class="k">요청</span><span class="v mono" id="vRequest">—</span></div></div>
+        <div class="kv"><div><span class="k">request</span><span class="v mono" id="vRequest">—</span></div></div>
         <div class="qrbox" id="qrAddrBox"></div>
-        <p class="hint" style="margin-top:14px">AQUA는 해시락 스크립트를 직접 노출하지 않습니다. 그래서 프로토타입에서는 USDT 쪽을 주소·페이로드 교환으로 두고, 잠금 강제가 필요하면 같은 <span class="mono">H</span>를 쓰는 아래 EVM HTLC 참조 구현을 씁니다.</p>
 
-        <h2 class="sect">EVM HTLC · 참조 구현</h2>
-        <p class="hint">선택 사항입니다. 같은 sha256 해시락을 EVM(Arbitrum 등)에서 강제할 때 쓰는 컨트랙트 — solc 0.8.26 컴파일 확인, 런타임 약 3.1 KB.</p>
-        <label class="fl">HTLC contract<input class="input mono" id="htlcAddr" placeholder="0x… (선택)" autocomplete="off" spellcheck="false"></label>
-        <label class="fl">USDT token<input class="input mono" id="tokenAddr" autocomplete="off" spellcheck="false"></label>
+        <h2 class="sect">EVM HTLC · reference</h2>
+        <p class="hint">Optional. The same sha256 hashlock enforced on-chain — solc 0.8.26, runtime about 3.1 KB, no owner and no fees.</p>
+        <label class="fl" for="htlcAddr">HTLC contract<input class="input mono" id="htlcAddr" placeholder="0x… (optional)" autocomplete="off" spellcheck="false"></label>
+        <label class="fl" for="tokenAddr">USDT token<input class="input mono" id="tokenAddr" autocomplete="off" spellcheck="false"></label>
         <div class="kv"><div><span class="k">next calldata</span><span class="v mono" id="calldata">—</span></div></div>
-        <div class="row2">
-          <button class="btn ghost" data-act="copyData">calldata 복사</button>
-          <button class="btn ghost" data-act="copyPayload">payload 복사</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyData" type="button">Copy calldata</button>
+          <button class="btn ghost sm" data-act="copyPayload" type="button">Copy swap JSON</button>
+          <button class="btn ghost sm" data-act="copySol" type="button">Copy contract</button>
         </div>
-        <div class="row2"><button class="btn ghost" data-act="copySol">소스 복사</button></div>
         <pre class="sol" id="solSrc"></pre>
       </div>
     </details>
 
-    <p class="foot">수수료 없음 · 비수탁 · 잠금은 약속으로 강제됩니다</p>
+    <p class="foot">No fees · non-custodial · locks are enforced by the timelock, not by trust</p>
   </main>
 </div>
 
 <div class="bar"><div class="bar-in">
-  <button class="btn" id="primary" data-act="create">교환 시작하기</button>
+  <button class="btn" id="primary" data-act="primary" type="button">Create swap</button>
   <div class="ghosts">
-    <button class="btn ghost" id="ghostA" data-act="advance" style="display:none">시간 초과 환불 테스트</button>
-    <button class="btn ghost" id="ghostB" data-act="reset" style="display:none">처음부터</button>
+    <button class="btn ghost" id="ghostA" data-act="advance" type="button" hidden>Advance clock (test)</button>
+    <button class="btn ghost" id="ghostB" data-act="reset" type="button" hidden>Reset</button>
   </div>
 </div></div>
 

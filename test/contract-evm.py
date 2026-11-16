@@ -13,6 +13,7 @@ Requires: solc (SOLC env var or .tools/solc-*), plus eth-tester, py-evm and eth-
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -196,6 +197,39 @@ check('refund: emits Refunded(swapId)', to_bytes(hexstr=event(refund_rc, 'Refund
 
 again2 = revert_reason(htlc, 'refund(bytes32)', ['bytes32'], [swap2], accounts[5])
 check('refund: second refund reverts (AlreadySettled)', 'revert' in again2.lower(), again2[:60])
+
+# ---- the app's own encoding ------------------------------------------------
+# The UI builds lock() calldata in the browser. These two checks tie that
+# encoding to this ABI: the selector constants in src/app.js have to hash to the
+# signature, and the calldata the page emitted has to decode to the swap fields.
+src = open(os.path.join(ROOT, 'src', 'app.js'), encoding='utf-8').read()
+m = re.search(r"SEL = \{ lock: '([0-9a-f]{8})', claim: '([0-9a-f]{8})', refund: '([0-9a-f]{8})' \}", src)
+check('app: selector table found in src/app.js', bool(m))
+if m:
+    want = {
+        'lock': selector('lock(bytes32,uint256,address,address,uint256)').hex(),
+        'claim': selector('claim(bytes32,bytes32)').hex(),
+        'refund': selector('refund(bytes32)').hex()
+    }
+    got = {'lock': m.group(1), 'claim': m.group(2), 'refund': m.group(3)}
+    check('app: JS selectors equal keccak of the contract signatures', got == want,
+          ', '.join('%s %s/%s' % (k, got[k], want[k]) for k in want))
+
+dump = os.path.join(BUILD, 'app-calldata.json')
+if os.path.exists(dump):
+    d = json.load(open(dump))
+    data = bytes.fromhex(d['calldata'][2:])
+    check('app: emitted calldata starts with lock()', data[:4] == selector('lock(bytes32,uint256,address,address,uint256)'),
+          data[:4].hex())
+    hashlock, timelock, receiver, token, amount = abi_decode(
+        ['bytes32', 'uint256', 'address', 'address', 'uint256'], data[4:])
+    check('app: calldata decodes to the swap fields',
+          hashlock == to_bytes(hexstr=d['hashlock']) and timelock == int(d['timelock'])
+          and receiver.lower() == d['receiver'].lower() and token.lower() == d['token'].lower()
+          and amount == int(d['amount']),
+          '%d bytes, %d USDT units' % (len(data), amount))
+else:
+    print('note: build/app-calldata.json missing - run test/headless.js first')
 
 print('\nEVM checks: %d failed' % len(fails))
 sys.exit(1 if fails else 0)

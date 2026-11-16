@@ -1,20 +1,23 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#040e09">
 <meta name="application-name" content="CLEANSWAP">
+<meta name="description" content="Non-custodial Lightning bitcoin to USDT atomic swap prototype with a real hashlock escrow simulator.">
 <meta name="apple-mobile-web-app-title" content="CLEANSWAP">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CLEANSWAP — Lightning BTC / USDT atomic swap</title>
 <link rel="icon" type="image/png" sizes="64x64" href="data:image/png;base64,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">
 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,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">
 <style>:root{
   --bg:#040e09;
   --bg2:#061810;
   --card:#081c12;
+  --card2:#0a2318;
   --line:rgba(52,211,153,.13);
   --line2:rgba(52,211,153,.26);
   --em:#10b981;
@@ -23,261 +26,473 @@
   --dim:#7ea695;
   --dim2:#54705f;
   --warn:#e8b04b;
-  --r:24px;
+  --bad:#ef7a7a;
+  --r:22px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;background:var(--bg);color:var(--txt)}
 body{
-  font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue","Liberation Sans",Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
   min-height:100vh;
-  padding:0 0 156px;
-  background:radial-gradient(120% 55% at 50% -8%,rgba(16,185,129,.10),transparent 62%),var(--bg);
+  padding:0 0 168px;
+  background:radial-gradient(120% 55% at 50% -8%,rgba(16,185,129,.11),transparent 62%),var(--bg);
 }
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
-.wrap{max-width:560px;margin:0 auto;padding:0 22px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:20px 0 12px}
-.brand{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;letter-spacing:.09em}
-.mark{width:28px;height:28px;border-radius:9px;display:block;object-fit:cover}
-.mode{border:1px solid var(--line2);background:rgba(16,185,129,.06);color:var(--mint);
-  border-radius:999px;height:30px;padding:0 13px;font:600 11.5px/1 inherit;cursor:pointer}
-.mode.live{background:rgba(16,185,129,.16);border-color:rgba(52,211,153,.45)}
-.badge{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;
-  background:rgba(8,28,18,.8);border:1px solid var(--line);color:var(--dim);font-size:11.5px}
+.mono{font-family:ui-monospace,SFMono-Regular,"Liberation Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.94em;color:var(--mint)}
+.wrap{max-width:560px;margin:0 auto;padding:0 20px}
+
+/* ---------------------------------------------------------------- header -- */
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:20px 0 4px}
+.brand{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;letter-spacing:.09em;min-width:0}
+.brand .ver{font-style:normal;font-size:9.5px;letter-spacing:.04em;color:var(--dim2);font-weight:600;
+  border:1px solid var(--line);border-radius:6px;padding:1px 5px;margin-left:1px}
+.mark{width:28px;height:28px;border-radius:9px;display:block;object-fit:cover;flex:none}
+.seg{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:999px;background:rgba(8,28,18,.7);flex:none}
+.seg button{border:0;background:transparent;color:var(--dim2);font-family:inherit;font-weight:650;font-size:11.5px;line-height:1;height:26px;
+  padding:0 11px;border-radius:999px;cursor:pointer;transition:color .15s,background .15s}
+.seg button.on{background:rgba(16,185,129,.16);color:var(--mint)}
+.seg button:focus-visible{outline:2px solid var(--line2);outline-offset:1px}
+
+.meta{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 0}
+.badge{display:inline-flex;align-items:center;gap:7px;height:27px;padding:0 11px;border-radius:999px;
+  background:rgba(8,28,18,.8);border:1px solid var(--line);color:var(--dim);font-size:11.5px;max-width:100%}
+.badge span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--dim2);flex:none}
 .dot.live{background:var(--mint);box-shadow:0 0 0 3px rgba(52,211,153,.14)}
 .dot.off{background:var(--warn)}
-.headline{font-size:26px;line-height:1.28;font-weight:700;letter-spacing:-.02em;margin:18px 0 6px;color:var(--txt)}
+
+.headline{font-size:25px;line-height:1.26;font-weight:700;letter-spacing:-.02em;margin:16px 0 5px;color:var(--txt)}
 .headline.ready,.headline.done{color:var(--mint)}
 .headline.warn{color:var(--warn)}
-.note{font-size:12px;color:var(--dim2);margin:0 0 22px}
-.trade{display:flex;flex-direction:column}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:22px;min-width:0}
-.head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:18px}
-.lbl{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:-.01em}
+.note{font-size:12px;color:var(--dim2);margin:0 0 18px}
+
+/* ----------------------------------------------------------------- board -- */
+.board{display:flex;flex-direction:column}
+.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);
+  border-radius:var(--r);padding:19px 20px;min-width:0;position:relative;overflow:hidden}
+.card::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.card[data-on="1"]{border-color:rgba(52,211,153,.3);background:linear-gradient(180deg,#0b2a1c,#071f15)}
+.card[data-on="1"]::after{box-shadow:inset 0 0 24px rgba(16,185,129,.07),inset 0 1px 0 rgba(255,255,255,.04)}
+.head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;min-width:0}
+.lbl{font-size:11.5px;font-weight:600;color:var(--dim);letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:999px;
   font-size:10.5px;font-weight:650;border:1px solid var(--line);color:var(--dim2);flex:none}
 .chip i{width:5px;height:5px;border-radius:50%;background:currentColor;display:block}
 .chip em{font-style:normal}
 .chip.on{border-color:rgba(52,211,153,.42);color:var(--mint);background:rgba(16,185,129,.1)}
+.chip.warn{border-color:rgba(232,176,75,.35);color:var(--warn);background:rgba(232,176,75,.08)}
 .amt{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
-.amt b{font-size:40px;font-weight:600;letter-spacing:-.03em;line-height:1.02}
-.amt span{font-size:14px;color:var(--dim);font-weight:550}
-.sub{font-size:12.5px;color:var(--dim2);margin-top:10px;min-height:17px}
-.mid{display:flex;align-items:center;justify-content:center;gap:12px;padding:13px 0;color:var(--dim2)}
-.mid .line{height:1px;flex:1;background:linear-gradient(90deg,transparent,var(--line2),transparent)}
-.mid .glyph{font-size:10.5px;letter-spacing:.12em;color:var(--dim2);white-space:nowrap}
-.mid .glyph-v{display:none}
-.presets{display:flex;gap:8px;margin:20px 0 0}
-.presets.hide{display:none}
+.amt b{font-size:36px;font-weight:600;letter-spacing:-.03em;line-height:1.04}
+.amt span{font-size:13.5px;color:var(--dim);font-weight:550}
+.sub{font-size:12.5px;color:var(--dim2);margin-top:8px;min-height:17px}
+
+.tl{margin-top:16px}
+.tl-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:11px;color:var(--dim2)}
+.tl-row b{color:var(--dim);font-weight:600;font-size:11px}
+.meter{height:4px;border-radius:99px;background:rgba(52,211,153,.1);margin-top:7px;overflow:hidden}
+.meter i{display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,rgba(16,185,129,.55),var(--mint));transition:width .5s linear,background .3s}
+.meter.warn i{background:linear-gradient(90deg,rgba(232,176,75,.45),var(--warn))}
+.meter.dead i{background:var(--bad)}
+
+/* ------------------------------------------------------------------ rail -- */
+.rail{display:flex;flex-direction:column;align-items:center;gap:7px;padding:11px 0}
+.rail .locks{display:flex;align-items:center;gap:9px;width:100%}
+.lk{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:999px;flex:none;
+  font-family:inherit;font-weight:650;font-size:10px;line-height:1;letter-spacing:.06em;color:var(--dim2);border:1px solid var(--line);
+  background:rgba(8,28,18,.6);transition:color .2s,border-color .2s,background .2s}
+.lk i{width:5px;height:5px;border-radius:50%;background:currentColor}
+.lk.on{color:var(--mint);border-color:rgba(52,211,153,.45);background:rgba(16,185,129,.13)}
+.rail-line{position:relative;flex:1;height:1px;background:var(--line2);min-width:20px;overflow:hidden}
+.rail-line i{display:block;height:100%;width:0;background:var(--mint);transition:width .45s ease}
+.rail-state{font-size:10.5px;letter-spacing:.03em;color:var(--dim2);margin:0;text-align:center}
+.rail-state.on{color:var(--mint)}
+
+/* ------------------------------------------------------------------ step -- */
+.step{margin-top:22px;border:1px solid var(--line);border-radius:var(--r);padding:18px 20px 16px;
+  background:linear-gradient(180deg,rgba(10,35,24,.72),rgba(6,24,16,.72));min-width:0}
+.step-head{display:flex;align-items:center;justify-content:space-between;gap:6px 8px;margin-bottom:9px;min-width:0;flex-wrap:wrap}
+.kicker{font-family:inherit;font-weight:700;font-size:9.5px;line-height:1;letter-spacing:.1em;color:var(--dim2);text-transform:uppercase;white-space:nowrap;flex:none}
+.actor{font-family:inherit;font-weight:650;font-size:9.5px;line-height:1;letter-spacing:.02em;color:var(--mint);background:rgba(16,185,129,.11);
+  border:1px solid rgba(52,211,153,.24);border-radius:999px;padding:5px 9px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:100%;margin-left:auto}
+.actor.other{color:var(--dim);background:rgba(52,211,153,.05);border-color:var(--line)}
+.step-title{font-size:19px;font-weight:700;letter-spacing:-.015em;margin:0 0 5px}
+.step-desc{font-size:12.5px;line-height:1.55;color:var(--dim2);margin:0 0 15px}
+.panel{min-width:0}
+.hint{font-size:12px;color:var(--dim2);margin:0 0 12px;line-height:1.6}
+
+.presets{display:flex;gap:8px;margin:2px 0 16px}
 .presets button{flex:1;min-width:0;height:40px;border-radius:13px;border:1px solid var(--line);
-  background:rgba(8,28,18,.65);color:var(--dim);font:600 12px/1 inherit;cursor:pointer}
+  background:rgba(8,28,18,.65);color:var(--dim);font-family:inherit;font-weight:600;font-size:12px;line-height:1;cursor:pointer;transition:.15s}
 .presets button.on{border-color:rgba(52,211,153,.4);color:var(--mint);background:rgba(16,185,129,.1)}
-.walletrow{display:none;gap:9px;margin:14px 0 0}
-body[data-mode="wallet"] .walletrow{display:flex}
-.walletrow .btn{flex:1;height:48px;border-radius:15px}
+.howto{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.howto li{display:flex;gap:10px;font-size:11.5px;line-height:1.5;color:var(--dim2)}
+.howto b{flex:none;width:18px;height:18px;border-radius:50%;border:1px solid var(--line2);color:var(--dim);
+  font:650 9.5px/17px inherit;text-align:center}
+
+.fl{display:block;font-size:11.5px;color:var(--dim2);margin:0 0 6px}
+.fl .mini{color:var(--dim2);font-size:10.5px;letter-spacing:.02em}
+.input{display:block;width:100%;margin:0 0 10px;min-height:44px;background:var(--bg2);
+  border:1px solid var(--line);border-radius:13px;padding:11px 13px;color:var(--txt);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:none}
+textarea.input{height:auto;min-height:72px;overflow-wrap:anywhere;word-break:break-all}
+.input::placeholder{color:#3f5849}
+.input:focus{outline:none;border-color:var(--line2);background:#04120b}
+.input[data-state="ok"]{border-color:rgba(52,211,153,.45)}
+.input[data-state="err"]{border-color:rgba(239,122,122,.45)}
+.tools{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px}
+.tools .btn{flex:0 1 auto;width:auto;min-width:0}
+.btn.sm{height:36px;font-size:11.5px;padding:0 12px;border-radius:11px}
+
+.src{display:flex;gap:8px;align-items:baseline;justify-content:space-between;margin:0 0 12px;
+  padding:9px 11px;border-radius:11px;background:rgba(4,18,11,.6);border:1px solid var(--line);min-width:0}
+.src>span{font-size:10.5px;color:var(--dim2);flex:none}
+.clamp{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto;text-align:right;
+  font-size:11px;color:var(--dim)}
+.out{display:block;padding:11px;border-radius:11px;background:rgba(4,18,11,.6);border:1px solid var(--line);
+  font-size:11px;line-height:1.5;color:var(--dim);overflow-wrap:anywhere;word-break:break-all;margin:0 0 12px}
+.expect{font-size:10.5px;line-height:1.7;color:var(--dim2);margin:0 0 6px}
+.expect code{font-size:10.5px;color:var(--dim)}
+.wrow{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.wrow .btn{flex:1 1 38%;height:42px;font-size:12px;border-radius:12px;text-decoration:none;padding:0 10px}
+.share{margin-top:4px;padding:12px;border:1px solid var(--line);border-radius:13px;background:rgba(4,18,11,.5)}
+.share-h{display:block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim2);margin-bottom:7px}
+.share .tools{margin:8px 0 0}
+.share .clamp{display:block;text-align:left;font-size:10.5px}
+.seal{margin-top:2px;padding:10px 11px;border:1px dashed rgba(52,211,153,.3);border-radius:12px;
+  background:rgba(16,185,129,.05);font-size:10.5px;color:var(--dim2);display:flex;flex-direction:column;gap:5px}
+.seal code{font-size:10.5px;overflow-wrap:anywhere;word-break:break-all;color:var(--mint)}
+
+.gate{display:flex;gap:8px;align-items:flex-start;margin-top:13px;padding-top:12px;border-top:1px solid var(--line);
+  font-size:11.5px;line-height:1.5;color:var(--dim2)}
+.gate-ico{flex:none;width:15px;height:15px;border-radius:50%;border:1px solid currentColor;margin-top:1px;
+  display:grid;place-items:center;font-size:9px;line-height:1}
+.gate[data-state="ok"]{color:var(--mint)}
+.gate[data-state="ok"] .gate-ico::after{content:"✓"}
+.gate[data-state="err"]{color:var(--bad)}
+.gate[data-state="err"] .gate-ico::after{content:"!"}
+.gate[data-state="ref"]{color:var(--warn)}
+.gate[data-state="ref"] .gate-ico::after{content:"i"}
+.gate[data-state="check"]{color:var(--warn)}
+.gate[data-state="check"] .gate-ico::after{content:"…";font-size:8px}
+.gate.shake{animation:shake .28s}
+@keyframes shake{25%{transform:translateX(-3px)}50%{transform:translateX(3px)}75%{transform:translateX(-2px)}}
+
+/* ------------------------------------------------------------------- bar -- */
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:5;
   background:linear-gradient(180deg,rgba(4,14,9,0),rgba(4,14,9,.94) 32%,rgba(4,14,9,.99));
-  padding:18px 22px calc(18px + env(safe-area-inset-bottom))}
-.bar-in{max-width:516px;margin:0 auto;display:flex;flex-direction:column;gap:9px}
-.btn{height:58px;width:100%;border:0;border-radius:19px;background:var(--em);color:#03170e;
-  font:650 16.5px/1 inherit;letter-spacing:-.01em;display:flex;align-items:center;justify-content:center;gap:8px;
-  cursor:pointer;transition:transform .12s ease,background .15s ease;text-decoration:none}
+  padding:16px 20px calc(16px + env(safe-area-inset-bottom))}
+.bar-in{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.btn{height:54px;width:100%;border:0;border-radius:17px;background:var(--em);color:#03170e;
+  font-family:inherit;font-weight:650;font-size:16px;line-height:1;letter-spacing:-.01em;display:flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;transition:transform .12s ease,background .15s ease;text-decoration:none;min-width:0}
 .btn:active{transform:scale(.985)}
-.btn:disabled{background:#0b2418;color:var(--dim2);cursor:default;transform:none}
-.btn.ghost{height:46px;background:rgba(8,28,18,.9);border:1px solid var(--line);color:var(--dim);
-  font-size:13.5px;font-weight:600;border-radius:15px}
+.btn:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+.btn[data-ready="0"]{background:#0b2418;color:#5f8171}
+.btn.ghost{height:44px;background:rgba(8,28,18,.9);border:1px solid var(--line);color:var(--dim);
+  font-size:13px;font-weight:600;border-radius:14px}
 .btn.ghost:active{background:rgba(16,185,129,.1);color:var(--txt)}
-.btn.ghost:disabled{color:#3d5648;border-color:rgba(52,211,153,.08)}
-.ghosts{display:flex;gap:9px}
+.ghosts{display:flex;gap:8px}
 .ghosts .btn{flex:1;min-width:0}
-details.tech{margin-top:30px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-details.tech>summary{list-style:none;cursor:pointer;padding:19px 2px;display:flex;align-items:center;
-  justify-content:space-between;gap:10px;font-size:13px;color:var(--dim);font-weight:600}
+
+/* ---------------------------------------------------------------- drawer -- */
+details.tech{margin-top:26px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+details.tech>summary{list-style:none;cursor:pointer;padding:18px 2px;display:flex;align-items:center;
+  justify-content:space-between;gap:10px;font-size:12.5px;color:var(--dim);font-weight:600}
 details.tech>summary::-webkit-details-marker{display:none}
 .chev{transition:transform .16s ease;color:var(--dim2);font-size:16px;line-height:1}
 details[open]>summary .chev{transform:rotate(90deg)}
-.body{padding:4px 2px 22px}
-.sect{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim2);font-weight:700;
-  margin:26px 0 10px;padding-top:18px;border-top:1px solid var(--line)}
-.sect:first-child{margin-top:6px;padding-top:0;border-top:0}
-.kv{display:flex;flex-direction:column;gap:11px;margin:0 0 14px}
+.body{padding:2px 2px 22px}
+.sect{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim2);font-weight:700;
+  margin:24px 0 10px;padding-top:16px;border-top:1px solid var(--line)}
+.sect:first-child{margin-top:4px;padding-top:0;border-top:0}
+.kv{display:flex;flex-direction:column;gap:10px;margin:0 0 14px;min-width:0}
 .kv>div{display:flex;gap:12px;align-items:baseline;justify-content:space-between;min-width:0}
-.kv .k{font-size:11.5px;color:var(--dim2);flex:none}
+.kv .k{font-size:11px;color:var(--dim2);flex:none}
 .kv .v{font-size:12px;color:var(--txt);text-align:right;min-width:0;flex:1 1 auto;word-break:break-all;overflow-wrap:anywhere}
-.kv .v.mono{font-size:11px;color:var(--mint)}
-.hint{font-size:12px;color:var(--dim2);margin:0 0 14px;line-height:1.6}
-.fl{display:block;font-size:11.5px;color:var(--dim2);margin:0 0 12px}
-.input{display:block;width:100%;margin-top:6px;height:46px;background:var(--bg2);border:1px solid var(--line);
-  border-radius:13px;padding:0 13px;color:var(--txt);font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
-.input:focus{outline:none;border-color:var(--line2)}
-.row2{display:flex;gap:8px;margin:0 0 14px}
-.row2 .btn{flex:1;height:44px;font-size:12.5px;border-radius:13px}
-.log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.log li{display:flex;gap:9px;font-size:11.5px;color:var(--dim);line-height:1.5}
+.kv .v.mono{font-size:10.5px;color:var(--mint)}
+.log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.log li{display:flex;gap:9px;font-size:11.5px;color:var(--dim);line-height:1.5;min-width:0}
 .log time{color:var(--dim2);font-family:ui-monospace,Menlo,monospace;flex:none}
 .log b{font-family:ui-monospace,Menlo,monospace;font-weight:650;color:var(--mint);flex:none;font-size:10px}
-.log .c-err b{color:#ef7a7a}
+.log span{min-width:0;overflow-wrap:anywhere}
+.log .c-err b{color:var(--bad)}
 .log .c-warn b{color:var(--warn)}
-pre.sol{margin:0;background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px;
-  overflow:auto;max-height:320px;font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:#a9cbb9}
+.log .c-sim b{color:var(--dim2)}
+pre.sol{margin:0;background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:13px;
+  overflow:auto;max-height:320px;font:10.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#a9cbb9}
 .qrbox{display:flex;flex-direction:column;align-items:center;gap:8px}
 .qrbox:empty{display:none}
-.qrbox svg{width:170px;height:170px;background:#fff;padding:9px;border-radius:14px;display:block}
+.qrbox svg{width:168px;height:168px;background:#fff;padding:9px;border-radius:14px;display:block}
 .qrbox .hint{text-align:center;margin:0}
-.foot{font-size:10.5px;letter-spacing:.06em;color:#456457;text-align:center;padding:24px 0 0}
-.toast{position:fixed;left:50%;transform:translate(-50%,10px);bottom:138px;background:rgba(12,42,28,.97);
+.foot{font-size:10.5px;letter-spacing:.05em;color:#456457;text-align:center;padding:22px 0 0}
+.toast{position:fixed;left:50%;transform:translate(-50%,10px);bottom:132px;background:rgba(12,42,28,.97);
   border:1px solid var(--line2);color:var(--txt);font-size:12.5px;padding:11px 16px;border-radius:999px;
   opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:9;white-space:nowrap;
   max-width:88vw;overflow:hidden;text-overflow:ellipsis}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+
 @media(min-width:720px){
-  body{padding-bottom:170px}
-  .wrap{max-width:680px}
-  .trade{display:grid;grid-template-columns:1fr 44px 1fr;align-items:stretch}
-  .mid{flex-direction:column;padding:0}
-  .mid .line{width:1px;height:auto;flex:1;background:linear-gradient(180deg,transparent,var(--line2),transparent)}
-  .mid .glyph{display:none}
-  .mid .glyph-v{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;
-    background:rgba(16,185,129,.08);border:1px solid var(--line);color:var(--mint);font-size:16px}
-  .amt b{font-size:34px}
-  .bar-in{max-width:636px}
-  .headline{font-size:30px}
+  body{padding-bottom:178px}
+  .wrap{max-width:700px}
+  .board{display:grid;grid-template-columns:1fr 92px 1fr;align-items:stretch;
+    grid-template-areas:"btc rail usdt" "state state state";row-gap:12px}
+  #cardBtc{grid-area:btc}
+  #cardUsdt{grid-area:usdt}
+  .rail{display:contents}
+  .rail .locks{grid-area:rail;display:flex;flex-direction:column;justify-content:center;
+    align-items:center;width:100%;gap:0}
+  .rail-line{width:1px;height:30px;flex:none;min-width:0;margin:8px 0}
+  .rail-line i{width:100%;height:0;transition:height .45s ease}
+  .lk{height:19px;font-size:8.5px;padding:0 6px;gap:4px;letter-spacing:.03em}
+  .lk i{width:4px;height:4px}
+  .rail-state{grid-area:state;max-width:none;font-size:10px;text-align:center;padding:0}
+  .amt b{font-size:32px}
+  .bar-in{max-width:660px}
+  .headline{font-size:29px}
+  .step{padding:22px 24px 18px}
+  .board+.step{margin-top:24px}
 }
-@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
-<body data-phase="idle">
+<body data-phase="idle" data-mode="practice" data-role="maker">
 <div class="wrap">
 
   <header class="top">
-    <div class="brand"><img class="mark" src="data:image/png;base64,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" alt="" width="28" height="28"><span>CLEANSWAP</span></div>
-    <button class="mode" id="modeBtn" data-act="mode" data-v="practice">연습 모드</button>
+    <div class="brand"><img class="mark" src="data:image/png;base64,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" alt="" width="28" height="28"><span>CLEANSWAP</span><em class="ver">v0.2</em></div>
+    <div class="seg" role="group" aria-label="Escrow mode">
+      <button id="modePractice" data-act="mode" data-v="practice" class="on" type="button">Practice</button>
+      <button id="modeWallet" data-act="mode" data-v="wallet" type="button">Wallet</button>
+    </div>
   </header>
 
-  <div class="badge">
-    <span class="dot" id="rateDot"></span>
-    <span class="mono" id="rateTxt">1 BTC ≈ — USDT</span>
+  <div class="meta">
+    <span class="badge"><span class="dot" id="rateDot"></span><span class="mono" id="rateTxt">1 BTC ≈ — USDT</span></span>
+    <span class="badge" id="roleBadge" hidden><span class="dot live"></span><span id="roleTxt">USDT side</span></span>
   </div>
 
-  <h1 class="headline" id="statusTxt">얼마를 교환할까요?</h1>
-  <p class="note" id="note">연습 모드 · 실제 자금이 오가지 않아요</p>
+  <h1 class="headline" id="statusTxt">Swap bitcoin for USDT</h1>
+  <p class="note" id="note">Practice escrow · no real funds move</p>
 
   <main>
-    <section class="trade" aria-label="trade window">
-      <article class="card" id="cardMaker">
+    <section class="board" aria-label="Escrow board">
+
+      <article class="card" id="cardBtc">
         <div class="head">
-          <span class="lbl">보내는 쪽 · 비트코인</span>
-          <span class="chip" id="chipMaker"><i></i><em id="chipMakerTxt">대기 중</em></span>
+          <span class="lbl">Bitcoin · Lightning</span>
+          <span class="chip" id="chipBtc"><i></i><em id="chipBtcTxt">Unlocked</em></span>
         </div>
-        <div class="amt"><b class="mono" id="makerAmt">50,000</b><span>sats</span></div>
-        <div class="sub" id="makerSub">≈ 47.52 USDT</div>
+        <div class="amt"><b class="mono" id="btcAmt">50,000</b><span>sats</span></div>
+        <div class="sub" id="btcSub">≈ 47.52 USDT at the live rate</div>
+        <div class="tl">
+          <div class="tl-row"><span>T1 · block <b class="mono" id="t1H">—</b></span><b class="mono" id="t1Left">—</b></div>
+          <div class="meter" id="t1Meter"><i id="t1Bar"></i></div>
+        </div>
       </article>
 
-      <div class="mid"><span class="line"></span><span class="glyph">동시 교환</span><span class="glyph-v" aria-hidden="true">⇄</span><span class="line"></span></div>
-
-      <article class="card" id="cardTaker">
-        <div class="head">
-          <span class="lbl">받는 쪽 · USDT</span>
-          <span class="chip" id="chipTaker"><i></i><em id="chipTakerTxt">대기 중</em></span>
+      <div class="rail" id="rail">
+        <div class="locks">
+          <span class="lk" id="lkBtc"><i></i>BTC</span>
+          <span class="rail-line"><i id="railFill"></i></span>
+          <span class="lk" id="lkUsdt"><i></i>USDT</span>
         </div>
-        <div class="amt"><b class="mono" id="takerAmt">—</b><span>USDT</span></div>
-        <div class="sub" id="takerSub">Liquid · AQUA 지갑</div>
+        <p class="rail-state" id="railState">Neither side locked</p>
+      </div>
+
+      <article class="card" id="cardUsdt">
+        <div class="head">
+          <span class="lbl">USDT · escrow contract</span>
+          <span class="chip" id="chipUsdt"><i></i><em id="chipUsdtTxt">Unlocked</em></span>
+        </div>
+        <div class="amt"><b class="mono" id="usdtAmt">—</b><span>USDT</span></div>
+        <div class="sub" id="usdtSub">Liquid / EVM escrow, same hashlock</div>
+        <div class="tl">
+          <div class="tl-row"><span>T2 · unix <b class="mono" id="t2U">—</b></span><b class="mono" id="t2Left">—</b></div>
+          <div class="meter" id="t2Meter"><i id="t2Bar"></i></div>
+        </div>
       </article>
     </section>
 
-    <section class="presets" id="presets" aria-label="amount">
-      <button data-act="sats" data-v="10000">10,000</button>
-      <button data-act="sats" data-v="50000" class="on">50,000</button>
-      <button data-act="sats" data-v="100000">100,000</button>
-      <button data-act="sats" data-v="250000">250,000</button>
-    </section>
+    <section class="step" id="step" aria-live="polite">
+      <div class="step-head">
+        <span class="kicker" id="stepKicker">START</span>
+        <span class="actor" id="stepActor">You · bitcoin side</span>
+      </div>
+      <h2 class="step-title" id="stepTitle">Choose an amount</h2>
+      <p class="step-desc" id="stepDesc">Open a swap, then lock each side against the same hashlock before any value can move.</p>
 
-    <div class="walletrow" id="walletRow">
-      <a class="btn ghost" id="openWallet" href="#dTech">라이트닝 결제 요청 열기</a>
-      <button class="btn ghost" data-act="qrAddr">USDT 요청 QR</button>
-    </div>
+      <div class="panel" id="pCreate">
+        <div class="presets" id="presets">
+          <button data-act="sats" data-v="10000" type="button">10,000</button>
+          <button data-act="sats" data-v="50000" class="on" type="button">50,000</button>
+          <button data-act="sats" data-v="100000" type="button">100,000</button>
+          <button data-act="sats" data-v="250000" type="button">250,000</button>
+        </div>
+        <ol class="howto">
+          <li><b>1</b><span>The bitcoin side picks a secret <code>R</code> and publishes <code>H = SHA256(R)</code>.</span></li>
+          <li><b>2</b><span>The USDT side mints a hold invoice for that <code>H</code>; bitcoin locks into its HTLC.</span></li>
+          <li><b>3</b><span>USDT locks in escrow; revealing <code>R</code> settles both legs, expiry refunds them.</span></li>
+        </ol>
+      </div>
+
+      <div class="panel" id="pInvoice" hidden>
+        <label class="fl" for="invIn">Hold invoice from the USDT side</label>
+        <textarea class="input" id="invIn" rows="3" placeholder="lnbc500u1… (BOLT11 with payment_hash = H)" autocomplete="off" spellcheck="false"></textarea>
+
+        <div class="tools" id="invTools">
+          <button class="btn ghost sm" data-act="copyCounter" type="button">Copy invoice</button>
+          <button class="btn ghost sm" data-act="fillCounter" type="button">Use invoice</button>
+          <button class="btn ghost sm" data-act="fillWrong" type="button">Try a mismatched one</button>
+        </div>
+
+        <div class="src" id="counterSrc">
+          <span>Counterparty hold invoice</span>
+          <code class="mono clamp" id="counterInv">—</code>
+        </div>
+
+        <label class="fl" for="receiptIn" id="receiptLbl">Wallet receipt · payment_hash</label>
+        <input class="input mono" id="receiptIn" placeholder="the hash your wallet shows after paying" autocomplete="off" spellcheck="false">
+
+        <div class="wrow" id="wRow">
+          <a class="btn ghost" id="walletLink" href="#dTech">Open in wallet</a>
+          <button class="btn ghost" data-act="qrInv" type="button">QR</button>
+          <button class="btn ghost" data-act="webln" id="btnWebln" type="button">Pay with WebLN</button>
+        </div>
+        <div class="qrbox" id="qrInvBox"></div>
+
+        <div class="share" id="shareRow">
+          <span class="share-h">Invite the USDT side</span>
+          <code class="mono clamp" id="shareLink">—</code>
+          <div class="tools">
+            <button class="btn ghost sm" data-act="copyLink" type="button">Copy link</button>
+            <button class="btn ghost sm" data-act="qrLink" type="button">QR</button>
+          </div>
+          <div class="qrbox" id="qrLinkBox"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="pIssue" hidden>
+        <p class="hint">Mint a BOLT11 hold invoice for this swap: same <code>H</code>, same amount, one hour to expire. The bitcoin side pays it, so the HTLC can only be settled with <code>R</code>.</p>
+        <code class="out mono" id="issueOut">—</code>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyMine" type="button">Copy invoice</button>
+          <button class="btn ghost sm" data-act="qrMine" type="button">QR</button>
+          <button class="btn ghost sm" data-act="regenMine" type="button">Re-mint</button>
+        </div>
+        <div class="qrbox" id="qrMineBox"></div>
+      </div>
+
+      <div class="panel" id="pProof" hidden>
+        <label class="fl" for="proofIn">USDT escrow proof</label>
+        <textarea class="input" id="proofIn" rows="3" placeholder="0x91644b2b… lock() calldata, a swap JSON record, lq1… lock URI or the lock tx hash" autocomplete="off" spellcheck="false"></textarea>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="genProof" type="button">Generate escrow lock</button>
+          <button class="btn ghost sm" data-act="copyProof" type="button">Copy</button>
+          <button class="btn ghost sm" data-act="fillWrongProof" type="button">Try a mismatched lock</button>
+        </div>
+        <div class="expect">
+          Expects hashlock <code class="mono" id="expH">—</code> · timelock <code class="mono" id="expT2">—</code> · <code class="mono" id="expAmt">—</code> USDT
+        </div>
+      </div>
+
+      <div class="panel" id="pClaim" hidden>
+        <label class="fl" for="preIn">Preimage R <span class="mini" id="preHint"></span></label>
+        <input class="input mono" id="preIn" placeholder="64 hex characters — the secret behind H" autocomplete="off" spellcheck="false">
+        <div class="tools">
+          <button class="btn ghost sm" data-act="reveal" type="button">Reveal my secret</button>
+          <button class="btn ghost sm" data-act="fillPre" type="button">Use it</button>
+          <button class="btn ghost sm" data-act="fillWrongPre" type="button">Try a wrong R</button>
+        </div>
+        <div class="seal" id="seal" hidden><span>Sealed on this device</span><code class="mono" id="sealR">—</code></div>
+      </div>
+
+      <div class="gate" id="gate" data-state="idle" role="status">
+        <span class="gate-ico" aria-hidden="true"></span>
+        <span id="gateTxt">Press Create swap to generate the hashlock.</span>
+      </div>
+    </section>
 
     <details class="tech" id="dTech">
-      <summary><span>기술 상세 / 컨트랙트 보기</span><span class="chev">›</span></summary>
+      <summary><span>Swap parameters, requests and contract</span><span class="chev">›</span></summary>
       <div class="body">
 
-        <h2 class="sect">거래 정보</h2>
+        <h2 class="sect">Swap parameters</h2>
         <div class="kv">
-          <div><span class="k">해시락 H</span><span class="v mono" id="vH">—</span></div>
-          <div><span class="k">프리이미지 R</span><span class="v mono" id="vR">—</span></div>
-          <div><span class="k">타임락 T1 · 라이트닝</span><span class="v mono" id="vT1">—</span></div>
-          <div><span class="k">타임락 T2 · USDT</span><span class="v mono" id="vT2">—</span></div>
+          <div><span class="k">hashlock H</span><span class="v mono" id="vH">—</span></div>
+          <div><span class="k">preimage R</span><span class="v mono" id="vR">—</span></div>
+          <div><span class="k">timelock T1 · lightning</span><span class="v mono" id="vT1">—</span></div>
+          <div><span class="k">timelock T2 · USDT</span><span class="v mono" id="vT2">—</span></div>
           <div><span class="k">swapId</span><span class="v mono" id="vId">—</span></div>
-          <div><span class="k">기준 환율</span><span class="v" id="vRate">—</span></div>
+          <div><span class="k">rate</span><span class="v" id="vRate">—</span></div>
+          <div><span class="k">share link</span><span class="v mono" id="vLink">—</span></div>
         </div>
-        <p class="hint" style="margin:16px 0 8px">단계 기록</p>
+
+        <h2 class="sect">Event log</h2>
         <ol class="log" id="log"></ol>
 
-        <h2 class="sect">라이트닝 결제 요청</h2>
-        <p class="hint">인보이스(<span class="mono">lnbc…</span>)나 Lexe 오퍼(<span class="mono">lno1…</span>)를 붙여넣으세요. 브라우저 확장 없이 표준 <span class="mono">lightning:</span> 딥링크와 복사로 BlueWallet, Wallet of Satoshi, Lexe, AQUA, Blockstream Green에서 그대로 열립니다.</p>
-        <label class="fl">payment request
-          <input class="input mono" id="invoice" placeholder="lnbc… / lno1… / lightning:…" autocomplete="off" spellcheck="false">
+        <h2 class="sect">Payment request decoder</h2>
+        <p class="hint">Paste any BOLT11 invoice (<code>lnbc…</code>, <code>lntb…</code>, <code>lnbcrt…</code>) or BOLT12 offer (<code>lno1…</code>). The decoder is local: bech32 checksum, 35-bit timestamp, tagged fields.</p>
+        <label class="fl" for="invoice">payment request
+          <input class="input mono" id="invoice" placeholder="lnbc… / lntb… / lno1… / lightning:…" autocomplete="off" spellcheck="false">
         </label>
-        <div class="row2">
-          <button class="btn ghost" data-act="decode">디코드</button>
-          <button class="btn ghost" data-act="sample11">BOLT11</button>
-          <button class="btn ghost" data-act="sample12">BOLT12</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="decode" type="button">Decode</button>
+          <button class="btn ghost sm" data-act="sample11" type="button">BOLT11 sample</button>
+          <button class="btn ghost sm" data-act="sample12" type="button">BOLT12 sample</button>
         </div>
         <div class="kv" id="decodeOut"></div>
-        <div class="row2">
-          <a class="btn ghost" id="openWalletDeep" href="#">지갑 앱으로 열기</a>
-          <button class="btn ghost" data-act="copyUri">복사</button>
-          <button class="btn ghost" data-act="qrUri">QR</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyUri" type="button">Copy lightning: URI</button>
+          <button class="btn ghost sm" data-act="qrUri" type="button">QR</button>
         </div>
-        <div class="row2"><button class="btn ghost" data-act="useHash">H로 쓰기</button></div>
         <div class="qrbox" id="qrUriBox"></div>
-        <p class="hint" style="margin-top:14px">BOLT12 오퍼에는 <span class="mono">payment_hash</span>가 없습니다. 크로스체인 HTLC의 프리이미지 매칭은 BOLT11 인보이스로 성립하고, BOLT12는 Lexe 오퍼 엔드포인트/샌드박스 흐름으로 씁니다.</p>
-        <div class="row2">
-          <button class="btn ghost" data-act="webln" id="btnWebln">Connect WebLN</button>
-          <button class="btn ghost" data-act="nwc">Parse NWC</button>
-        </div>
+        <p class="hint">A BOLT12 offer has no <code>payment_hash</code>, so preimage matching only holds with a BOLT11 invoice. BOLT12 is decoded here as the Lexe offer shape.</p>
         <div class="kv">
-          <div><span class="k">webln</span><span class="v" id="weblnInfo">not connected</span></div>
-          <div><span class="k">nwc</span><span class="v" id="nwcInfo">—</span></div>
+          <div><span class="k">WebLN</span><span class="v" id="weblnInfo">not connected</span></div>
+          <div><span class="k">NWC</span><span class="v" id="nwcInfo">—</span></div>
         </div>
-        <label class="fl">NWC URI<input class="input mono" id="nwcInput" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false"></label>
+        <label class="fl" for="nwcInput">NWC URI<input class="input mono" id="nwcInput" placeholder="nostr+walletconnect://…" autocomplete="off" spellcheck="false"></label>
+        <div class="tools"><button class="btn ghost sm" data-act="nwc" type="button">Parse NWC</button></div>
 
-        <h2 class="sect">USDT 받기 · AQUA / Liquid</h2>
-        <p class="hint">받을 Liquid 주소를 넣으면 금액이 붙은 결제 요청과 QR이 만들어집니다. AQUA·Liquid 지갑으로 스캔하거나 복사해 주고받으세요.</p>
-        <label class="fl">Liquid address<input class="input mono" id="liquidAddr" placeholder="lq1… / VJ…" autocomplete="off" spellcheck="false"></label>
-        <div class="row2">
-          <button class="btn ghost" data-act="copyAddr">주소 복사</button>
-          <button class="btn ghost" data-act="copyReq">요청 복사</button>
-          <button class="btn ghost" data-act="qrAddr">QR</button>
+        <h2 class="sect">USDT request · Liquid</h2>
+        <p class="hint">Give the escrow an address and the app builds an amount-bearing <code>liquidnetwork:</code> request with a QR for AQUA or any Liquid wallet.</p>
+        <label class="fl" for="liquidAddr">Liquid address<input class="input mono" id="liquidAddr" placeholder="lq1… / VJ…" autocomplete="off" spellcheck="false"></label>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyAddr" type="button">Copy address</button>
+          <button class="btn ghost sm" data-act="copyReq" type="button">Copy request</button>
+          <button class="btn ghost sm" data-act="qrAddr" type="button">QR</button>
         </div>
-        <div class="kv"><div><span class="k">요청</span><span class="v mono" id="vRequest">—</span></div></div>
+        <div class="kv"><div><span class="k">request</span><span class="v mono" id="vRequest">—</span></div></div>
         <div class="qrbox" id="qrAddrBox"></div>
-        <p class="hint" style="margin-top:14px">AQUA는 해시락 스크립트를 직접 노출하지 않습니다. 그래서 프로토타입에서는 USDT 쪽을 주소·페이로드 교환으로 두고, 잠금 강제가 필요하면 같은 <span class="mono">H</span>를 쓰는 아래 EVM HTLC 참조 구현을 씁니다.</p>
 
-        <h2 class="sect">EVM HTLC · 참조 구현</h2>
-        <p class="hint">선택 사항입니다. 같은 sha256 해시락을 EVM(Arbitrum 등)에서 강제할 때 쓰는 컨트랙트 — solc 0.8.26 컴파일 확인, 런타임 약 3.1 KB.</p>
-        <label class="fl">HTLC contract<input class="input mono" id="htlcAddr" placeholder="0x… (선택)" autocomplete="off" spellcheck="false"></label>
-        <label class="fl">USDT token<input class="input mono" id="tokenAddr" autocomplete="off" spellcheck="false"></label>
+        <h2 class="sect">EVM HTLC · reference</h2>
+        <p class="hint">Optional. The same sha256 hashlock enforced on-chain — solc 0.8.26, runtime about 3.1 KB, no owner and no fees.</p>
+        <label class="fl" for="htlcAddr">HTLC contract<input class="input mono" id="htlcAddr" placeholder="0x… (optional)" autocomplete="off" spellcheck="false"></label>
+        <label class="fl" for="tokenAddr">USDT token<input class="input mono" id="tokenAddr" autocomplete="off" spellcheck="false"></label>
         <div class="kv"><div><span class="k">next calldata</span><span class="v mono" id="calldata">—</span></div></div>
-        <div class="row2">
-          <button class="btn ghost" data-act="copyData">calldata 복사</button>
-          <button class="btn ghost" data-act="copyPayload">payload 복사</button>
+        <div class="tools">
+          <button class="btn ghost sm" data-act="copyData" type="button">Copy calldata</button>
+          <button class="btn ghost sm" data-act="copyPayload" type="button">Copy swap JSON</button>
+          <button class="btn ghost sm" data-act="copySol" type="button">Copy contract</button>
         </div>
-        <div class="row2"><button class="btn ghost" data-act="copySol">소스 복사</button></div>
         <pre class="sol" id="solSrc"></pre>
       </div>
     </details>
 
-    <p class="foot">수수료 없음 · 비수탁 · 잠금은 약속으로 강제됩니다</p>
+    <p class="foot">No fees · non-custodial · locks are enforced by the timelock, not by trust</p>
   </main>
 </div>
 
 <div class="bar"><div class="bar-in">
-  <button class="btn" id="primary" data-act="create">교환 시작하기</button>
+  <button class="btn" id="primary" data-act="primary" type="button">Create swap</button>
   <div class="ghosts">
-    <button class="btn ghost" id="ghostA" data-act="advance" style="display:none">시간 초과 환불 테스트</button>
-    <button class="btn ghost" id="ghostB" data-act="reset" style="display:none">처음부터</button>
+    <button class="btn ghost" id="ghostA" data-act="advance" type="button" hidden>Advance clock (test)</button>
+    <button class="btn ghost" id="ghostB" data-act="reset" type="button" hidden>Reset</button>
   </div>
 </div></div>
 
@@ -460,8 +675,8 @@ contract LightningUsdtHTLC {
         return sha256(abi.encodePacked(hashlock, sender, receiver, token, amount, timelock));
     }
 }</script>
-<script type="text/plain" id="sample-bolt11">lnbc500u1pnhfpvqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsypyv4kk2unpd3jzqumhv9czqteqd3hz6atnv36qcqypcgqgljpys4ms03ffh7ajat35kfwsdyqxgpawqcgzq79ulfs6wxygjx50eqjg2ac8c55mlwew4c6tyhgxjqryq7hqvypq0z705cd8rzyfrgmk24ykf</script>
-<script type="text/plain" id="sample-bolt12">lno1pgvyxmr9v9h9xampwqsz6gzz23pjqen0wgs9256y2s8qg6ekajqpvggzrjlws7u0xygp2vyh6evg28sdyd6p0ml4626efq3hn8e5hfamdta4qsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq</script>
+<script type="text/plain" id="sample-bolt11">lnbc500u1pnhfpvqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsypygdkx2ctw2dmkzupqdphkcepqd9h8vmmfvdjscqypcgqtsfzdgztsndl0ucckdrqgdlz07zknppzrfhq6nagr0jtzpr5ptz4cy3x5p9cfklh7vvtx3syxl38lptfss3p5msdf75phe93q36q43gm08ga6v</script>
+<script type="text/plain" id="sample-bolt12">lno1pgvyxmr9v9h9xampwqsz6gzz23pjqen0wgs9256y2s8qg6ekajqpvggz6sxhy2u05vhccky82lzgz33tylddlm8xvl4qce3d4g8xmz5tt909qsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq</script>
 <script>/* Minimal QR encoder — byte mode, error correction L/M/Q/H, versions 1..10.
    No dependencies, ~250 lines. Byte mode + level M is what the AQUA/Liquid
    address panel needs; other versions exist so the panel never overflows.
@@ -801,22 +1016,26 @@ contract LightningUsdtHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CleanSwap — Lightning BTC <-> USDT atomic swap in one file.
+<script>/* CLEANSWAP v0.2 — Lightning bitcoin <-> USDT atomic swap in one file.
 
-   The screen is deliberately plain: two cards, one button. The protocol lives
-   underneath — sha256 hashlock (Bitcoin's construction, never keccak), a
-   Lightning HTLC on one leg and a token lock on the other, the same 32-byte
-   preimage settling both.
+   The screen stays plain: two escrow cards, one honest button. What changed in
+   v0.2 is that the button is no longer decorative. Every step is gated on data
+   that a real swap would need, and the gate runs here, in the browser:
 
-   practice mode: local simulator. Real WebCrypto SHA-256, real state machine,
-   no chain and no funds.
-   wallet mode:  the same flow plus wallet hand-off — standard `lightning:`
-   deep link, QR and clipboard, so BlueWallet / Wallet of Satoshi / Lexe / AQUA
-   / Blockstream Green open the request natively, no browser extension.
+     step 1  a BOLT11 hold invoice whose payment_hash is exactly H, for the right
+             amount, on the right network, still inside its expiry window
+     step 2  the counterparty's escrow lock, decoded and matched against H, T2
+             and the USDT amount (lock() calldata, JSON record, Liquid lock URI
+             or a lock transaction hash)
+     step 3  the 32-byte preimage R, accepted only when SHA256(R) === H
 
-   BOLT11 invoices carry payment_hash (what the HTLC needs). BOLT12 offers
-   (lno1…) do not; they are the Lexe offer endpoint shape and are decoded and
-   shown, while preimage matching stays with a BOLT11 invoice. */
+   Practice mode runs both sides on one screen (hold invoice mint, escrow lock,
+   reveal) with real WebCrypto, real bech32 and real ABI encoding, and a share
+   link that turns another tab into the USDT side. Wallet mode swaps the
+   simulated counterparty for a real invoice, a real wallet hand-off and the
+   payment_hash your wallet shows afterwards.
+
+   No chain, no funds, no browser-extension wallet. */
 (function () {
   'use strict';
 
@@ -825,43 +1044,50 @@ contract LightningUsdtHTLC {
   /* keccak256(signature) selectors — verified against solc 0.8.26 --hashes */
   var SEL = { lock: '91644b2b', claim: '84cc9dfb', refund: '7249fbb6' };
   var EVM = {
-    taker: '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71',
-    maker: '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761',
+    btcSide: '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71',   /* receives the USDT */
+    usdtSide: '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761',  /* locks the USDT */
+    htlc: '0x9d1f4c7a2b8e6035f4a7c1d9028be35f7a6c4d18',
     token: '0x8f2b7c1d94a63e05b8d71c4209af6e38b5d2c097'
   };
   var FALLBACK_PRICE = 90000;
-  var QR_MAX = 200; // bytes; QR encoder covers versions 1..10
+  var QR_MAX = 271;                 /* bytes at level L, version 10 (the encoder's ceiling) */
+  var QR_M = 213;                   /* bytes at level M, version 10 */
+  var NET = 'bc';                   /* invoice network prefix */
+  var T2_SPAN = 3600;               /* USDT escrow window, seconds */
+  var T1_BLOCKS = 40;               /* ~6h40m of bitcoin blocks */
+  var BLOCK_SECS = 600;
+  var INV_DESC = 'CleanSwap hold invoice';
 
   var S = {
-    mode: 'practice',
-    phase: 'idle',
+    mode: 'practice',               /* practice | wallet */
+    role: 'maker',                  /* maker (bitcoin side) | taker (USDT side) */
+    phase: 'idle',                  /* idle | open | btc | both | settled | expired | refunded */
     sats: 50000,
-    price: null,
-    pstate: 'loading',
+    price: null, pstate: 'loading',
+    units: null,                    /* frozen USDT amount, micro-units */
     H: null, R: null, id: null,
     t1: null, t2: null,
-    lockM: false, lockT: false,
-    sim: 0,
-    h0: 923452,
+    sim: 0, h0: 923452,
+    counterInv: '', altInv: '', inv: '', invDec: null,
+    btcState: 'none', usdtState: 'none',
     log: [],
-    webln: null,
-    nwc: null,
-    req: null,     // decoded payment request
-    li: '',        // raw payment request string
-    liquid: '',
-    htlc: '',
-    token: EVM.token
+    webln: null, nwc: null,
+    sealOpen: false,
+    usdtProof: '',
+    req: null, li: '',
+    liquid: '', htlc: '', token: EVM.token,
+    gate: null
   };
 
-  /* ------------------------------------------------------------ helpers -- */
+  /* ------------------------------------------------------------- helpers -- */
   function hexOf(u8) {
     var s = '', i;
     for (i = 0; i < u8.length; i++) s += (u8[i] < 16 ? '0' : '') + u8[i].toString(16);
     return s;
   }
   function fromHex(h) {
-    var clean = String(h).replace(/^0x/i, ''), out = new Uint8Array(clean.length / 2), i;
-    for (i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+    var clean = String(h).replace(/^0x/i, ''), out = new Uint8Array(Math.floor(clean.length / 2)), i;
+    for (i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16) || 0;
     return out;
   }
   function rndHex(n) {
@@ -877,47 +1103,57 @@ contract LightningUsdtHTLC {
   }
   function short(h, n) {
     n = n || 6;
-    return h && h.length > n * 2 + 6 ? h.slice(0, n + 2) + '…' + h.slice(-4) : (h || '—');
+    var s = String(h || '');
+    return s.length > n * 2 + 6 ? s.slice(0, n + 2) + '…' + s.slice(-4) : (s || '—');
   }
+  function normHex(x) { return String(x == null ? '' : x).trim().replace(/^0x/i, '').replace(/\s+/g, '').toLowerCase(); }
   function nowSec() { return Math.floor(Date.now() / 1000) + S.sim; }
+  function curHeight() { return S.h0 + Math.floor(S.sim / BLOCK_SECS); }
   function fmt(n) { return Number(n).toLocaleString('en-US'); }
-  function usdtOf() { return S.price ? S.sats / 1e8 * S.price : 0; }
+  function usdtOf() { return S.units != null ? S.units / 1e6 : (S.price ? S.sats / 1e8 * S.price : 0); }
   function usdtTxt() {
-    return usdtOf()
-      ? usdtOf().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : '—';
+    var v = usdtOf();
+    return v ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
   }
-  function units() { return Math.round(usdtOf() * 1e6); }
+  function usdtUnits() {
+    if (S.units != null) return S.units;
+    return S.price ? Math.round(S.sats / 1e8 * S.price * 1e6) : 0;
+  }
+  function clock(t) {
+    var d = new Date((t || nowSec()) * 1000);
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+  }
+  function spanTxt(s) {
+    if (s <= 0) return 'expired';
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = Math.floor(s % 60);
+    if (h) return h + 'h ' + ('0' + m).slice(-2) + 'm';
+    return ('0' + m).slice(-2) + ':' + ('0' + sec).slice(-2);
+  }
+  function priceNow() {
+    if (!S.t2) return '—';
+    return spanTxt(S.t2 - nowSec());
+  }
   function tokenAddr() {
     var v = ($('tokenAddr').value || '').trim();
     return /^0x[0-9a-fA-F]{40}$/.test(v) ? v : EVM.token;
   }
   function htlcAddr() {
     var v = ($('htlcAddr').value || '').trim();
-    return /^0x[0-9a-fA-F]{40}$/.test(v) ? v : '';
+    return /^0x[0-9a-fA-F]{40}$/.test(v) ? v : EVM.htlc;
   }
-  function clock(t) {
-    var d = new Date((t || nowSec()) * 1000);
-    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
-  }
-  function leftTxt() {
-    if (!S.t2) return '—';
-    var s = S.t2 - nowSec();
-    if (s <= 0) return '만료';
-    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
-    return h ? h + '시간 ' + ('0' + m).slice(-2) + '분' : m + '분 ' + ('0' + sec).slice(-2) + '초';
-  }
+  function isAddr(a) { return /^0x[0-9a-fA-F]{40}$/.test(String(a || '')); }
+
   var toastTimer;
   function toast(msg) {
     var t = $('toast');
     t.textContent = msg;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2000);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2400);
   }
   function copy(text, what) {
-    if (!text || text === '—') { toast('복사할 내용이 없어요'); return; }
-    var done = function () { toast((what || '복사') + '했어요'); };
+    if (!text || text === '—') { toast('Nothing to copy yet'); return; }
+    var done = function () { toast((what || 'Copied')); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
     } else { fallbackCopy(text); done(); }
@@ -931,10 +1167,10 @@ contract LightningUsdtHTLC {
   }
   function log(kind, text, cls) {
     S.log.unshift({ t: clock(), kind: kind, text: text, cls: cls || '' });
-    if (S.log.length > 40) S.log.pop();
+    if (S.log.length > 60) S.log.pop();
   }
 
-  /* ------------------------------------------------- sha256 swap identity -- */
+  /* ------------------------------------------------ sha256 swap identity -- */
   function writeU256(buf, off, val) {
     var b = BigInt(val), i;
     for (i = 0; i < 32; i++) buf[off + 31 - i] = Number((b >> BigInt(8 * i)) & 255n);
@@ -972,20 +1208,20 @@ contract LightningUsdtHTLC {
   }
   function bech32Words(str) {
     var s = String(str).replace(/\s+/g, ''), words = [], i, v;
-    if (!s) throw new Error('empty');
+    if (!s) throw new Error('empty string');
     if (s !== s.toLowerCase() && s !== s.toUpperCase()) throw new Error('mixed case');
     s = s.toLowerCase();
     var pos = s.lastIndexOf('1');
-    if (pos < 1 || pos + 1 >= s.length) throw new Error('bad separator');
+    if (pos < 1 || pos + 1 >= s.length) throw new Error('missing separator');
     var hrp = s.slice(0, pos), data = s.slice(pos + 1);
     for (i = 0; i < data.length; i++) {
       v = B32.indexOf(data.charAt(i));
-      if (v < 0) throw new Error('bad char "' + data.charAt(i) + '"');
+      if (v < 0) throw new Error('invalid character "' + data.charAt(i) + '"');
       words.push(v);
     }
     return { hrp: hrp, words: words };
   }
-  /* BOLT11: bech32 with a 6-word checksum, no 90-char limit. */
+  /* BOLT11: bech32 with a 6-word checksum, no 90-character limit. */
   function bech32Decode(str) {
     var r = bech32Words(str);
     if (r.words.length < 6) throw new Error('too short');
@@ -1001,17 +1237,43 @@ contract LightningUsdtHTLC {
     }
     return new Uint8Array(out);
   }
+  function bytesToWords(bytes) {
+    var acc = 0, bits = 0, out = [], i;
+    for (i = 0; i < bytes.length; i++) {
+      acc = (acc << 8) | bytes[i]; bits += 8;
+      while (bits >= 5) { bits -= 5; out.push((acc >>> bits) & 31); }
+    }
+    if (bits) out.push((acc << (5 - bits)) & 31);
+    return out;
+  }
   function wordsToInt(words) {
     var n = 0, i;
     for (i = 0; i < words.length; i++) n = n * 32 + words[i];
     return n;
+  }
+  function intWords(n, len) {
+    var out = [], i;
+    for (i = len - 1; i >= 0; i--) out.push(Math.floor(n / Math.pow(32, i)) % 32);
+    return out;
+  }
+  /* minimal base-32 digits, no zero padding: tagged fields are big-endian
+     integers, and a padded word would scale the value by 16 */
+  function intToVec(n) {
+    var v = BigInt(n), out = [];
+    if (v === 0n) return [0];
+    while (v > 0n) { out.unshift(Number(v & 31n)); v >>= 5n; }
+    return out;
+  }
+  function utf8(str) {
+    if (window.TextEncoder) return new TextEncoder().encode(String(str));
+    return new Uint8Array(unescape(encodeURIComponent(String(str))).split('').map(function (c) { return c.charCodeAt(0); }));
   }
   function decodeBolt11(raw) {
     var inv = String(raw).trim().replace(/^lightning:/i, '');
     if (!/^ln[a-z]+/i.test(inv)) throw new Error('not a BOLT11 invoice');
     var dec = bech32Decode(inv), hrp = dec.hrp, words = dec.words;
     var m = hrp.match(/^ln([a-z]+?)(\d+)?([munp]?)$/);
-    if (!m) throw new Error('unrecognised hrp ' + hrp);
+    if (!m) throw new Error('unrecognised human-readable part "' + hrp + '"');
     if (words.length < 7 + 104) throw new Error('invoice body too short');
     var mult = { m: 1e-3, u: 1e-6, n: 1e-9, p: 1e-12, '': 1 };
     var amtBtc = m[2] ? Number(m[2]) * mult[m[3] || ''] : null;
@@ -1041,27 +1303,72 @@ contract LightningUsdtHTLC {
     };
   }
 
+  /* BOLT11 encoder — a hold invoice whose payment_hash the payer cannot choose.
+
+     Field order follows the spec: 35-bit timestamp, then tagged fields, then a
+     65-byte signature slot (104 words, exactly). The slot is deterministic
+     filler derived from the payment hash: this app parses and checks the
+     checksum and the fields, it does not do secp256k1, and every minted invoice
+     says so in the log. */
+  function amountPart(sats) {
+    if (!sats) return '';
+    if (sats % 100 === 0) return (sats / 100) + 'u';   /* 1u = 100 sats */
+    return (sats * 10) + 'n';                          /* 1n = 0.1 sats */
+  }
+  function tagField(ch, words) {
+    return [ch.charCodeAt(0) - 96, words.length >> 5, words.length & 31].concat(words);
+  }
+  function bech32Checksum(hrp, words) {
+    var p = polymod(hrpExpand(hrp).concat(words).concat([0, 0, 0, 0, 0, 0])) ^ 1, out = [], i;
+    for (i = 0; i < 6; i++) out.push((p >>> (5 * (5 - i))) & 31);
+    return out;
+  }
+  function assembleInvoice(hrp, body) {
+    var data = body.concat(bech32Checksum(hrp, body)), out = hrp + '1', i;
+    for (i = 0; i < data.length; i++) out += B32.charAt(data[i]);
+    return out;
+  }
+  function mintInvoice(o) {
+    var net = o.network || NET;
+    var hrp = 'ln' + net + amountPart(o.sats);
+    var ts = o.timestamp || nowSec();
+    var x = o.expiry == null ? T2_SPAN : o.expiry;
+    var seed = fromHex(o.paymentHash), filler = new Uint8Array(65), i;
+    for (i = 0; i < 65; i++) filler[i] = seed[i % 32] ^ ((i * 37 + 11) & 255);
+    filler[64] = 27;
+    function build(desc) {
+      var body = intWords(ts, 7).concat(tagField('p', bytesToWords(seed)));
+      if (desc) body = body.concat(tagField('d', bytesToWords(utf8(desc))));
+      body = body.concat(tagField('x', intToVec(x)));
+      body = body.concat(bytesToWords(filler));
+      return assembleInvoice(hrp, body);
+    }
+    var out = build(null);
+    if (o.description) {
+      var withDesc = build(o.description);
+      if (withDesc.length <= QR_M) out = withDesc;
+    }
+    return out;
+  }
+
   /* ----------------------------------------------------- BOLT12 (offers) -- */
   function readBigSize(u8, i) {
     if (i >= u8.length) return null;
     var b = u8[i], v, j;
     if (b < 0xfd) return { value: b, next: i + 1 };
     if (b === 0xfd) {
-      if (i + 2 >= u8.length) throw new Error('truncated bigsize');
+      if (i + 2 >= u8.length) throw new Error('truncated BigSize');
       return { value: (u8[i + 1] << 8) | u8[i + 2], next: i + 3 };
     }
     if (b === 0xfe) {
-      if (i + 4 >= u8.length) throw new Error('truncated bigsize');
+      if (i + 4 >= u8.length) throw new Error('truncated BigSize');
       return { value: ((u8[i + 1] << 24) >>> 0) + (u8[i + 2] << 16) + (u8[i + 3] << 8) + u8[i + 4], next: i + 5 };
     }
-    if (i + 8 >= u8.length) throw new Error('truncated bigsize');
+    if (i + 8 >= u8.length) throw new Error('truncated BigSize');
     v = 0n;
     for (j = 1; j <= 8; j++) v = (v << 8n) | BigInt(u8[i + j]);
     return { value: Number(v), next: i + 9 };
   }
-  /* BOLT12 uses bech32 without a checksum; the payload is a TLV stream in 5-bit groups. */
-  /* BOLT12 offer TLV types (draft). Shown with their numbers so an unfamiliar
-     field is never silently renamed. */
   var OFFER_TYPES = {
     2: 'offer_chains', 4: 'offer_metadata', 6: 'offer_currency', 8: 'offer_amount',
     10: 'offer_description', 12: 'offer_features', 14: 'offer_absolute_expiry',
@@ -1085,11 +1392,9 @@ contract LightningUsdtHTLC {
       i += l.value;
     }
     var dec = new TextDecoder();
-    /* offer_amount / absolute_expiry / quantity_max are big-endian tu64 —
-       the TLV *length* is BigSize, the value itself is not. */
     function beUint(u8) {
-      var v = 0n, i;
-      for (i = 0; i < u8.length; i++) v = (v << 8n) | BigInt(u8[i]);
+      var v = 0n, j;
+      for (j = 0; j < u8.length; j++) v = (v << 8n) | BigInt(u8[j]);
       return Number(v);
     }
     function num(type) { return fields[type] ? beUint(fields[type]) : null; }
@@ -1100,15 +1405,15 @@ contract LightningUsdtHTLC {
       network: r.hrp.length > 3 ? r.hrp.slice(3) : 'bitcoin',
       paymentHash: null,
       sats: null,
-      amount: num(8),           // offer_amount
-      currency: txt(6),         // offer_currency
-      description: txt(10),     // offer_description
-      issuer: txt(18),          // offer_issuer
-      absoluteExpiry: num(14),  // offer_absolute_expiry
+      amount: num(8),
+      currency: txt(6),
+      description: txt(10),
+      issuer: txt(18),
+      absoluteExpiry: num(14),
       nodeId: fields[22] ? hexOf(fields[22]) : null,
       quantityMax: num(20),
-      types: order.sort(function (a, b) { return a - b; }).map(function (t) {
-        return t + (OFFER_TYPES[t] ? ' ' + OFFER_TYPES[t] : '');
+      types: order.sort(function (a, b) { return a - b; }).map(function (x) {
+        return x + (OFFER_TYPES[x] ? ' ' + OFFER_TYPES[x] : '');
       })
     };
   }
@@ -1117,132 +1422,400 @@ contract LightningUsdtHTLC {
   function pad64(hex) { return ('0'.repeat(64) + hex).slice(-64); }
   function encU256(v) { return pad64(BigInt(v).toString(16)); }
   function encAddr(a) { return pad64(String(a).toLowerCase().replace(/^0x/, '')); }
-  function encB32(h) { return pad64(String(h).toLowerCase().replace(/^0x/, '')); }
+  function lockCalldata(o) {
+    return '0x' + SEL.lock + encU256(o.hashlock) + encU256(o.timelock) +
+      encAddr(o.receiver) + encAddr(o.token) + encU256(o.amount);
+  }
+  function escrowProof() {
+    return lockCalldata({
+      hashlock: S.H, timelock: S.t2, receiver: EVM.btcSide,
+      token: tokenAddr(), amount: usdtUnits()
+    });
+  }
+  function decodeLockCalldata(hex) {
+    var h = normHex(hex);
+    if (h.length !== 8 + 5 * 64) return null;
+    var w = [], i;
+    for (i = 0; i < 5; i++) w.push(h.slice(8 + i * 64, 8 + (i + 1) * 64));
+    return {
+      kind: 'calldata',
+      selector: h.slice(0, 8),
+      hashlock: '0x' + w[0],
+      timelock: BigInt('0x' + w[1]).toString(),
+      receiver: '0x' + w[2].slice(24),
+      token: '0x' + w[3].slice(24),
+      amount: BigInt('0x' + w[4]).toString()
+    };
+  }
   function nextCalldata() {
     if (!S.H || !S.id) return '';
-    if (S.phase === 'offer' || (S.phase === 'half' && !S.lockT)) {
-      return '0x' + SEL.lock + encB32(S.H) + encU256(S.t2) + encAddr(EVM.maker) + encAddr(tokenAddr()) + encU256(units() || 1);
+    if (S.phase === 'open') {
+      return lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: EVM.btcSide, token: tokenAddr(), amount: usdtUnits() });
     }
-    if (S.phase === 'both') return '0x' + SEL.claim + encB32(S.id) + encB32(S.R || '');
-    if (S.phase === 'expired') return '0x' + SEL.refund + encB32(S.id);
-    return '0x' + SEL.claim + encB32(S.id) + encB32(S.R || '');
+    if (S.phase === 'settled' && S.R) {
+      return '0x' + SEL.claim + encU256(S.id) + encU256(S.R);
+    }
+    if (S.phase === 'expired') return '0x' + SEL.refund + encU256(S.id);
+    return '';
   }
 
-  /* ------------------------------------------------------------- render --- */
-  var HEADLINE = {
-    idle: ['얼마를 교환할까요?', ''],
-    offer: ['비트코인을 잠가 주세요', ''],
-    half: ['상대방 USDT를 기다리는 중', ''],
-    both: ['잠금 완료, 교환할 수 있어요', 'ready'],
-    settled: ['교환 완료!', 'done'],
-    expired: ['시간이 초과됐어요', 'warn'],
-    refunded: ['환불 완료', 'warn']
-  };
-  function makerBadge() {
-    if (S.phase === 'settled') return { on: true, txt: '교환 완료' };
-    if (S.lockM) return { on: true, txt: '잠금 완료' };
-    if (S.phase === 'expired') return { on: false, txt: '만료' };
-    if (S.phase === 'refunded') return { on: false, txt: '환불됨' };
-    return { on: false, txt: '대기 중' };
+  /* ------------------------------------------------------- swap link ----- */
+  function swapLink() {
+    if (!S.H || !S.t2) return '';
+    var base = String(location.href).split('#')[0];
+    return base + '#s=1.' + normHex(S.H) + '.' + S.sats + '.' + usdtUnits() + '.' + S.t2 + '.' + (S.t1 || 0);
   }
-  function takerBadge() {
-    if (S.phase === 'settled') return { on: true, txt: '교환 완료' };
-    if (S.phase === 'refunded') return { on: false, txt: '환불됨' };
-    if (S.phase === 'expired') return { on: false, txt: '만료' };
-    if (S.lockT) return { on: true, txt: '잠금 완료' };
-    return { on: false, txt: '대기 중' };
+  function parseSwapLink(hash) {
+    var m = /(?:^|[#&])s=([0-9A-Za-z._-]+)/.exec(String(hash || ''));
+    if (!m) return null;
+    var p = m[1].split('.');
+    if (p.length < 5 || p[0] !== '1') return null;
+    if (!/^[0-9a-f]{64}$/i.test(p[1])) return null;
+    var sats = Number(p[2]), units = Number(p[3]), t2 = Number(p[4]), t1 = Number(p[5] || 0);
+    if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
+    return { H: '0x' + p[1].toLowerCase(), sats: sats, units: units, t2: t2, t1: t1 };
+  }
+
+  /* ------------------------------------------------------------ gates --- */
+  function bad(code, msg) { return { ok: false, code: code, msg: msg }; }
+  function good(msg, extra) {
+    var r = { ok: true, code: 'ok', msg: msg };
+    if (extra) { for (var k in extra) r[k] = extra[k]; }
+    return r;
+  }
+  function checkInvoice() {
+    var raw = String($('invIn').value || '').trim().replace(/^lightning:/i, '');
+    if (!raw) return bad('empty', 'Paste the hold invoice the USDT side sent you. Nothing locks without a payment_hash.');
+    if (!/^ln(bc|tb|bcrt)/i.test(raw)) {
+      return bad('format', 'That is not a BOLT11 invoice: it has to start with lnbc, lntb or lnbcrt.');
+    }
+    var d;
+    try { d = decodeBolt11(raw); } catch (e) { return bad('format', 'Invoice rejected — ' + e.message + '.'); }
+    if (!d.paymentHash) return bad('format', 'This invoice carries no payment_hash, so it cannot hold a hashlock.');
+    if (normHex(d.paymentHash) !== normHex(S.H)) {
+      return bad('mismatch', 'payment_hash ' + short(d.paymentHash, 6) + ' is not H (' + short(S.H, 6) +
+        '). Paying it would lock bitcoin against a different secret.');
+    }
+    if (d.sats == null) return bad('amount', 'The invoice is amountless, so the amount cannot be tied to this swap.');
+    if (d.sats !== S.sats) {
+      return bad('amount', 'The invoice asks for ' + fmt(d.sats) + ' sats; this swap is ' + fmt(S.sats) + ' sats.');
+    }
+    if (d.expiresAt != null && nowSec() > d.expiresAt) {
+      return bad('expired', 'The invoice expired at ' + clock(d.expiresAt) + '. Ask for a fresh one.');
+    }
+    if (d.network !== NET) return bad('network', 'Invoice network "' + d.network + '" does not match this swap (' + NET + ').');
+    return good('payment_hash matches H · ' + fmt(d.sats) + ' sats · expires ' + (d.expiresAt ? clock(d.expiresAt) : 'never'),
+      { dec: d, raw: raw });
+  }
+
+  function checkReceipt() {
+    if (S.mode !== 'wallet') return good('practice: the wallet step is simulated here', { code: 'skip' });
+    var v = normHex($('receiptIn').value);
+    if (!v) return bad('empty', 'Wallet mode: paste the payment_hash your wallet shows after paying this invoice.');
+    if (!/^[0-9a-f]{64}$/.test(v)) return bad('format', 'A payment hash is 32 bytes: 64 hex characters.');
+    if (v !== normHex(S.H)) return bad('mismatch', 'That receipt is for a different payment — its hash is not H.');
+    return good('Wallet receipt matches H.');
+  }
+
+  function readLockProof(text) {
+    var t = String(text || '').trim();
+    if (!t) return { kind: 'empty' };
+    if (t.charAt(0) === '{') {
+      var j;
+      try { j = JSON.parse(t); } catch (e) { return { kind: 'error', msg: 'That JSON does not parse.' }; }
+      if (!j || !j.hashlock) return { kind: 'error', msg: 'The JSON record has no hashlock field.' };
+      return {
+        kind: 'json', hashlock: String(j.hashlock),
+        timelock: j.timelock == null ? '' : String(j.timelock),
+        amount: j.amount == null ? '' : String(j.amount),
+        receiver: String(j.receiver || ''), token: String(j.token || '')
+      };
+    }
+    var raw = t.toLowerCase(), h = raw.replace(/^0x/, '');
+    if (/^[0-9a-f]{328}$/.test(h)) return decodeLockCalldata(h);
+    if (/^0x[0-9a-f]{64}$/.test(raw)) return { kind: 'tx', hash: raw };
+    if (/^(liquidnetwork:|lq1|el1|vj|ex1)/i.test(t)) {
+      var body = t.replace(/^liquidnetwork:/i, '');
+      var qi = body.indexOf('?');
+      var addr = qi < 0 ? body : body.slice(0, qi);
+      var q = {};
+      if (qi >= 0) {
+        body.slice(qi + 1).split('&').forEach(function (kv) {
+          if (!kv) return;
+          var i = kv.indexOf('=');
+          q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+        });
+      }
+      return {
+        kind: 'liquid', address: addr, hashlock: q.hashlock || '',
+        timelock: q.timelock || q.t2 || '', amount: q.amount || ''
+      };
+    }
+    return { kind: 'error', msg: 'Unrecognised proof. Paste lock() calldata, a swap JSON record, a Liquid lock URI or a 32-byte tx hash.' };
+  }
+
+  function checkProof() {
+    var p = readLockProof($('proofIn').value);
+    if (p.kind === 'empty') {
+      return bad('empty', 'Paste the escrow proof: lock() calldata, a lock JSON record, a Liquid lock URI or the lock tx hash.');
+    }
+    if (p.kind === 'error') return bad('format', p.msg);
+    if (p.kind === 'tx') {
+      if (/^0x0{64}$/.test(p.hash)) return bad('format', 'That transaction hash is all zeros.');
+      return { ok: true, code: 'ref', dec: p,
+        msg: 'Lock transaction ' + short(p.hash, 6) + ' recorded as a reference. A hash alone cannot be matched to H offline, so this leg is logged unverified.' };
+    }
+    if (p.kind === 'calldata' && p.selector !== SEL.lock) {
+      return bad('format', 'This calldata calls 0x' + p.selector + ', not lock() (0x' + SEL.lock + ').');
+    }
+    var locked = String(p.hashlock || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(locked)) return bad('format', 'The proof carries no 32-byte hashlock.');
+    if (normHex(locked) !== normHex(S.H)) {
+      return bad('mismatch', 'The escrow locks ' + short(locked, 6) + ', not H (' + short(S.H, 6) +
+        '). Revealing R could never claim it.');
+    }
+    var tl = String(p.timelock == null ? '' : p.timelock).trim();
+    if (!tl) return bad('timelock', 'The proof has no timelock. T2 has to be visible to compare it with the swap.');
+    if (tl !== String(S.t2)) {
+      return bad('timelock', 'The escrow timelock is ' + tl + '; this swap needs T2 = ' + S.t2 + '.');
+    }
+    var units = p.kind === 'liquid'
+      ? (p.amount === '' ? null : Math.round(Number(p.amount) * 1e6))
+      : (p.amount === '' ? null : Number(p.amount));
+    if (units == null || !isFinite(units) || Math.round(units) <= 0) {
+      return bad('amount', 'The proof has no USDT amount to compare with ' + usdtTxt() + ' USDT.');
+    }
+    var held = Math.round(units), want = Number(usdtUnits());
+    var same = p.kind === 'liquid' ? Math.round(held / 1e4) === Math.round(want / 1e4) : held === want;
+    if (!same) {
+      return bad('amount', 'The escrow holds ' + (held / 1e6).toFixed(2) + ' USDT; this swap needs ' + usdtTxt() + ' USDT.');
+    }
+    if (p.receiver && isAddr(p.receiver) && /^0x0{40}$/.test(p.receiver)) {
+      return bad('format', 'The escrow receiver is the zero address — nobody could claim it.');
+    }
+    var where = p.kind === 'calldata' ? 'lock() calldata' : p.kind === 'json' ? 'lock record' : 'Liquid lock ' + short(p.address, 6);
+    var who = p.receiver && isAddr(p.receiver) ? ' · pays ' + short(p.receiver, 4) : '';
+    return good(where + ' decoded: hashlock H, timelock T2, ' + usdtTxt() + ' USDT' + who, { dec: p });
+  }
+
+  function checkPreimage() {
+    var v = normHex($('preIn').value);
+    if (!v) return Promise.resolve(bad('empty', 'Paste the 32-byte preimage R. The escrow will not release without it.'));
+    if (!/^[0-9a-f]{64}$/.test(v)) return Promise.resolve(bad('format', 'R is 32 bytes: exactly 64 hex characters.'));
+    return sha256Hex(v).then(function (h) {
+      var got = '0x' + h;
+      if (normHex(got) !== normHex(S.H)) {
+        return bad('mismatch', 'SHA256(R) = ' + short(got, 8) + ' but H = ' + short(S.H, 8) +
+          '. The escrow rejects this preimage.');
+      }
+      return good('SHA256(R) matches H · this reveal releases the escrow and settles the HTLC.');
+    }).catch(function (e) { return bad('format', 'SHA-256 failed: ' + e.message); });
+  }
+
+  function stepNo() {
+    if (S.phase === 'idle') return 0;
+    if (S.phase === 'open') return 1;
+    if (S.phase === 'btc') return 2;
+    if (S.phase === 'both') return 3;
+    return 4;
+  }
+  function mainInput() {
+    if (S.phase === 'open' && S.role === 'maker') return 'invIn';
+    if (S.phase === 'btc') return 'proofIn';
+    if (S.phase === 'both') return 'preIn';
+    return null;
+  }
+
+  function validate() {
+    if (S.phase === 'idle') return Promise.resolve(good('Creating a swap generates a fresh secret R and H = SHA256(R).'));
+    if (S.phase === 'expired') return Promise.resolve(good('T2 has passed, so both legs can only be refunded.'));
+    if (S.phase === 'settled' || S.phase === 'refunded') return Promise.resolve(good('This swap is closed.'));
+    if (stepNo() === 1) {
+      if (S.role === 'taker') return Promise.resolve(good('Minting a BOLT11 invoice with payment_hash = H and ' + fmt(S.sats) + ' sats.'));
+      var inv = checkInvoice();
+      if (!inv.ok) return Promise.resolve(inv);
+      var rc = checkReceipt();
+      if (!rc.ok) return Promise.resolve(rc);
+      return Promise.resolve(good(inv.msg + (S.mode === 'wallet' ? ' · ' + rc.msg : ''), { inv: inv }));
+    }
+    if (stepNo() === 2) return Promise.resolve(checkProof());
+    if (stepNo() === 3) return checkPreimage();
+    return Promise.resolve(bad('state', 'Nothing to confirm in this state.'));
+  }
+
+  /* ------------------------------------------------------------ render --- */
+  function headline() {
+    var t = S.role === 'taker';
+    if (S.phase === 'idle') return ['Swap bitcoin for USDT', ''];
+    if (S.phase === 'open') return t ? ['Issue the hold invoice', ''] : ['Lock bitcoin to open the swap', ''];
+    if (S.phase === 'btc') return t ? ['Lock USDT in escrow', ''] : ['Bitcoin is locked · USDT next', ''];
+    if (S.phase === 'both') return ['Both sides locked · settle now', 'ready'];
+    if (S.phase === 'settled') return ['Swap settled', 'done'];
+    if (S.phase === 'expired') return ['Timelock expired', 'warn'];
+    return ['Both legs refunded', 'warn'];
+  }
+
+  function btcChip() {
+    if (S.btcState === 'settled') return { txt: 'Settled', cls: 'on' };
+    if (S.btcState === 'held') return { txt: 'HTLC held', cls: S.phase === 'expired' ? 'warn' : 'on' };
+    if (S.btcState === 'refunded') return { txt: 'Refunded', cls: 'warn' };
+    if (S.phase === 'expired') return { txt: 'Expired', cls: 'warn' };
+    return { txt: 'Unlocked', cls: '' };
+  }
+  function usdtChip() {
+    if (S.usdtState === 'claimed') return { txt: 'Claimed', cls: 'on' };
+    if (S.usdtState === 'locked') return { txt: 'Locked', cls: S.phase === 'expired' ? 'warn' : 'on' };
+    if (S.usdtState === 'refunded') return { txt: 'Refunded', cls: 'warn' };
+    if (S.phase === 'expired') return { txt: 'Expired', cls: 'warn' };
+    return { txt: 'Unlocked', cls: '' };
   }
 
   function render() {
-    var p = S.phase, h = HEADLINE[p] || HEADLINE.idle;
-    document.body.dataset.phase = p;
+    var h = headline();
+    document.body.dataset.phase = S.phase;
     document.body.dataset.mode = S.mode;
+    document.body.dataset.role = S.role;
 
     $('statusTxt').textContent = h[0];
     $('statusTxt').className = 'headline' + (h[1] ? ' ' + h[1] : '');
-    $('note').textContent = S.mode === 'practice'
-      ? '연습 모드 · 실제 자금이 오가지 않아요'
-      : '지갑 모드 · 요청서를 지갑으로 넘겨 실제로 결제·수령할 수 있어요';
-    $('modeBtn').textContent = S.mode === 'practice' ? '연습 모드' : '지갑 모드';
-    $('modeBtn').className = 'mode' + (S.mode === 'wallet' ? ' live' : '');
+    $('note').textContent = S.mode === 'wallet'
+      ? 'Wallet mode · a real invoice, a real wallet and its payment hash'
+      : S.role === 'taker'
+        ? 'Practice escrow · you joined as the USDT side'
+        : 'Practice escrow · no real funds move';
+    $('modePractice').className = S.mode === 'practice' ? 'on' : '';
+    $('modeWallet').className = S.mode === 'wallet' ? 'on' : '';
+    $('roleBadge').hidden = S.role !== 'taker';
+    $('roleTxt').textContent = 'USDT side';
 
-    $('makerAmt').textContent = fmt(S.sats);
-    $('takerAmt').textContent = usdtTxt();
-    $('makerSub').textContent = '≈ ' + usdtTxt() + ' USDT';
-    $('takerSub').textContent = p === 'settled' ? '교환 완료 · AQUA 지갑으로 받았어요'
-      : p === 'refunded' ? '환불 완료 · 잠금이 풀렸어요'
-        : p === 'expired' ? '만료 · 환불할 수 있어요'
-          : S.lockT ? '잠금 완료 · ' + leftTxt() + ' 뒤 환불 가능'
-            : 'Liquid · AQUA 지갑';
+    $('btcAmt').textContent = fmt(S.sats);
+    $('usdtAmt').textContent = usdtTxt();
+    $('btcSub').textContent = '≈ ' + usdtTxt() + ' USDT' + (S.pstate === 'live' ? ' at the live rate' : ' at the demo rate');
 
-    var bm = makerBadge(), bt = takerBadge();
-    $('chipMaker').className = 'chip' + (bm.on ? ' on' : '');
-    $('chipMakerTxt').textContent = bm.txt;
-    $('chipTaker').className = 'chip' + (bt.on ? ' on' : '');
-    $('chipTakerTxt').textContent = bt.txt;
+    var cb = btcChip(), cu = usdtChip();
+    $('chipBtc').className = 'chip ' + cb.cls;
+    $('chipBtcTxt').textContent = cb.txt;
+    $('chipUsdt').className = 'chip ' + cu.cls;
+    $('chipUsdtTxt').textContent = cu.txt;
 
     $('rateDot').className = 'dot ' + (S.pstate === 'live' ? 'live' : S.pstate === 'offline' ? 'off' : '');
     $('rateTxt').textContent = S.price ? '1 BTC ≈ ' + fmt(Math.round(S.price)) + ' USDT' : '1 BTC ≈ — USDT';
 
-    $('vH').textContent = S.H || '—';
+    var btcOn = S.btcState === 'held' || S.btcState === 'settled';
+    var usdtOn = S.usdtState === 'locked' || S.usdtState === 'claimed';
+    $('cardBtc').dataset.on = btcOn ? '1' : '0';
+    $('cardUsdt').dataset.on = usdtOn ? '1' : '0';
+    $('lkBtc').className = 'lk' + (btcOn ? ' on' : '');
+    $('lkUsdt').className = 'lk' + (usdtOn ? ' on' : '');
+    $('railFill').style.setProperty('--f', (btcOn && usdtOn ? 100 : btcOn || usdtOn ? 50 : 0) + '%');
+    var rs = 'Neither side locked', rsOn = false;
+    if (S.phase === 'settled') { rs = 'Settled · both legs closed'; rsOn = true; }
+    else if (S.phase === 'refunded') { rs = 'Refunded · nothing was claimed'; }
+    else if (S.phase === 'expired') { rs = 'Timelock expired · refund open'; }
+    else if (btcOn && usdtOn) { rs = 'Both sides locked · settle before T2'; rsOn = true; }
+    else if (btcOn) { rs = 'Bitcoin locked · waiting for USDT'; rsOn = true; }
+    else if (usdtOn) { rs = 'USDT locked · waiting for bitcoin'; rsOn = true; }
+    else if (S.phase === 'open') { rs = S.role === 'taker' ? 'No lock yet · mint the invoice' : 'No lock yet'; }
+    $('railState').textContent = rs;
+    $('railState').className = 'rail-state' + (rsOn ? ' on' : '');
+
+    $('vH').textContent = S.H ? short(S.H, 12) : '—';
     $('vR').textContent = !S.R ? '—'
-      : p === 'settled' ? S.R
-        : '0x' + '•'.repeat(8) + S.R.slice(-8) + (p === 'refunded' ? ' (공개되지 않음)' : ' (교환 전에는 숨김)');
-    $('vT1').textContent = S.t1 ? 'height ' + fmt(S.t1) + ' (약 6.7시간)' : '—';
-    $('vT2').textContent = S.t2 ? 'unix ' + S.t2 + ' · ' + leftTxt() : '—';
+      : (S.phase === 'settled') ? S.R
+        : '0x' + '•'.repeat(8) + S.R.slice(-8) + (S.phase === 'refunded' ? ' (never revealed)' : ' (sealed until settlement)');
+    $('vT1').textContent = S.t1 ? 'block ' + fmt(S.t1) + ' · ~' + spanTxt((S.t1 - curHeight()) * BLOCK_SECS) : '—';
+    $('vT2').textContent = S.t2 ? 'unix ' + S.t2 + ' · ' + priceNow() : '—';
     $('vId').textContent = S.id || '—';
     $('vRate').textContent = S.pstate === 'live'
       ? 'BTC $' + fmt(Math.round(S.price)) + ' · mempool.space'
-      : S.pstate === 'offline' ? 'mempool.space 응답 없음 · 임시 $90,000' : '불러오는 중…';
-    $('calldata').textContent = nextCalldata() ? short(nextCalldata(), 16) : '—';
+      : S.pstate === 'offline' ? 'mempool.space unreachable · demo $90,000' : 'loading…';
+    $('vLink').textContent = swapLink() ? short(swapLink(), 14) : '—';
+    $('calldata').textContent = nextCalldata() ? short(nextCalldata(), 14) : '—';
     $('vRequest').textContent = liquidRequest() || '—';
-
-    $('presets').className = 'presets' + (p === 'idle' ? '' : ' hide');
-    Array.prototype.forEach.call($('presets').children, function (b) {
-      b.className = Number(b.dataset.v) === S.sats ? 'on' : '';
-    });
-
-    var link = S.li ? 'lightning:' + S.li : '#dTech';
-    $('openWallet').setAttribute('href', link);
-    $('openWalletDeep').setAttribute('href', S.li ? link : '#');
     $('weblnInfo').textContent = S.webln ? S.webln.node : 'not connected';
     $('nwcInfo').textContent = S.nwc ? S.nwc.relay + ' · ' + short(S.nwc.pubkey, 4) : '—';
 
-    renderBar();
+    $('counterInv').textContent = S.counterInv || '—';
+    $('shareLink').textContent = swapLink() || '—';
+    $('shareRow').hidden = !(S.phase === 'open' && S.role === 'maker' && S.mode === 'practice');
+    $('counterSrc').hidden = S.mode !== 'practice' || S.role !== 'maker';
+    $('invTools').hidden = S.mode !== 'practice' || S.role !== 'maker';
+    $('receiptLbl').hidden = S.mode !== 'wallet';
+    $('receiptIn').hidden = S.mode !== 'wallet';
+    $('wRow').hidden = S.mode !== 'wallet';
+    $('walletLink').setAttribute('href', 'lightning:' + (currentInvoice() || ''));
+    $('issueOut').textContent = S.inv || '—';
+    $('sealR').textContent = S.R || '—';
+    $('seal').hidden = !S.sealOpen || !S.R || S.role === 'taker';
+    $('preHint').textContent = S.role === 'taker' ? '· revealed by the bitcoin side' : '· sealed on this device';
+    $('expH').textContent = S.H ? short(S.H, 6) : '—';
+    $('expT2').textContent = S.t2 ? String(S.t2) : '—';
+    $('expAmt').textContent = usdtTxt();
+
+    renderStep();
     renderLog();
+    renderMeters();
   }
 
-  function renderBar() {
-    var p = S.phase, pa = 'create', pt = '교환 시작하기', aa = null, at = '', ba = null, bt = '';
-    if (p === 'idle') {
-      pa = 'create'; pt = '교환 시작하기';
-    } else if (p === 'offer') {
-      pa = 'lockMaker'; pt = '1. 내 비트코인 잠그기';
-      ba = 'reset'; bt = '처음부터';
-    } else if (p === 'half') {
-      pa = 'lockTaker'; pt = '2. 상대 USDT 잠금 확인';
-      aa = 'advance'; at = '시간 초과 환불 테스트';
-      ba = 'reset'; bt = '처음부터';
-    } else if (p === 'both') {
-      pa = 'claim'; pt = '3. 동시 교환 완료!';
-      aa = 'advance'; at = '시간 초과 환불 테스트';
-      ba = 'reset'; bt = '처음부터';
-    } else if (p === 'expired') {
-      pa = 'refund'; pt = '환불 받기';
-      ba = 'reset'; bt = '처음부터';
-    } else {
-      pa = 'reset'; pt = '새로 시작하기';
-      aa = 'copyReceipt'; at = '영수증 복사';
-    }
-    setBtn($('primary'), pa, pt);
-    setBtn($('ghostA'), aa, at);
-    setBtn($('ghostB'), ba, bt);
+  function currentInvoice() {
+    var v = String($('invIn').value || '').trim();
+    return v || S.counterInv || '';
   }
-  function setBtn(el, act, txt) {
-    if (!act) { el.style.display = 'none'; el.dataset.act = ''; return; }
-    el.style.display = '';
-    el.dataset.act = act;
-    el.textContent = txt;
+
+  function renderStep() {
+    var step = stepNo(), taker = S.role === 'taker';
+    var kick = 'START', title = 'Choose an amount', actor = 'You · bitcoin side', panel = 'pCreate';
+    var desc = 'Open a swap, then lock each side against the same hashlock. Nothing moves until both sides are in.';
+    var primary = 'Create swap', ghosts = false;
+
+    if (S.phase === 'open' && taker) {
+      kick = 'STEP 1 OF 3'; title = 'Issue the hold invoice'; actor = 'You · USDT side'; panel = 'pIssue';
+      desc = 'Mint the invoice the bitcoin side will pay. Same H, same amount: the payer locks into an HTLC it can only release with R.';
+      primary = 'Mint hold invoice';
+    } else if (S.phase === 'open') {
+      kick = 'STEP 1 OF 3'; title = 'Lock bitcoin'; actor = 'You · bitcoin side'; panel = 'pInvoice';
+      desc = 'Paste the hold invoice from the USDT side. The app decodes it and refuses anything whose payment_hash is not H.';
+      primary = 'Pay invoice & lock bitcoin'; ghosts = true;
+    } else if (S.phase === 'btc' && taker) {
+      kick = 'STEP 2 OF 3'; title = 'Lock USDT in escrow'; actor = 'You · USDT side'; panel = 'pProof';
+      desc = 'The bitcoin HTLC is held. Lock the same amount of USDT against the same H, and check the proof before you sign anything.';
+      primary = 'Lock USDT'; ghosts = true;
+    } else if (S.phase === 'btc') {
+      kick = 'STEP 2 OF 3'; title = 'Verify the USDT lock'; actor = 'Counterparty · USDT side'; panel = 'pProof';
+      desc = 'Read the counterparty escrow proof and match it against H, T2 and the amount. A lock to any other hash cannot be claimed.';
+      primary = 'Verify escrow & continue'; ghosts = true;
+    } else if (S.phase === 'both') {
+      kick = 'STEP 3 OF 3'; title = taker ? 'Settle the Lightning leg' : 'Settle with the preimage';
+      actor = taker ? 'You · USDT side' : 'You · bitcoin side'; panel = 'pClaim';
+      desc = taker
+        ? 'The claim published R on-chain. Verify it against H and settle the HTLC with it.'
+        : 'Reveal R. One hash check settles both legs: the escrow pays out and the HTLC learns its preimage.';
+      primary = taker ? 'Settle with revealed R' : 'Settle swap'; ghosts = true;
+    } else if (S.phase === 'expired') {
+      kick = 'TIMELOCK'; title = 'Refund both legs'; actor = 'Anyone'; panel = '';
+      desc = 'T2 has passed, so the claim window is closed. Both sides get their own funds back and R is never revealed.';
+      primary = 'Refund both legs'; ghosts = true;
+    } else if (S.phase === 'settled') {
+      kick = 'CLOSED'; title = 'Swap settled'; actor = 'Both sides'; panel = '';
+      desc = 'The escrow paid the bitcoin side and the HTLC was settled with the same R.';
+      primary = 'Start a new swap';
+    } else if (S.phase === 'refunded') {
+      kick = 'CLOSED'; title = 'Both legs refunded'; actor = 'Both sides'; panel = '';
+      desc = 'Nothing was claimed before the timelock, so each side kept its own funds.';
+      primary = 'Start a new swap';
+    }
+
+    $('stepKicker').textContent = kick;
+    $('stepTitle').textContent = title;
+    $('stepActor').textContent = actor;
+    $('stepActor').className = 'actor' + (actor.indexOf('Counterparty') === 0 ? ' other' : '');
+    $('stepDesc').textContent = desc;
+    ['pCreate', 'pIssue', 'pInvoice', 'pProof', 'pClaim'].forEach(function (id) {
+      $(id).hidden = (panel !== id);
+    });
+    $('primary').textContent = primary;
+    $('ghostA').hidden = !ghosts;
+    $('ghostB').hidden = !ghosts;
   }
 
   function renderLog() {
@@ -1250,7 +1823,10 @@ contract LightningUsdtHTLC {
     ol.innerHTML = '';
     if (!S.log.length) {
       var li = document.createElement('li');
-      li.innerHTML = '<time>--:--:--</time><b>IDLE</b><span>아직 기록이 없어요</span>';
+      var t = document.createElement('time'); t.textContent = '--:--:--';
+      var b = document.createElement('b'); b.textContent = 'IDLE';
+      var s = document.createElement('span'); s.textContent = 'Nothing recorded yet.';
+      li.appendChild(t); li.appendChild(b); li.appendChild(s);
       ol.appendChild(li);
       return;
     }
@@ -1265,209 +1841,453 @@ contract LightningUsdtHTLC {
     });
   }
 
+  function renderMeters() {
+    var closed = S.phase === 'settled' || S.phase === 'refunded';
+    var t1s = S.t1 ? (S.t1 - curHeight()) * BLOCK_SECS : 0;
+    var t1p = S.t1 ? Math.max(0, Math.min(100, t1s / (T1_BLOCKS * BLOCK_SECS) * 100)) : 0;
+    var t2s = S.t2 ? S.t2 - nowSec() : 0;
+    var t2p = S.t2 ? Math.max(0, Math.min(100, t2s / T2_SPAN * 100)) : 0;
+    $('t1H').textContent = S.t1 ? fmt(S.t1) : '—';
+    $('t1Left').textContent = !S.t1 ? '—' : closed ? 'closed' : '~' + spanTxt(t1s);
+    $('t2U').textContent = S.t2 ? String(S.t2) : '—';
+    $('t2Left').textContent = !S.t2 ? '—' : closed ? 'closed' : spanTxt(t2s);
+    $('t1Bar').style.width = t1p + '%';
+    $('t2Bar').style.width = t2p + '%';
+    $('t1Meter').className = 'meter' + (t1p <= 0 ? ' dead' : t1p < 25 ? ' warn' : '');
+    $('t2Meter').className = 'meter' + (t2p <= 0 ? ' dead' : t2p < 25 ? ' warn' : '');
+  }
+
+  /* ------------------------------------------------------------- gate UI -- */
+  var gateTimer;
+  function refreshGate() {
+    clearTimeout(gateTimer);
+    gateTimer = setTimeout(function () {
+      validate().then(paintGate);
+    }, 80);
+  }
+  function paintGate(r) {
+    S.gate = r;
+    var g = $('gate');
+    var state = r.ok ? (r.code === 'ref' ? 'ref' : 'ok') : (r.code === 'empty' ? 'idle' : 'err');
+    g.dataset.state = state;
+    $('gateTxt').textContent = r.msg;
+    $('primary').dataset.ready = r.ok ? '1' : '0';
+    var id = mainInput();
+    if (id) {
+      var el = $(id);
+      el.dataset.state = r.ok ? 'ok' : (r.code === 'empty' ? '' : 'err');
+    }
+  }
+  function shake() {
+    var g = $('gate');
+    g.classList.remove('shake');
+    void g.offsetWidth;
+    g.classList.add('shake');
+  }
+
+  /* ------------------------------------------------------------ actions -- */
+  function createSwap() {
+    var R = rndHex(32);
+    sha256Hex(R).then(function (H) {
+      S.R = '0x' + R;
+      S.H = '0x' + H;
+      S.t2 = nowSec() + T2_SPAN;
+      S.t1 = curHeight() + T1_BLOCKS;
+      S.units = S.price ? Math.round(S.sats / 1e8 * S.price * 1e6) : null;
+      S.phase = 'open';
+      S.btcState = 'none'; S.usdtState = 'none';
+      S.inv = ''; S.invDec = null;
+      $('invIn').value = ''; $('proofIn').value = ''; $('preIn').value = ''; $('receiptIn').value = '';
+      $('invIn').dataset.state = ''; $('proofIn').dataset.state = ''; $('preIn').dataset.state = '';
+      S.counterInv = S.mode === 'practice' ? mintInvoice({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN }) : '';
+      S.altInv = S.mode === 'practice' ? mintInvoice({ paymentHash: '0x' + rndHex(32), sats: S.sats, expiry: T2_SPAN }) : '';
+      log('CREATE', 'Swap opened · ' + fmt(S.sats) + ' sats ⇄ ' + usdtTxt() + ' USDT');
+      log('HASH', 'R sealed · H = SHA256(R) = ' + short(S.H, 8));
+      log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' (BTC) · T2 unix ' + S.t2 + ' (USDT)');
+      if (S.counterInv) log('INVOICE', 'Counterparty hold invoice minted · payment_hash = H');
+      return computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, tokenAddr(), usdtUnits(), S.t2);
+    }).then(function (id) {
+      S.id = id;
+      render();
+      refreshGate();
+      toast('Swap opened · paste the hold invoice');
+    }).catch(function (e) {
+      log('FAIL', 'SHA-256: ' + e.message, 'c-err');
+      render();
+      toast('WebCrypto is unavailable');
+    });
+  }
+
+  function lockBtc(r) {
+    var inv = (r && r.inv) || checkInvoice();
+    S.inv = inv.raw;
+    S.invDec = inv.dec;
+    S.btcState = 'held';
+    S.phase = 'btc';
+    log('VERIFY', 'payment_hash == H · ' + fmt(inv.dec.sats) + ' sats · network ' + inv.dec.network);
+    log('LOCK', 'BTC · ' + fmt(S.sats) + ' sats held in the HTLC until block ' + fmt(S.t1));
+    if (S.mode === 'wallet') log('WALLET', 'Receipt accepted · ' + short(normHex($('receiptIn').value), 6));
+    render();
+    refreshGate();
+    toast('Bitcoin locked · verify the USDT escrow');
+  }
+
+  function issueInvoice() {
+    S.inv = mintInvoice({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN });
+    var d;
+    try { d = decodeBolt11(S.inv); } catch (e) {
+      log('FAIL', 'minted invoice does not decode: ' + e.message, 'c-err');
+      render();
+      toast('Invoice could not be verified');
+      return;
+    }
+    S.invDec = d;
+    log('INVOICE', 'BOLT11 minted · ' + fmt(d.sats) + ' sats · payment_hash ' + short(d.paymentHash, 6));
+    if (normHex(d.paymentHash) !== normHex(S.H)) {
+      log('FAIL', 'minted invoice payment_hash is not H', 'c-err');
+      render();
+      toast('Invoice hash mismatch');
+      return;
+    }
+    log('VERIFY', 'self-check · payment_hash == H ✓ · expires ' + clock(d.expiresAt));
+    S.btcState = 'held';
+    S.phase = 'btc';
+    log('SIM', 'BTC side paid the hold invoice · HTLC held (simulated)', 'c-sim');
+    render();
+    refreshGate();
+    toast('Invoice minted · lock your USDT');
+  }
+
+  function lockUsdt(r) {
+    S.usdtState = 'locked';
+    S.phase = 'both';
+    S.usdtProof = String($('proofIn').value || '').trim();
+    log('VERIFY', (r && r.msg) || checkProof().msg);
+    log('LOCK', 'USDT · ' + usdtTxt() + ' USDT locked in escrow until T2 ' + S.t2);
+    render();
+    refreshGate();
+    toast('USDT locked · settle with R');
+  }
+
+  function settle(r) {
+    var pre = '0x' + normHex($('preIn').value);
+    S.btcState = 'settled';
+    S.usdtState = 'claimed';
+    S.phase = 'settled';
+    if (S.role === 'maker') {
+      log('CLAIM', 'escrow claimed · ' + usdtTxt() + ' USDT → you');
+      log('REVEAL', 'R published ' + short(pre, 6) + ' · anyone can settle the HTLC with it');
+      log('SETTLE', 'bitcoin HTLC settled with R · swap closed');
+    } else {
+      log('CHECK', (r && r.code === 'ok' ? 'SHA256(revealed R) == H ✓' : 'reveal accepted'));
+      log('SETTLE', 'Lightning HTLC settled with the revealed R · swap closed');
+    }
+    render();
+    refreshGate();
+    toast('Swap settled');
+  }
+
+  function doRefund() {
+    if (nowSec() < (S.t2 || 0)) { toast('T2 has not passed yet'); return; }
+    var held = S.btcState === 'held' || S.usdtState === 'locked';
+    if (S.btcState === 'held') S.btcState = 'refunded';
+    if (S.usdtState === 'locked') S.usdtState = 'refunded';
+    S.phase = 'refunded';
+    log('REFUND', held ? 'both legs returned to their owners after T2' : 'nothing was locked · the swap expired unused');
+    log('VOID', 'R was never revealed · the hashlock stays unused', 'c-warn');
+    render();
+    toast('Refunded');
+  }
+
+  function reset() {
+    S.phase = 'idle'; S.H = null; S.R = null; S.id = null;
+    S.btcState = 'none'; S.usdtState = 'none';
+    S.sim = 0; S.t1 = null; S.t2 = null; S.units = null; S.sealOpen = false;
+    S.inv = ''; S.invDec = null; S.counterInv = ''; S.altInv = '';
+    ['invIn', 'proofIn', 'preIn', 'receiptIn'].forEach(function (id) {
+      $(id).value = ''; $(id).dataset.state = '';
+    });
+    log('RESET', 'State cleared · start a new swap');
+    render();
+    refreshGate();
+  }
+
+  function join(link) {
+    S.role = 'taker';
+    S.mode = 'practice';
+    S.H = link.H;
+    S.sats = link.sats;
+    S.units = link.units;
+    S.t2 = link.t2;
+    S.t1 = link.t1 || (curHeight() + T1_BLOCKS);
+    S.R = null;
+    S.phase = 'open';
+    S.btcState = 'none'; S.usdtState = 'none';
+    S.inv = ''; S.invDec = null;
+    log('JOIN', 'Joined as the USDT side · ' + fmt(S.sats) + ' sats ⇄ ' + usdtTxt() + ' USDT');
+    log('HASH', 'H ' + short(S.H, 8) + ' · R stays with the bitcoin side');
+    log('TIMELOCK', 'T2 unix ' + S.t2 + ' · T1 block ' + fmt(S.t1));
+    computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, tokenAddr(), usdtUnits(), S.t2).then(function (id) {
+      S.id = id;
+      render();
+      refreshGate();
+    });
+    render();
+  }
+
+  function run() {
+    if (S.phase === 'settled' || S.phase === 'refunded' || S.phase === 'idle') {
+      if (S.phase === 'idle') { createSwap(); return; }
+      reset();
+      return;
+    }
+    if (S.phase === 'expired') { doRefund(); return; }
+    var step = stepNo();
+    validate().then(function (r) {
+      paintGate(r);
+      if (!r.ok) {
+        shake();
+        log('BLOCK', r.msg, 'c-err');
+        renderLog();
+        toast(r.msg);
+        return;
+      }
+      if (step === 1) (S.role === 'taker' ? issueInvoice() : lockBtc(r));
+      else if (step === 2) lockUsdt(r);
+      else if (step === 3) settle(r);
+    });
+  }
+
+  /* ---------------------------------------------------------------- QR --- */
+  function showQr(boxId, payload, caption) {
+    var box = $(boxId);
+    if (!payload) { box.innerHTML = ''; toast('Nothing to encode yet'); return; }
+    var bytes = utf8(payload).length;
+    if (bytes > QR_MAX) {
+      box.innerHTML = '<p class="hint">Too long for a QR here: copy it, or use the lightning: link instead.</p>';
+      return;
+    }
+    var svg = null;
+    ['M', 'L'].forEach(function (level) {
+      if (svg) return;
+      try { svg = window.QR.svg(payload, { level: level, quiet: 2 }); } catch (e) { svg = null; }
+    });
+    if (!svg) {
+      box.innerHTML = '<p class="hint">Too long for a QR here: copy it, or use the lightning: link instead.</p>';
+      return;
+    }
+    box.innerHTML = svg + (caption ? '<p class="hint" style="margin-top:8px">' + caption + '</p>' : '');
+  }
+
+  function row(k, v) {
+    return '<div><span class="k">' + k + '</span><span class="v mono">' +
+      String(v).replace(/[<>&]/g, '') + '</span></div>';
+  }
+
   function liquidRequest() {
     if (!S.liquid) return '';
     return 'liquidnetwork:' + S.liquid + '?amount=' + (usdtOf() || 0).toFixed(2);
   }
 
-  /* --------------------------------------------------------------- QR --- */
-  function showQr(boxId, payload, caption) {
-    var box = $(boxId);
-    if (!payload) { box.innerHTML = ''; toast('먼저 주소나 요청을 준비해 주세요'); return; }
-    var bytes = new TextEncoder().encode(payload).length;
-    if (bytes > QR_MAX) {
-      box.innerHTML = '<p class="hint">QR로 담기엔 요청이 너무 길어요. ‘지갑 앱으로 열기’나 복사를 써 주세요.</p>';
-      return;
-    }
-    try {
-      box.innerHTML = window.QR.svg(payload, { level: 'M', quiet: 2 }) + (caption ? '<p class="hint" style="margin-top:8px">' + caption + '</p>' : '');
-    } catch (e) {
-      box.innerHTML = '<p class="hint">QR을 만들 수 없어요: ' + e.message + '</p>';
-    }
+  function payloadJson() {
+    var out = {
+      protocol: 'cleanswap/1',
+      mode: S.mode,
+      role: S.role,
+      phase: S.phase,
+      hashlock: S.H,
+      sats: S.sats,
+      usdt: usdtOf() || null,
+      usdtUnits: usdtUnits() || null,
+      liquid: S.liquid || null,
+      htlc: htlcAddr(),
+      token: tokenAddr(),
+      timelock: S.t2,
+      t1: S.t1,
+      swapId: S.id,
+      invoice: S.inv || null,
+      paymentHash: S.invDec ? S.invDec.paymentHash : null,
+      usdtProof: (S.usdtProof || '').slice(0, 400),
+      calldata: nextCalldata() || null
+    };
+    if (S.phase === 'settled') out.preimage = S.R || ('0x' + normHex($('preIn').value));
+    return out;
   }
 
-  /* ------------------------------------------------------------ actions -- */
+  /* ------------------------------------------------------------ events --- */
   var ACT = {
-    mode: function () {
-      S.mode = S.mode === 'practice' ? 'wallet' : 'practice';
+    mode: function (b) {
+      if (S.phase !== 'idle') { toast('Finish or reset the swap first'); return; }
+      if (S.role === 'taker') { toast('A joined swap runs in practice mode'); return; }
+      S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
       render();
+      refreshGate();
+      if (S.mode === 'wallet') toast('Wallet mode · invoice + wallet receipt');
     },
-
     sats: function (b) {
       if (S.phase !== 'idle') return;
       S.sats = Number(b.dataset.v);
+      S.units = null;
       render();
     },
-
-    create: function () {
-      if (S.phase !== 'idle') { toast('진행 중인 교환이 있어요'); return; }
-      var R = rndHex(32);
-      sha256Hex(R).then(function (H) {
-        S.R = '0x' + R;
-        S.H = '0x' + H;
-        S.t2 = nowSec() + 3600;
-        S.t1 = S.h0 + 40;
-        S.lockM = false; S.lockT = false;
-        log('OFFER', '비밀값 R 생성 · H = SHA256(R)');
-        return computeSwapId(S.H, EVM.taker, EVM.maker, tokenAddr(), units(), S.t2);
-      }).then(function (id) {
-        S.id = id;
-        S.phase = 'offer';
-        log('HASH', 'H ' + short(S.H, 8));
-        log('TIMELOCK', 'T1 ' + fmt(S.t1) + ' 블록 > T2 +1시간');
-        render();
-        toast('교환 준비 완료');
-      }).catch(function (e) {
-        log('FAIL', 'SHA-256: ' + e.message, 'c-err');
-        render();
-        toast('SHA-256을 쓸 수 없어요');
-      });
-    },
-
-    lockMaker: function () {
-      if (S.phase !== 'offer' && S.phase !== 'half') return;
-      if (S.lockM) { toast('이미 잠겼어요'); return; }
-      S.lockM = true;
-      S.phase = S.lockT ? 'both' : 'half';
-      log('LOCK', '비트코인 잠금 · ' + fmt(S.sats) + ' sats · T1 ' + fmt(S.t1));
-      if (S.mode === 'wallet' && S.li) log('WALLET', '결제 요청을 지갑으로 넘길 수 있어요');
-      render();
-      toast('비트코인을 잠갔어요');
-    },
-
-    lockTaker: function () {
-      if (S.phase !== 'offer' && S.phase !== 'half') return;
-      if (S.lockT) { toast('이미 잠겼어요'); return; }
-      S.lockT = true;
-      S.phase = S.lockM ? 'both' : 'half';
-      log('LOCK', 'USDT 잠금 · ' + usdtTxt() + ' USDT · T2 +1시간');
-      if (S.phase === 'both') log('READY', '양쪽 잠금 완료 · 교환 가능');
-      render();
-      toast('USDT 잠금을 확인했어요');
-    },
-
-    claim: function () {
-      if (S.phase !== 'both') { toast('양쪽 잠금이 먼저예요'); return; }
-      if (!S.R) { toast('비밀값은 상대가 쥐고 있어요'); return; }
-      sha256Hex(S.R).then(function (h) {
-        if ('0x' + h !== S.H) {
-          log('FAIL', 'SHA256(R)이 H와 달라요', 'c-err');
-          render(); toast('해시가 맞지 않아 중단했어요');
-          return;
-        }
-        log('CHECK', 'SHA256(R) == H ✓');
-        log('CLAIM', '청구 · ' + usdtTxt() + ' USDT → 비트코인 판매자');
-        log('REVEAL', '비밀값 R 공개 ' + short(S.R, 6));
-        log('LN', '같은 R로 라이트닝 잠금도 정산');
-        S.phase = 'settled';
-        render();
-        toast('교환 완료!');
-      });
-    },
-
+    primary: function () { run(); },
     advance: function () {
-      if (S.phase === 'idle' || S.phase === 'settled' || S.phase === 'refunded') return;
-      S.sim += 3700;
-      log('CLOCK', '+1시간 1분 · T2 ' + leftTxt());
-      if (S.t2 && nowSec() >= S.t2 && S.phase !== 'expired') {
-        S.phase = 'expired';
-        log('TIMEOUT', 'T2 경과 · 청구 닫힘, 환불 열림', 'c-warn');
-      }
+      if (['open', 'btc', 'both'].indexOf(S.phase) < 0) return;
+      S.sim += T2_SPAN + 60;
+      log('CLOCK', 'test clock +' + Math.round((T2_SPAN + 60) / 60) + ' min', 'c-warn');
+      tick();
       render();
-      if (S.phase === 'expired') toast('시간 초과 · 환불할 수 있어요');
+      refreshGate();
     },
-
-    refund: function () {
-      if (S.phase !== 'expired') return;
-      S.phase = 'refunded';
-      log('REFUND', '환불 · ' + usdtTxt() + ' USDT → USDT 보유자');
-      log('VOID', '비밀값은 공개되지 않은 채 잠금이 만료됐어요', 'c-warn');
+    reset: function () { reset(); },
+    copyCounter: function () { copy(S.counterInv, 'Invoice copied'); },
+    fillCounter: function () {
+      if (!S.counterInv) return;
+      $('invIn').value = S.counterInv;
+      log('PASTE', 'counterparty invoice pasted · checking payment_hash');
       render();
-      toast('환불 완료');
+      refreshGate();
     },
-
-    reset: function () {
-      S.phase = 'idle'; S.H = null; S.R = null; S.id = null;
-      S.lockM = false; S.lockT = false; S.sim = 0; S.t1 = null; S.t2 = null;
-      log('NEW', '새 교환을 시작했어요');
+    fillWrong: function () {
+      if (!S.altInv) return;
+      $('invIn').value = S.altInv;
+      log('PASTE', 'mismatched invoice pasted · it must be refused');
       render();
+      refreshGate();
     },
-
-    copyReceipt: function () { copy(JSON.stringify(payload(), null, 2), '영수증'); },
-
-    evm: function () { /* kept for API compatibility */ },
-
+    copyLink: function () { copy(swapLink(), 'Link copied'); },
+    qrLink: function () { showQr('qrLinkBox', swapLink(), 'Open on the USDT side'); },
+    genProof: function () {
+      if (!S.H) return;
+      $('proofIn').value = escrowProof();
+      log('PROOF', 'escrow lock calldata generated · hashlock H, timelock T2');
+      render();
+      refreshGate();
+    },
+    copyProof: function () { copy($('proofIn').value || escrowProof(), 'Proof copied'); },
+    fillWrongProof: function () {
+      if (!S.H) return;
+      var alt = '0x' + rndHex(32);
+      $('proofIn').value = lockCalldata({ hashlock: alt, timelock: S.t2, receiver: EVM.btcSide, token: tokenAddr(), amount: usdtUnits() });
+      log('PASTE', 'mismatched escrow lock pasted · it must be refused');
+      render();
+      refreshGate();
+    },
+    reveal: function () {
+      if (!S.R) { toast('R belongs to the bitcoin side'); return; }
+      S.sealOpen = true;
+      $('seal').hidden = false;
+      log('SEAL', 'R revealed on this device only');
+    },
+    fillPre: function () {
+      if (!S.R) { toast('R belongs to the bitcoin side'); return; }
+      $('preIn').value = S.R;
+      log('PASTE', 'own preimage pasted · checking SHA256(R) == H');
+      render();
+      refreshGate();
+    },
+    fillWrongPre: function () {
+      $('preIn').value = '0x' + rndHex(32);
+      log('PASTE', 'wrong preimage pasted · it must be refused');
+      render();
+      refreshGate();
+    },
+    copyMine: function () { copy(S.inv, 'Invoice copied'); },
+    qrMine: function () { showQr('qrMineBox', S.inv ? 'lightning:' + S.inv : '', 'Scan from the bitcoin wallet'); },
+    regenMine: function () { issueInvoice(); },
+    qrInv: function () {
+      var inv = currentInvoice();
+      if (!inv) { toast('Paste the hold invoice first'); return; }
+      showQr('qrInvBox', 'lightning:' + inv, 'Scan from a Lightning wallet');
+    },
     webln: function () {
-      if (!window.webln) { toast('WebLN 지갑을 찾을 수 없어요'); log('FAIL', 'window.webln 없음', 'c-err'); render(); return; }
+      if (!window.webln) { log('FAIL', 'window.webln is absent', 'c-err'); render(); toast('No WebLN wallet in this browser'); return; }
       Promise.resolve(window.webln.enable())
         .then(function () { return window.webln.getInfo ? window.webln.getInfo() : {}; })
         .then(function (info) {
           S.webln = { node: (info && info.node && info.node.alias) || 'webln' };
-          log('WEBLN', '노드 ' + S.webln.node + ' 연결');
-          render(); toast('WebLN 연결됐어요');
+          log('WEBLN', 'node ' + S.webln.node + ' connected');
+          render();
+          var inv = currentInvoice();
+          if (!inv || !window.webln.sendPayment) { toast('Wallet connected'); return null; }
+          return window.webln.sendPayment(inv).then(function (res) {
+            var pre = res && res.preimage ? '0x' + normHex(res.preimage) : '';
+            if (!pre) { log('WEBLN', 'payment sent but no preimage returned'); toast('Wallet connected'); return; }
+            return sha256Hex(pre).then(function (h) {
+              if (normHex('0x' + h) === normHex(S.H)) {
+                $('receiptIn').value = '0x' + h;
+                log('VERIFY', 'WebLN preimage hashes to H ✓');
+                toast('Payment verified');
+              } else {
+                log('BLOCK', 'WebLN preimage does not hash to H', 'c-err');
+                toast('That preimage does not match H');
+              }
+              render();
+              refreshGate();
+            });
+          });
         })
-        .catch(function (e) { toast(e && e.message ? e.message : 'WebLN 연결이 거부됐어요'); });
+        .catch(function (e) { toast(e && e.message ? e.message : 'WebLN refused the connection'); });
     },
-
     nwc: function () {
       var uri = ($('nwcInput').value || '').trim();
-      if (!uri) { toast('NWC URI를 붙여넣어 주세요'); return; }
+      if (!uri) { toast('Paste an NWC URI first'); return; }
       try {
         var m = uri.match(/^nostr\+walletconnect:\/\/([0-9a-fA-F]{64})\??(.*)$/);
-        if (!m) throw new Error('형식이 올바르지 않아요');
+        if (!m) throw new Error('not a nostr+walletconnect URI');
         var params = {};
         (m[2] || '').split('&').forEach(function (kv) {
           if (!kv) return;
           var i = kv.indexOf('=');
           params[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
         });
-        if (!params.relay) throw new Error('relay 파라미터가 없어요');
+        if (!params.relay) throw new Error('missing relay parameter');
         S.nwc = { pubkey: m[1], relay: params.relay, secret: params.secret ? 'set' : 'none', lud16: params.lud16 || '' };
-        log('NWC', '지갑 공개키 ' + short(m[1], 4) + ' · ' + params.relay);
-        render(); toast('NWC를 읽었어요 (소켓은 열지 않음)');
+        log('NWC', 'wallet key ' + short(m[1], 4) + ' · ' + params.relay);
+        render();
+        toast('NWC parsed (no socket opened)');
       } catch (e) {
         log('FAIL', 'NWC: ' + e.message, 'c-err');
-        render(); toast(e.message);
+        render();
+        toast(e.message);
       }
     },
-
     decode: function () {
       var raw = ($('invoice').value || '').trim().replace(/^lightning:/i, '');
-      if (!raw) { toast('결제 요청을 붙여넣어 주세요'); return; }
+      if (!raw) { toast('Paste a payment request first'); return; }
       try {
         var d = /^lno1/i.test(raw) ? decodeBolt12(raw) : decodeBolt11(raw);
         S.req = d;
         S.li = raw;
         var rows = '';
         if (d.kind === 'bolt11') {
-          var match = S.H && d.paymentHash && d.paymentHash.toLowerCase() === S.H.toLowerCase();
-          rows = row('종류', 'BOLT11 인보이스') +
-            row('payment_hash', d.paymentHash || '없음') +
-            row('금액', d.sats == null ? '지정 없음' : fmt(d.sats) + ' sats') +
-            row('네트워크', d.network) +
-            row('만료', d.expiry == null ? '기본 3600초' : d.expiry + '초') +
-            row('H 일치', match ? '일치 ✓' : '아직 맞지 않음');
+          var match = S.H && d.paymentHash && normHex(d.paymentHash) === normHex(S.H);
+          rows = row('kind', 'BOLT11 invoice') +
+            row('payment_hash', d.paymentHash || 'none') +
+            row('amount', d.sats == null ? 'not set' : fmt(d.sats) + ' sats') +
+            row('network', d.network) +
+            row('expiry', d.expiry == null ? 'default 3600s' : d.expiry + 's') +
+            row('matches H', match ? 'yes ✓' : 'no');
           log('BOLT11', 'payment_hash ' + short(d.paymentHash, 6) + (match ? ' == H ✓' : ''));
         } else {
-          rows = row('종류', 'BOLT12 오퍼') +
-            row('설명', d.description || '없음') +
-            row('금액', d.amount == null ? '지정 없음' : fmt(d.amount) + ' ' + (d.currency || 'msat')) +
-            row('발급자', d.issuer || '없음') +
-            row('노드', d.nodeId ? short('0x' + d.nodeId, 6) : '없음') +
-            row('만료', d.absoluteExpiry ? new Date(d.absoluteExpiry * 1000).toISOString().slice(0, 10) : '없음') +
-            row('payment_hash', '없음 (오퍼)');
-          log('BOLT12', '오퍼 디코드 · ' + (d.description || '설명 없음'));
+          rows = row('kind', 'BOLT12 offer') +
+            row('description', d.description || 'none') +
+            row('amount', d.amount == null ? 'not set' : fmt(d.amount) + ' ' + (d.currency || 'msat')) +
+            row('issuer', d.issuer || 'none') +
+            row('node', d.nodeId ? short('0x' + d.nodeId, 6) : 'none') +
+            row('expiry', d.absoluteExpiry ? new Date(d.absoluteExpiry * 1000).toISOString().slice(0, 10) : 'none') +
+            row('payment_hash', 'none (offer)');
+          log('BOLT12', 'offer decoded · ' + (d.description || 'no description'));
         }
         $('decodeOut').innerHTML = rows;
         render();
-        toast(d.kind === 'bolt11' ? '인보이스를 읽었어요' : '오퍼를 읽었어요');
+        toast(d.kind === 'bolt11' ? 'Invoice decoded' : 'Offer decoded');
       } catch (e) {
-        $('decodeOut').innerHTML = row('오류', e.message);
+        $('decodeOut').innerHTML = row('error', e.message);
         log('FAIL', 'payment request: ' + e.message, 'c-err');
         render();
       }
     },
-
     sample11: function () {
       $('invoice').value = $('sample-bolt11').textContent.trim();
       ACT.decode();
@@ -1476,74 +2296,36 @@ contract LightningUsdtHTLC {
       $('invoice').value = $('sample-bolt12').textContent.trim();
       ACT.decode();
     },
-
-    useHash: function () {
-      if (S.phase !== 'idle') { toast('먼저 처음부터로 되돌려 주세요'); return; }
-      if (!S.req || !S.req.paymentHash) { toast('BOLT11 인보이스를 먼저 읽어 주세요'); return; }
-      S.H = S.req.paymentHash;
-      S.R = null;
-      S.t2 = nowSec() + 3600;
-      S.t1 = S.h0 + 40;
-      log('JOIN', '인보이스 H로 합류 · R은 지불하는 쪽이 쥡니다');
-      computeSwapId(S.H, EVM.taker, EVM.maker, tokenAddr(), units(), S.t2).then(function (id) {
-        S.id = id; S.phase = 'offer'; render(); toast('인보이스 기준으로 시작했어요');
-      });
-    },
-
     copyUri: function () {
-      if (!S.li) { toast('결제 요청이 없어요'); return; }
-      copy('lightning:' + S.li, '결제 요청');
+      if (!S.li) { toast('No payment request yet'); return; }
+      copy('lightning:' + S.li, 'lightning: URI copied');
     },
-    qrUri: function () { showQr('qrUriBox', S.li ? 'lightning:' + S.li : '', '지갑 앱으로 스캔하세요'); },
-
-    copyAddr: function () { copy(S.liquid, '주소를 '); },
-    copyReq: function () { copy(liquidRequest(), '결제 요청을 '); },
-    qrAddr: function () { showQr('qrAddrBox', liquidRequest(), 'AQUA·Liquid 지갑으로 스캔하세요'); },
-
+    qrUri: function () { showQr('qrUriBox', S.li ? 'lightning:' + S.li : '', 'Scan from a wallet'); },
+    copyAddr: function () { copy(S.liquid, 'Address copied'); },
+    copyReq: function () { copy(liquidRequest(), 'Request copied'); },
+    qrAddr: function () { showQr('qrAddrBox', liquidRequest(), 'Scan from a Liquid wallet'); },
     copyData: function () {
       var d = nextCalldata();
-      if (!d) { toast('아직 준비된 호출이 없어요'); return; }
-      copy(d, 'calldata를 ');
+      if (!d) { toast('No call ready yet'); return; }
+      copy(d, 'calldata copied');
     },
-    copyPayload: function () { copy(JSON.stringify(payload(), null, 2), 'payload를 '); },
-    copySol: function () { copy($('sol-source').textContent.trim(), '소스를 '); }
+    copyPayload: function () { copy(JSON.stringify(payloadJson(), null, 2), 'swap JSON copied'); },
+    copySol: function () { copy($('sol-source').textContent.trim(), 'contract copied'); },
+    ownSwap: function () { reset(); }
   };
 
-  function row(k, v) {
-    return '<div><span class="k">' + k + '</span><span class="v mono">' + String(v).replace(/[<>&]/g, '') + '</span></div>';
-  }
-
-  function payload() {
-    var out = {
-      protocol: 'ln-usdt-htlc/1',
-      mode: S.mode,
-      hashlock: S.H,
-      sats: S.sats,
-      usdt: usdtOf() || null,
-      liquid: S.liquid || null,
-      htlc: htlcAddr() || null,
-      token: tokenAddr(),
-      timelock: S.t2,
-      swapId: S.id,
-      request: S.req ? { kind: S.req.kind, paymentHash: S.req.paymentHash, sats: S.req.sats, description: S.req.description } : null,
-      calldata: nextCalldata() || null
-    };
-    if (S.phase === 'settled' || S.phase === 'refunded') out.preimage = S.R;
-    return out;
-  }
-
-  /* ------------------------------------------------------- tick + price -- */
+  /* --------------------------------------------------------- tick + rate -- */
   function tick() {
-    if (!S.t2) return;
-    if (['offer', 'half', 'both'].indexOf(S.phase) >= 0 && nowSec() >= S.t2) {
-      S.phase = 'expired';
-      log('TIMEOUT', 'T2 경과 · 청구 닫힘, 환불 열림', 'c-warn');
-      render();
-      return;
-    }
-    $('vT2').textContent = 'unix ' + S.t2 + ' · ' + leftTxt();
-    if (S.lockT && S.phase !== 'settled' && S.phase !== 'refunded') {
-      $('takerSub').textContent = '잠금 완료 · ' + leftTxt() + ' 뒤 환불 가능';
+    if (S.t2) {
+      if (['open', 'btc', 'both'].indexOf(S.phase) >= 0 && nowSec() >= S.t2) {
+        S.phase = 'expired';
+        log('TIMEOUT', 'T2 passed · claim closed, refund open', 'c-warn');
+        render();
+        refreshGate();
+        toast('Timelock expired');
+        return;
+      }
+      renderMeters();
     }
   }
 
@@ -1568,6 +2350,12 @@ contract LightningUsdtHTLC {
     var fn = ACT[b.dataset.act];
     if (fn) { e.preventDefault(); fn(b); }
   });
+  ['invIn', 'receiptIn', 'proofIn', 'preIn'].forEach(function (id) {
+    $(id).addEventListener('input', function () {
+      if (id === 'invIn') $('walletLink').setAttribute('href', 'lightning:' + currentInvoice());
+      refreshGate();
+    });
+  });
   $('liquidAddr').addEventListener('input', function () {
     S.liquid = this.value.trim();
     $('vRequest').textContent = liquidRequest() || '—';
@@ -1575,15 +2363,25 @@ contract LightningUsdtHTLC {
 
   $('solSrc').textContent = $('sol-source').textContent.trim();
   $('tokenAddr').value = S.token;
+
+  var joined = parseSwapLink(location.hash);
+  if (joined) join(joined);
+
   render();
+  refreshGate();
   setInterval(tick, 1000);
   loadRate();
 
-  window.EMERALD = {
-    state: S, SEL: SEL, EVM: EVM, QR_MAX: QR_MAX,
-    sha256Hex: sha256Hex, computeSwapId: computeSwapId,
-    bech32Decode: bech32Decode, decodeBolt11: decodeBolt11, decodeBolt12: decodeBolt12,
-    nextCalldata: nextCalldata, payload: payload, render: render, liquidRequest: liquidRequest
+  window.CLEANSWAP = {
+    state: S, SEL: SEL, EVM: EVM, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
+    sha256Hex: sha256Hex, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
+    decodeBolt11: decodeBolt11, decodeBolt12: decodeBolt12, mintInvoice: mintInvoice,
+    lockCalldata: lockCalldata, decodeLockCalldata: decodeLockCalldata, readLockProof: readLockProof,
+    nextCalldata: nextCalldata, payload: payloadJson, render: render, renderStep: renderStep,
+    refreshGate: refreshGate, validate: validate, checkInvoice: checkInvoice, checkReceipt: checkReceipt,
+    checkProof: checkProof, checkPreimage: checkPreimage, swapLink: swapLink, parseSwapLink: parseSwapLink,
+    escrowProof: escrowProof, usdtUnits: usdtUnits, liquidRequest: liquidRequest, stepNo: stepNo,
+    join: join, reset: reset, createSwap: createSwap, run: run, tick: tick
   };
 })();</script>
 </body>

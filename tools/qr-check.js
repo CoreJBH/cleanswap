@@ -12,21 +12,24 @@ const QR = sandbox.window.QR;
 
 const cases = [];
 const texts = [
-  'liquidnetwork:lq1qqvtestaddress0',
-  'lq1qqwxyz' + 'a'.repeat(20),
-  'liquidnetwork:lq1qq' + 'x'.repeat(60) + '?amount=45.00',
-  'lq1' + 'q'.repeat(100),
-  'https://example.org/pay?to=' + 'z'.repeat(40)
+  ['liquidnetwork:lq1qqvtestaddress0', 'M'],
+  ['lq1qqwxyz' + 'a'.repeat(20), 'M'],
+  ['liquidnetwork:lq1qq' + 'x'.repeat(60) + '?amount=45.00', 'M'],
+  ['lq1' + 'q'.repeat(100), 'M'],
+  ['https://example.org/pay?to=' + 'z'.repeat(40), 'M'],
+  /* a full-length BOLT11 hold invoice: exercises version 10 at level L,
+     which is what the app falls back to when a request is too long for M */
+  ['lnbc500u1p4' + 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'.repeat(8), 'L']
 ];
 let seq = 0;
-for (const text of texts) {
+for (const [text, level] of texts) {
   seq++;
   for (let mask = 0; mask < 8; mask++) {
-    const q = QR.encode(text, { mask });
-    cases.push({ text, mask, version: q.version, size: q.size, modules: q.modules.map(r => r.map(b => (b ? 1 : 0))) });
+    const q = QR.encode(text, { mask, level });
+    cases.push({ text, level, mask, version: q.version, size: q.size, modules: q.modules.map(r => r.map(b => (b ? 1 : 0))) });
   }
-  const auto = QR.encode(text);
-  cases.push({ text, mask: 'auto', version: auto.version, size: auto.size, chosen: auto.mask, modules: auto.modules.map(r => r.map(b => (b ? 1 : 0))) });
+  const auto = QR.encode(text, { level });
+  cases.push({ text, level, mask: 'auto', version: auto.version, size: auto.size, chosen: auto.mask, modules: auto.modules.map(r => r.map(b => (b ? 1 : 0))) });
 }
 fs.writeFileSync(path.resolve(__dirname, '..', 'build', 'qr-js.json'), JSON.stringify(cases));
 console.log('cases:', cases.length, 'versions:', [...new Set(cases.map(c => c.version))].join(','));

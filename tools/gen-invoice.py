@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the BOLT11 sample invoice embedded in the app.
+"""Generate the BOLT11 sample invoice embedded in the app (test fixture).
 
 The invoice is built from the BOLT 11 spec's construction by hand (bech32 HRP,
 35-bit timestamp, tagged 'p'/'d'/'x' fields, 104-word signature slot) so that
@@ -15,7 +15,7 @@ GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
 PAYMENT_HASH = bytes.fromhex('11' * 32)
 TIMESTAMP = 1735689600           # 2025-01-01T00:00:00Z
 AMOUNT_HRP = '500u'              # 0.0005 BTC = 50,000 sats
-DESCRIPTION = 'emerald swap / ln-usdt'
+DESCRIPTION = 'CleanSwap hold invoice'
 EXPIRY = 3600
 
 
@@ -62,7 +62,7 @@ def build():
     body += tag('p', to_words(PAYMENT_HASH))
     body += tag('d', to_words(DESCRIPTION.encode()))
     body += tag('x', to_words(EXPIRY.to_bytes(2, 'big')))
-    filler = hashlib.sha256(b'emerald-swap-filler').digest() * 2 + b'\x1b'
+    filler = hashlib.sha256(b'cleanswap-filler').digest() * 2 + b'\x1b'
     body += to_words(filler)                       # 104 words: 65-byte sig slot
     hrp = 'lnbc' + AMOUNT_HRP
     data = body + checksum(hrp, body)
@@ -83,7 +83,7 @@ def tlv(type_no, value):
     return bigsize(type_no) + bigsize(len(value)) + value
 
 
-NODE_ID = b'\x02' + hashlib.sha256(b'emerald-swap-node').digest()
+NODE_ID = b'\x02' + hashlib.sha256(b'cleanswap-node').digest()
 OFFER_DESC = 'CleanSwap - BTC for USDT'
 OFFER_EXPIRY = 1798761600        # 2027-01-01T00:00:00Z
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Assemble the single-file Emerald Swap app from src/ into ../../ln-usdt-swap.html
+"""Assemble the single-file CLEANSWAP app from src/ into ../../ln-usdt-swap.html
 
-Everything is inlined — CSS, the QR encoder, the BOLT11/BOLT12 decoder, the app
-and the Solidity reference source — so the built page makes no requests except
-the optional BTC/USD quote from mempool.space. Also writes dist/emerald-swap.html
+Everything is inlined - CSS, the QR encoder, the BOLT11/BOLT12 codec, the app
+and the Solidity reference source - so the built page makes no requests except
+the optional BTC/USD quote from mempool.space. Also writes dist/cleanswap.html
 for repository distribution.
+
+The build refuses to emit a page that contains Hangul: the repository and the
+UI are English only, and this is the last gate before a byte reaches dist/.
 """
 import base64
 import os
@@ -17,6 +20,7 @@ CONTRACTS = os.path.join(HERE, 'contracts')
 ASSETS = os.path.join(HERE, 'assets')
 OUT = os.path.abspath(os.path.join(HERE, '..', '..', 'ln-usdt-swap.html'))
 DIST = os.path.join(HERE, 'dist', 'cleanswap.html')
+HANGUL = re.compile(r'[\uac00-\ud7af]')
 
 
 def read(*p):
@@ -47,6 +51,10 @@ def main():
     app = read(SRC, 'app.js').strip()
     sol = read(CONTRACTS, 'LightningUsdtHTLC.sol').strip()
 
+    for name, blob in (('qr', qr), ('app', app), ('css', css), ('template', tpl), ('contract', sol)):
+        if HANGUL.search(blob):
+            hit = HANGUL.search(blob)
+            sys.exit('ERROR: %s contains Hangul at offset %d' % (name, hit.start()))
     for name, blob in (('qr', qr), ('app', app), ('css', css)):
         if '</script' in blob.lower():
             sys.exit('ERROR: %s contains a closing script tag' % name)
@@ -74,6 +82,8 @@ def main():
     with open(DIST, 'w', encoding='utf-8') as f:
         f.write(out)
     print('wrote %s (%d bytes)' % (DIST, len(out.encode('utf-8'))))
+    if HANGUL.search(out):
+        sys.exit('ERROR: built page contains Hangul')
 
 
 if __name__ == '__main__':

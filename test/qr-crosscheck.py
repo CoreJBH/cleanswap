@@ -18,9 +18,11 @@ NODE = os.environ.get('NODE', 'node')
 
 try:
     import qrcode
-    from qrcode.constants import ERROR_CORRECT_M
+    from qrcode.constants import ERROR_CORRECT_L, ERROR_CORRECT_M
 except ImportError:
     sys.exit('python-qrcode is required: pip install --target .tools/py qrcode')
+
+LEVELS = {'L': ERROR_CORRECT_L, 'M': ERROR_CORRECT_M}
 
 out = subprocess.run([NODE, os.path.join(ROOT, 'tools', 'qr-check.js')],
                      cwd=ROOT, capture_output=True, text=True)
@@ -31,7 +33,7 @@ cases = json.load(open(os.path.join(ROOT, 'build', 'qr-js.json')))
 checked = failed = auto_ok = auto_total = 0
 
 for case in cases:
-    q = qrcode.QRCode(version=case['version'], error_correction=ERROR_CORRECT_M, border=0,
+    q = qrcode.QRCode(version=case['version'], error_correction=LEVELS[case.get('level', 'M')], border=0,
                       mask_pattern=None if case['mask'] == 'auto' else case['mask'])
     q.add_data(case['text'])
     q.make()
