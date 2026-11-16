@@ -50,7 +50,7 @@ jobs:
           ls -l android/app/src/main/assets/index.html
 
       - name: Assemble debug APK
-       working-directory: android
+       working-directory:android
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Collect APK
