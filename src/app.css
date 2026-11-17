@@ -75,6 +75,16 @@ body:not([data-phase="idle"]) .amt b{font-size:22px}
 body:not([data-phase="idle"]) .amt span{font-size:13px}
 body:not([data-phase="idle"]) .sub{grid-area:sub;text-align:right;font-size:12px;margin:1px 0 0}
 body:not([data-phase="idle"]) .flip{display:none}
+body:not([data-phase="idle"]) .top{padding-top:14px}
+body:not([data-phase="idle"]) .rate{margin-top:10px}
+body:not([data-phase="idle"]) .act{margin-top:12px}
+body:not([data-phase="idle"]) .state{margin-top:14px}
+body:not([data-phase="idle"]) .q{font-size:21px}
+body:not([data-phase="idle"]) .say{margin-bottom:12px;min-height:0}
+body:not([data-phase="idle"]) .step{margin-bottom:12px}
+body:not([data-phase="idle"]) .step-h{margin-bottom:6px}
+body:not([data-phase="idle"]) .row .pill{height:46px}
+body:not([data-phase="idle"]) .field input{height:50px}
 
 .state{margin:18px 0 0;text-align:center;font-size:14px;font-weight:700;color:var(--dim)}
 .state[data-on="1"]{color:var(--em-ink)}
