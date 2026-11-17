@@ -261,7 +261,8 @@ const view = (pg) => pg.evaluate(() => {
   async function freshPage(width, height) {
     const c = await browser.newContext({ viewport: { width: width || 390, height: height || 844 }, deviceScaleFactor: 1 });
     const p = await c.newPage();
-    const errs = [], failed = [];
+    const errs = [], failed = [], reqs = [];
+    p.on('request', r => reqs.push(r.url()));
     p.on('pageerror', e => errs.push('pageerror: ' + e.message));
     /* a deliberately failed endpoint (the offline test) logs a resource error in
        the console; that is the browser talking, not the page breaking */
@@ -272,7 +273,7 @@ const view = (pg) => pg.evaluate(() => {
     await p.goto(URL, { waitUntil: 'load' });
     await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
     await p.waitForTimeout(250);
-    return { c, p, errs, failed };
+    return { c, p, errs, failed, reqs };
   }
 
   /* ------------------------------------------------------------ 1. boot --- */
@@ -422,6 +423,9 @@ const view = (pg) => pg.evaluate(() => {
   check('practice: the sentence names what arrived', /You received [\d,.]+ USDT\./.test(w.say), w.say);
   check('practice: the steps fold away once settled', !w.steps && !w.presets && !w.terms, String(w.steps));
   check('practice: a rehearsal adds nothing to Recent', !w.history && w.rows === 0, String(w.rows));
+  const remote = A.reqs.filter(u => /^https?:/i.test(u) && !/mempool\.space/.test(u));
+  check('practice: a whole rehearsal talks to no chain and no wallet', remote.length === 0,
+    remote.slice(0, 3).join(',') || 'no request left the phone');
   await page.screenshot({ path: path.join(SHOTS, 'v51-done.png') });
 
   /* the settled state is a real swap record, not just a label */
