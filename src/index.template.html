@@ -83,7 +83,7 @@
       <p class="step-h"><b class="n" id="nInv">1</b><span id="invTitle">Partner's Lightning invoice</span></p>
       <div class="field">
         <div class="field-in">
-          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice" placeholder="lnbc…">
+          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice or offer" placeholder="lnbc… or lno1…">
           <button class="sample" id="sampleInv" data-act="sampleInv" type="button" hidden>Sample</button>
         </div>
       </div>
@@ -98,7 +98,7 @@
       <p class="step-h"><b class="n" id="nAddr">2</b><span id="addrTitle">Your USDT address</span></p>
       <div class="field">
         <div class="field-in">
-          <input id="addrIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT address" placeholder="0x…">
+          <input id="addrIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT address" placeholder="0x… or T…">
           <button class="sample" id="sampleAddr" data-act="sampleAddr" type="button" hidden>Sample</button>
         </div>
       </div>
@@ -107,6 +107,23 @@
     <div class="step" id="stepGo">
       <p class="step-h"><b class="n">3</b><span>Approve</span></p>
       <p class="say" id="say">Fill in the two steps, then tap Approve.</p>
+    </div>
+  </section>
+
+  <!-- Wallet mode parks here after Approve: the money has not left the wallet
+       yet, so this is what to send and where - and `I paid` is the only thing
+       that closes the swap. -->
+  <section class="pay" id="payBox" hidden>
+    <p class="pay-line" id="payLine">Send the sats from your wallet, then tap I paid.</p>
+    <p class="pay-addr mono" id="payAddr" hidden>—</p>
+    <div class="row" id="payRowInv">
+      <a class="pill" id="payWalletLink" href="#">Open in wallet</a>
+      <button class="pill" data-act="payCopyInv" type="button">Copy</button>
+      <button class="pill" data-act="payQrInv" type="button">QR</button>
+    </div>
+    <div class="row" id="payRowAddr" hidden>
+      <button class="pill" data-act="payCopyAddr" type="button">Copy address</button>
+      <button class="pill" data-act="payQrAddr" type="button">QR</button>
     </div>
   </section>
 

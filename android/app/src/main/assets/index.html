@@ -80,6 +80,14 @@ body{
 
 body[data-phase="settled"] .flip{display:none}
 body[data-phase="settled"] .step{opacity:1}
+body[data-phase="paying"] .flip{display:none}
+
+/* the waiting screen Wallet mode parks on: what to send, and `I paid` below */
+.pay{margin:14px 0 0;padding:16px 18px 6px;background:var(--card);border-radius:var(--r)}
+.pay-line{margin:0 0 12px;font-size:14.5px;line-height:1.5;color:var(--ink2);font-weight:600}
+.pay-addr{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:#f5f7f9;font-size:12.5px;
+  line-height:1.45;color:var(--ink2);word-break:break-all}
+.pay .row{margin:0 0 10px}
 
 .state{margin:6px 0 0;text-align:center;font-size:14px;font-weight:700;color:var(--dim)}
 .state[data-on="1"]{color:var(--em-ink)}
@@ -276,7 +284,7 @@ body[data-phase="settled"] .step{opacity:1}
       <p class="step-h"><b class="n" id="nInv">1</b><span id="invTitle">Partner's Lightning invoice</span></p>
       <div class="field">
         <div class="field-in">
-          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice" placeholder="lnbc…">
+          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice or offer" placeholder="lnbc… or lno1…">
           <button class="sample" id="sampleInv" data-act="sampleInv" type="button" hidden>Sample</button>
         </div>
       </div>
@@ -291,7 +299,7 @@ body[data-phase="settled"] .step{opacity:1}
       <p class="step-h"><b class="n" id="nAddr">2</b><span id="addrTitle">Your USDT address</span></p>
       <div class="field">
         <div class="field-in">
-          <input id="addrIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT address" placeholder="0x…">
+          <input id="addrIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT address" placeholder="0x… or T…">
           <button class="sample" id="sampleAddr" data-act="sampleAddr" type="button" hidden>Sample</button>
         </div>
       </div>
@@ -300,6 +308,23 @@ body[data-phase="settled"] .step{opacity:1}
     <div class="step" id="stepGo">
       <p class="step-h"><b class="n">3</b><span>Approve</span></p>
       <p class="say" id="say">Fill in the two steps, then tap Approve.</p>
+    </div>
+  </section>
+
+  <!-- Wallet mode parks here after Approve: the money has not left the wallet
+       yet, so this is what to send and where - and `I paid` is the only thing
+       that closes the swap. -->
+  <section class="pay" id="payBox" hidden>
+    <p class="pay-line" id="payLine">Send the sats from your wallet, then tap I paid.</p>
+    <p class="pay-addr mono" id="payAddr" hidden>—</p>
+    <div class="row" id="payRowInv">
+      <a class="pill" id="payWalletLink" href="#">Open in wallet</a>
+      <button class="pill" data-act="payCopyInv" type="button">Copy</button>
+      <button class="pill" data-act="payQrInv" type="button">QR</button>
+    </div>
+    <div class="row" id="payRowAddr" hidden>
+      <button class="pill" data-act="payCopyAddr" type="button">Copy address</button>
+      <button class="pill" data-act="payQrAddr" type="button">QR</button>
     </div>
   </section>
 
@@ -508,7 +533,7 @@ contract LightningUsdtHTLC {
     }
 }</script>
 <script type="text/plain" id="sample-bolt11">lnbc500u1pnhfpvqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsypygdkx2ctw2dmkzupqdphkcepqd9h8vmmfvdjscqypcgqtsfzdgztsndl0ucckdrqgdlz07zknppzrfhq6nagr0jtzpr5ptz4cy3x5p9cfklh7vvtx3syxl38lptfss3p5msdf75phe93q36q43gm08ga6v</script>
-<script type="text/plain" id="sample-bolt12">lno1pgvyxmr9v9h9xampwqsz6gzz23pjqen0wgs9256y2s8qg6ekajqpvggz6sxhy2u05vhccky82lzgz33tylddlm8xvl4qce3d4g8xmz5tt909qsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq</script>
+<script type="text/plain" id="sample-bolt12">lno1pgvyxmr9v9h9xampwqsz6gzz23pjqen0wgs9256y2s8qg6ekajqpvggz6sxhy2u05vhccky82lzgz33tylddlm8xvl4qce3d4g8xmz5tt900qsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq</script>
 <script>/* Minimal QR encoder — byte mode, error correction L/M/Q/H, versions 1..13.
    No dependencies, ~250 lines. Byte mode + level M is what the offer and
    invoice panels need; other versions exist so the panels never overflow.
@@ -853,7 +878,7 @@ contract LightningUsdtHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CLEANSWAP v0.4 — Lightning bitcoin <-> USDT atomic swap in one file.
+<script>/* CLEANSWAP v0.4.3 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -861,17 +886,26 @@ contract LightningUsdtHTLC {
    Underneath, every step is still gated on data a real swap would need, and
    the gate runs here, in the browser:
 
-     step 1  a BOLT12 offer or invoice (or a BOLT11 hold invoice) whose
-             payment_hash is exactly H, for the right amount, still unexpired
+     step 1  a BOLT12 offer or invoice (or a BOLT11 hold invoice): an offer is
+             paid straight from the wallet, an invoice's payment_hash is H
      step 2  the counterparty's escrow lock, decoded and matched against H, T2
              and the USDT amount (lock() calldata, JSON record, Liquid lock URI
              or a lock transaction hash)
      step 3  the 32-byte preimage R, accepted only when SHA256(R) === H
 
+   Wallet mode does not call a swap complete on the Approve tap: the tap parks
+   the screen on "Waiting for payment", showing what to pay, and only the
+   `I paid` tap that follows closes the swap and produces the receipt.
+
    BOLT12 is the default format. A BOLT12 offer cannot carry a payment_hash by
    itself, so every offer the app mints embeds the swap's hashlock in a custom
-   type-80 TLV; invoices the app mints use the standard invoice_payment_hash
-   field. BOLT11 hold invoices stay fully accepted as input.
+   type-80 TLV, and an offer from someone else's wallet (Lexe, say) binds the
+   swap to its own string instead: H = SHA-256 of the offer's TLV bytes, which
+   the same offer gives on both phones. Invoices the app mints use the standard
+   invoice_payment_hash field. BOLT11 hold invoices stay fully accepted as input.
+
+   The USDT address is either an EVM one (`0x` + 40 hex) or a TRON TRC-20 one
+   (`T` + 33 base58 characters, checked with its real Base58Check checksum).
 
    Practice mode runs both sides on one screen (invoice mint, escrow lock,
    reveal) with real WebCrypto, real bech32 and real ABI encoding, and a share
@@ -915,6 +949,7 @@ contract LightningUsdtHTLC {
     t1: null, t2: null,
     sim: 0, h0: 923452,
     inv: '', invDec: null,          /* the Lightning invoice on the screen */
+    basis: null,                    /* how the bitcoin leg is paid: invoice | offer */
     addr: '',                       /* the USDT address on the screen */
     expectH: null,                  /* hashlock pinned by a code from the other side */
     log: [],
@@ -943,6 +978,95 @@ contract LightningUsdtHTLC {
     if (!/^([0-9a-fA-F]{2})+$/.test(clean)) return Promise.reject(new Error('not hex'));
     if (!crypto.subtle) return Promise.reject(new Error('WebCrypto unavailable'));
     return crypto.subtle.digest('SHA-256', fromHex(clean)).then(function (d) { return hexOf(new Uint8Array(d)); });
+  }
+
+  /* ------------------------------------- sha256 inside the same tick -----
+     WebCrypto answers with a promise, but an address check has to answer where
+     the gate that paints the screen needs it, synchronously. Base58Check (the
+     TRON address below) needs two passes over 21 bytes, so here is the plain
+     SHA-256. The swap hash itself still goes through WebCrypto above. */
+  var K256 = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+  function sha256Bytes(input) {
+    var h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
+      h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+    var len = input.length, total = Math.ceil((len + 9) / 64) * 64, i, j, off;
+    var msg = new Uint8Array(total);
+    msg.set(input, 0);
+    msg[len] = 0x80;
+    var hi = Math.floor(len / 536870912), lo = (len * 8) >>> 0;
+    msg[total - 8] = (hi >>> 24) & 255; msg[total - 7] = (hi >>> 16) & 255;
+    msg[total - 6] = (hi >>> 8) & 255; msg[total - 5] = hi & 255;
+    msg[total - 4] = (lo >>> 24) & 255; msg[total - 3] = (lo >>> 16) & 255;
+    msg[total - 2] = (lo >>> 8) & 255; msg[total - 1] = lo & 255;
+    var w = new Int32Array(64);
+    for (off = 0; off < total; off += 64) {
+      for (i = 0; i < 16; i++) {
+        j = off + i * 4;
+        w[i] = (msg[j] << 24) | (msg[j + 1] << 16) | (msg[j + 2] << 8) | msg[j + 3];
+      }
+      for (i = 16; i < 64; i++) {
+        w[i] = (w[i - 16] + (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)) +
+          w[i - 7] + (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10))) | 0;
+      }
+      var a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7, t1, t2;
+      for (i = 0; i < 64; i++) {
+        t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i]) | 0;
+        t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0;
+        d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+      h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+    }
+    var out = new Uint8Array(32), v = [h0, h1, h2, h3, h4, h5, h6, h7];
+    for (i = 0; i < 8; i++) {
+      out[i * 4] = (v[i] >>> 24) & 255; out[i * 4 + 1] = (v[i] >>> 16) & 255;
+      out[i * 4 + 2] = (v[i] >>> 8) & 255; out[i * 4 + 3] = v[i] & 255;
+    }
+    return out;
+  }
+
+  /* ------------------------------------------------------------ base58 --- */
+  var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58Bytes(s) {
+    var n = 0n, i, v, zeros = 0, hex, body = [];
+    for (i = 0; i < s.length; i++) {
+      v = B58.indexOf(s.charAt(i));
+      if (v < 0) throw new Error('not base58');
+      n = n * 58n + BigInt(v);
+    }
+    while (zeros < s.length && s.charAt(zeros) === '1') zeros++;
+    hex = n === 0n ? '' : n.toString(16);
+    if (hex.length % 2) hex = '0' + hex;
+    for (i = 0; i < hex.length; i += 2) body.push(parseInt(hex.substr(i, 2), 16));
+    var out = new Uint8Array(zeros + body.length);
+    out.set(body, zeros);
+    return out;
+  }
+
+  /* TRON's TRC-20 USDT addresses are what a wallet shows: 'T' plus 33 base58
+     characters, which decode to 0x41 + the 20 address bytes + a four-byte
+     double-SHA-256 checksum. The checksum is checked for real, so a mistyped or
+     truncated address is refused instead of being sent USDT that never lands. */
+  function tronAddressBytes(a) {
+    var s = String(a == null ? '' : a).trim();
+    if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(s)) return null;
+    var raw;
+    try { raw = base58Bytes(s); } catch (e) { return null; }
+    if (raw.length !== 25 || raw[0] !== 0x41) return null;
+    var sum = sha256Bytes(sha256Bytes(raw.subarray(0, 21)));
+    for (var i = 0; i < 4; i++) if (sum[i] !== raw[21 + i]) return null;
+    return new Uint8Array(raw.subarray(1, 21));
   }
   function short(h, n) {
     n = n || 6;
@@ -977,6 +1101,21 @@ contract LightningUsdtHTLC {
     return spanTxt(S.t2 - nowSec());
   }
   function isAddr(a) { return /^0x[0-9a-fA-F]{40}$/.test(String(a || '')); }
+  /* The 20 bytes an address stands for, whichever chain it came from, so the
+     packed swap id reads the same for an EVM and a TRON address. */
+  function addr20(a) {
+    var tron = tronAddressBytes(a);
+    return tron || fromHex(String(a || '').replace(/^0x/i, ''));
+  }
+  function isZeroBytes(b) {
+    for (var i = 0; i < b.length; i++) if (b[i]) return false;
+    return true;
+  }
+  function chainOf(a) {
+    if (isAddr(a)) return 'evm';
+    if (tronAddressBytes(a)) return 'tron';
+    return '';
+  }
 
   var toastTimer;
   function toast(msg) {
@@ -1028,8 +1167,8 @@ contract LightningUsdtHTLC {
   function computeSwapId(hashlock, sender, receiver, token, amount, timelock) {
     var buf = new Uint8Array(156);
     buf.set(fromHex(hashlock), 0);
-    buf.set(fromHex(sender), 32);
-    buf.set(fromHex(receiver), 52);
+    buf.set(addr20(sender), 32);
+    buf.set(addr20(receiver), 52);
     buf.set(fromHex(token), 72);
     writeU256(buf, 92, amount);
     writeU256(buf, 124, timelock);
@@ -1085,6 +1224,13 @@ contract LightningUsdtHTLC {
       while (bits >= 8) { bits -= 8; out.push((acc >>> bits) & 255); }
     }
     return new Uint8Array(out);
+  }
+  /* bech32 carries 5-bit groups: whatever is left of the last group must be
+     zero, or the string is not the canonical encoding of those bytes. */
+  function paddingClean(byteLen, words) {
+    var bits = words.length * 5 - byteLen * 8;
+    if (bits <= 0) return true;
+    return (words[words.length - 1] & ((1 << bits) - 1)) === 0;
   }
   function bytesToWords(bytes) {
     var acc = 0, bits = 0, out = [], i;
@@ -1241,6 +1387,7 @@ contract LightningUsdtHTLC {
     var o = String(raw).trim().replace(/^lightning:/i, '');
     if (!/^ln[io]1/i.test(o)) throw new Error('not a BOLT12 string');
     var r = bech32Words(o), bytes = wordsToBytes(r.words), fields = {}, order = [], i = 0, t, l;
+    if (!paddingClean(bytes.length, r.words)) throw new Error('not a clean BOLT12 string');
     while (i < bytes.length) {
       t = readBigSize(bytes, i);
       if (!t) break;
@@ -1261,10 +1408,20 @@ contract LightningUsdtHTLC {
     }
     function num(type) { return fields[type] ? beUint(fields[type]) : null; }
     function txt(type) { return fields[type] ? dec.decode(fields[type]) : null; }
+    var form = /^lni1/i.test(o) ? 'invoice' : 'offer';
+    /* Random text that happens to sit inside the bech32 alphabet still has to
+       look like an offer before it is worth anything: a node id, offer chains
+       or blinded paths, and a real 64-byte signature when one is present. */
+    if (form === 'offer') {
+      if (fields[240] && fields[240].length !== 64) throw new Error('bad signature field');
+      var node = fields[22], chains = fields[2], paths = fields[16];
+      if (!(node && node.length === 33) && !(chains && chains.length && chains.length % 32 === 0) &&
+        !(paths && paths.length)) throw new Error('no offer identity');
+    }
     var hash = fields[SWAP_HASH_TYPE];
     return {
       kind: 'bolt12',
-      form: /^lni1/i.test(o) ? 'invoice' : 'offer',
+      form: form,
       hrp: r.hrp,
       network: r.hrp.length > 3 ? r.hrp.slice(3) : 'bitcoin',
       paymentHash: hash && hash.length === 32 ? '0x' + hexOf(hash)
@@ -1281,6 +1438,7 @@ contract LightningUsdtHTLC {
       relativeExpiry: num(166),
       nodeId: fields[22] ? hexOf(fields[22]) : (fields[160] && fields[160].length === 33 ? hexOf(fields[160]).slice(2) : null),
       quantityMax: num(20),
+      payload: bytes,
       types: order.sort(function (a, b) { return a - b; }).map(function (x) {
         return x + (OFFER_TYPES[x] ? ' ' + OFFER_TYPES[x] : '');
       })
@@ -1318,9 +1476,12 @@ contract LightningUsdtHTLC {
     return '0x' + SEL.lock + encU256(o.hashlock) + encU256(o.timelock) +
       encAddr(o.receiver) + encAddr(o.token) + encU256(o.amount);
   }
+  /* Only an EVM address has a lock() call here: a TRON address is a wallet-level
+     hand-off, so the app does not pretend to build calldata for it. */
   function escrowProof() {
+    if (!isAddr(S.addr)) return '';
     return lockCalldata({
-      hashlock: S.H, timelock: S.t2, receiver: S.addr || EVM.btcSide,
+      hashlock: S.H, timelock: S.t2, receiver: S.addr,
       token: EVM.token, amount: usdtUnits()
     });
   }
@@ -1342,7 +1503,7 @@ contract LightningUsdtHTLC {
   /* The escrow half of the swap, as the contract call the page would send:
      lock(H, T2, the USDT receiver, the token, the amount). */
   function nextCalldata() {
-    if (!S.H || !S.addr || !S.t2) return '';
+    if (!S.H || !S.addr || !S.t2 || !isAddr(S.addr)) return '';
     return lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr, token: EVM.token, amount: usdtUnits() });
   }
 
@@ -1403,12 +1564,12 @@ contract LightningUsdtHTLC {
     var sats = Number(json.s), units = Number(json.u), t2 = Number(json.t2), t1 = Number(json.t1 || 0);
     if (!isFinite(sats) || !isFinite(units) || !isFinite(t2) || !isFinite(t1)) return null;
     if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
-    var h = normHex(json.h || ''), a = String(json.a || '').toLowerCase();
+    var h = normHex(json.h || ''), a = String(json.a || '');
     return {
       direction: json.d === 'u2b' ? 'u2b' : 'btc2u',
       sats: Math.round(sats), units: Math.round(units), t2: Math.round(t2), t1: Math.round(t1),
       H: /^([0-9a-f]{2}){32}$/.test(h) ? '0x' + h : null,
-      address: /^0x[0-9a-f]{40}$/.test(a) ? a : null
+      address: chainOf(a) ? a : null
     };
   }
 
@@ -1461,19 +1622,27 @@ contract LightningUsdtHTLC {
   }
 
   /* The Lightning half of the swap. Its payment hash IS the swap: the same H
-     locks the USDT escrow, so whoever settles one leg settles both. */
+     locks the USDT escrow, so whoever settles one leg settles both.
+
+     A BOLT12 offer (`lno1...`, what Lexe and other BOLT12 wallets hand out) is
+     a payment target a wallet can pay straight from `lightning:lno1...`: the
+     wallet comes back with the invoice. It carries no payment_hash of its own
+     (the type-80 TLV below is this app's own), so an offer binds the swap to
+     itself: H is the SHA-256 of the offer, which the same string gives on both
+     phones. An offer this app minted kept its hashlock, so that one wins. */
   function readInvoice(raw) {
     var t = String(raw || '').trim();
     if (!t) return bad('empty', 'Paste the invoice for this swap.');
     var d;
     try { d = parseLightning(t); } catch (e) { return bad('format', 'That invoice cannot be read. Paste the whole thing.'); }
     if (!d) return bad('format', 'That invoice cannot be read. Paste the whole thing.');
-    if (d.kind === 'bolt12' && d.form === 'offer') {
-      log('BLOCK', 'an offer carries no payment hash to lock on', 'c-err');
-      return bad('offer', 'That is an offer, not an invoice. Ask for the invoice that pays it.');
+    var offer = d.kind === 'bolt12' && d.form === 'offer';
+    var H = d.paymentHash ? '0x' + normHex(d.paymentHash) : null;
+    if (!H && offer) {
+      if (!d.payload || !d.payload.length) return bad('format', 'That offer cannot be read. Paste the whole thing.');
+      H = '0x' + hexOf(sha256Bytes(d.payload));
     }
-    if (!d.paymentHash) return bad('format', 'That invoice carries no payment hash to lock on.');
-    var H = '0x' + normHex(d.paymentHash);
+    if (!H) return bad('format', 'That invoice carries no payment hash to lock on.');
     if (S.expectH && normHex(H) !== normHex(S.expectH)) {
       return bad('mismatch', 'That invoice is for a different swap. Ask for the one made from this code.');
     }
@@ -1483,16 +1652,29 @@ contract LightningUsdtHTLC {
     var exp = d.absoluteExpiry != null ? d.absoluteExpiry : (d.expiresAt != null ? d.expiresAt : null);
     if (exp != null && nowSec() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
     if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
-    return good('Invoice ready.', { dec: d, H: H });
+    return good(offer ? 'Offer ready. Your wallet pays it and gets the invoice.' : 'Invoice ready.',
+      { dec: d, H: H, basis: offer ? 'offer' : 'invoice' });
   }
 
-  /* The USDT half: where the USDT lands. */
+  /* The USDT half: where the USDT lands. Two forms of USDT are what people
+     actually paste, the EVM tokens (`0x` + 40 hex) and TRON's TRC-20 (`T` + 33
+     base58 characters, checked with its real Base58Check checksum). */
   function readAddress(raw) {
     var a = String(raw || '').trim();
     if (!a) return bad('empty', 'Add the USDT address for this swap.');
-    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) return bad('format', 'That is not a USDT address. It starts with 0x, then 40 letters and digits.');
-    if (/^0x0{40}$/.test(a)) return bad('format', 'That address cannot receive anything. Use your own wallet address.');
-    return good('Address ready.', { address: a.toLowerCase() });
+    if (/^0x[0-9a-fA-F]{40}$/.test(a)) {
+      if (/^0x0{40}$/i.test(a)) return bad('format', 'That address cannot receive anything. Use your own wallet address.');
+      return good('Address ready.', { address: a.toLowerCase(), chain: 'evm' });
+    }
+    if (a.charAt(0) === 'T' || a.charAt(0) === 't') {
+      var payload = tronAddressBytes(a);
+      if (!payload) {
+        return bad('format', 'That T address is not valid. A TRON address is 34 characters and has no 0, O, I or l in it.');
+      }
+      if (isZeroBytes(payload)) return bad('format', 'That address cannot receive anything. Use your own wallet address.');
+      return good('Address ready.', { address: a, chain: 'tron' });
+    }
+    return bad('format', 'That is not a USDT address. It starts with 0x (40 characters) or T (34 characters).');
   }
 
   /* Lock codes the contract produces - kept for the escrow hand-off and the
@@ -1555,7 +1737,8 @@ contract LightningUsdtHTLC {
   }
 
   function escrowUnits() {
-    return lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr || EVM.btcSide, token: EVM.token, amount: usdtUnits() });
+    if (!isAddr(S.addr)) return '';
+    return lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr, token: EVM.token, amount: usdtUnits() });
   }
 
   /* ----------------------------------------------------------- one gate --- */
@@ -1564,6 +1747,11 @@ contract LightningUsdtHTLC {
       return Promise.resolve(good(S.direction === 'btc2u'
         ? 'You received ' + usdtTxt() + ' USDT.'
         : 'You received ' + fmt(S.sats) + ' sats.'));
+    }
+    if (S.phase === 'paying') {
+      return Promise.resolve(good(S.direction === 'btc2u'
+        ? 'Tap I paid once the sats have left your wallet.'
+        : 'Tap I paid once the USDT has been sent.'));
     }
     var sendBtc = S.direction === 'btc2u';
     var inv = readInvoice(pasted());
@@ -1576,7 +1764,7 @@ contract LightningUsdtHTLC {
       : ad.msg);
     if (inv.ok && ad.ok) {
       return Promise.resolve(good('Both sides are ready. Tap Approve to lock them and swap at once.',
-        { dec: inv.dec, H: inv.H, address: ad.address, inv: String(pasted()) }));
+        { dec: inv.dec, H: inv.H, basis: inv.basis, address: ad.address, inv: String(pasted()) }));
     }
     // the sentence names the first thing missing, in the order the steps are on screen
     var miss = sendBtc
@@ -1598,7 +1786,7 @@ contract LightningUsdtHTLC {
   function usdtLine() { return usdtOf() ? usdtTxt() + ' USDT' : '\u2014 USDT'; }
 
   function render() {
-    var sendBtc = S.direction === 'btc2u', done = S.phase === 'settled';
+    var sendBtc = S.direction === 'btc2u', done = S.phase === 'settled', paying = S.phase === 'paying';
 
     document.body.dataset.phase = S.phase;
     document.body.dataset.mode = S.mode;
@@ -1643,22 +1831,26 @@ contract LightningUsdtHTLC {
     $('sampleInv').hidden = S.mode === 'wallet';
     $('sampleAddr').hidden = S.mode === 'wallet';
 
-    $('headRow').hidden = !done;
+    $('headRow').hidden = !(done || paying);
     // the finished swap says it once, in the title and on the receipt
     $('stateTxt').hidden = done;
-    $('presets').hidden = done;
-    $('terms').hidden = done;
-    $('codeRow').hidden = done || $('codeRow').hidden;
-    $('steps').hidden = done;
+    $('presets').hidden = done || paying;
+    $('terms').hidden = done || paying;
+    $('codeRow').hidden = done || paying || $('codeRow').hidden;
+    $('steps').hidden = done || paying;
+    $('payBox').hidden = !paying;
     $('receipt').hidden = !done;
-    $('stepTitle').textContent = done ? 'Swap complete' : (sendBtc ? 'Swap bitcoin for USDT' : 'Swap USDT for bitcoin');
+    $('stepTitle').textContent = done ? 'Swap complete'
+      : (paying ? 'Waiting for payment' : (sendBtc ? 'Swap bitcoin for USDT' : 'Swap USDT for bitcoin'));
     $('stepTitle').className = 'q' + (done ? ' done' : '');
-    $('primary').textContent = done ? 'Done' : 'Approve';
+    $('primary').textContent = done ? 'Done' : (paying ? 'I paid' : 'Approve');
+    if (paying) paintPay();
 
     $('stateTxt').textContent = done ? 'Completed'
-      : (S.gate && S.gate.ok ? 'Ready to approve'
-        : (readInvoice(pasted()).ok ? 'Invoice ready' : 'Ready'));
-    $('stateTxt').dataset.on = done || (S.gate && S.gate.ok) ? '1' : '0';
+      : (paying ? 'Nothing sent yet'
+        : (S.gate && S.gate.ok ? 'Ready to approve'
+          : (readInvoice(pasted()).ok ? 'Invoice ready' : 'Ready')));
+    $('stateTxt').dataset.on = done || (!paying && S.gate && S.gate.ok) ? '1' : '0';
 
     if (done) {
       $('rcSend').textContent = sendBtc ? fmt(S.sats) + ' sats' : usdtTxt() + ' USDT';
@@ -1667,6 +1859,20 @@ contract LightningUsdtHTLC {
     }
 
     renderLog();
+  }
+
+  /* The waiting screen: what to send and where, and nothing that claims the
+     swap is over before the money has actually left the wallet. */
+  function paintPay() {
+    var sendBtc = S.direction === 'btc2u';
+    $('payLine').textContent = sendBtc
+      ? 'Send ' + fmt(S.sats) + ' sats to this invoice from your wallet, then tap I paid.'
+      : 'Send ' + usdtTxt() + ' USDT to this address from your wallet, then tap I paid.';
+    $('payAddr').hidden = sendBtc;
+    $('payAddr').textContent = sendBtc ? '' : (S.addr || '\u2014');
+    $('payRowInv').hidden = !sendBtc;
+    $('payRowAddr').hidden = sendBtc;
+    $('payWalletLink').setAttribute('href', sendBtc && S.inv ? 'lightning:' + S.inv : '#');
   }
 
   function presetsOn() {
@@ -1713,13 +1919,14 @@ contract LightningUsdtHTLC {
     var say = $('say');
     say.textContent = r.msg;
     say.className = 'say' + (r.ok || r.code === 'empty' ? '' : ' err');
-    $('primary').dataset.ready = r.ok ? '1' : '0';
+    $('primary').dataset.ready = r.ok || S.phase === 'paying' ? '1' : '0';
     var f = r.fields || {};
     markField(invIn(), f.invoice, r.ok);
     markField(addrEl(), f.address, r.ok);
     $('stateTxt').textContent = S.phase === 'settled' ? 'Completed'
-      : (r.ok ? 'Ready to approve' : (readInvoice(pasted()).ok ? 'Invoice ready' : 'Ready'));
-    $('stateTxt').dataset.on = S.phase === 'settled' || r.ok ? '1' : '0';
+      : (S.phase === 'paying' ? 'Nothing sent yet'
+        : (r.ok ? 'Ready to approve' : (readInvoice(pasted()).ok ? 'Invoice ready' : 'Ready')));
+    $('stateTxt').dataset.on = S.phase === 'settled' || (S.phase !== 'paying' && r.ok) ? '1' : '0';
   }
 
   function markField(el, res, allOk) {
@@ -1749,6 +1956,7 @@ contract LightningUsdtHTLC {
 
   function approve() {
     if (S.phase === 'settled') { reset(); return; }
+    if (S.phase === 'paying') { paid(); return; }
     validate().then(function (r) {
       if (!r.ok) {
         paintGate(r);
@@ -1768,19 +1976,49 @@ contract LightningUsdtHTLC {
       S.invDec = r.dec;
       S.addr = r.address;
       S.H = r.H;
+      S.basis = r.basis || 'invoice';
       logSwap(r);
-      computeSwapId(S.H, EVM.usdtSide, S.addr, EVM.token, S.units, S.t2).then(function (id) {
-        S.id = id;
-        log('LOCK', 'bitcoin HTLC and USDT escrow locked on the same H');
-        log('SETTLE', 'swap id ' + short(id, 6) + ' \u00b7 both legs closed at once');
-        S.phase = 'settled';
-        if (S.mode === 'wallet') {
-          historyEntry('Swap', S.direction === 'btc2u' ? '+' + usdtTxt() + ' USDT' : '+' + fmt(S.sats) + ' sats', 'plus');
-        }
+      if (S.basis === 'offer') log('OFFER', 'the wallet pays the offer; H is the hash of that offer');
+      /* Wallet mode stops here: nothing has been paid yet, so nothing is done.
+         Practice has no money to move and settles on the same tap. */
+      if (S.mode === 'wallet') {
+        S.phase = 'paying';
+        log('PAY', S.direction === 'btc2u'
+          ? 'waiting for the sats to leave the wallet'
+          : 'waiting for the USDT transfer to be sent');
         render();
         refreshGate();
-        toast('Swap complete');
-      });
+        toast('Pay from your wallet, then tap I paid');
+        return;
+      }
+      settleNow();
+    });
+  }
+
+  /* The payer confirms the payment left the wallet: only now does the swap close
+     and produce a receipt. */
+  function paid() {
+    if (S.phase !== 'paying') return;
+    if (S.t2 && S.t2 - nowSec() <= 0) {
+      toast('Those terms have run out. Ask for a new code.');
+      return;
+    }
+    log('PAID', S.direction === 'btc2u' ? 'the sats have been sent' : 'the USDT has been sent');
+    settleNow();
+  }
+
+  function settleNow() {
+    computeSwapId(S.H, EVM.usdtSide, S.addr, EVM.token, S.units, S.t2).then(function (id) {
+      S.id = id;
+      log('LOCK', 'bitcoin HTLC and USDT escrow locked on the same H');
+      log('SETTLE', 'swap id ' + short(id, 6) + ' \u00b7 both legs closed at once');
+      S.phase = 'settled';
+      if (S.mode === 'wallet') {
+        historyEntry('Swap', S.direction === 'btc2u' ? '+' + usdtTxt() + ' USDT' : '+' + fmt(S.sats) + ' sats', 'plus');
+      }
+      render();
+      refreshGate();
+      toast('Swap complete');
     });
   }
 
@@ -1788,7 +2026,7 @@ contract LightningUsdtHTLC {
     S.phase = 'idle';
     S.H = null; S.id = null; S.units = null;
     S.t1 = null; S.t2 = null;
-    S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null;
+    S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null; S.basis = null;
     S.qrInv = '';
     var a = invIn(); if (a) { a.value = ''; a.dataset.state = ''; }
     var b = addrEl(); if (b) { b.value = ''; b.dataset.state = ''; }
@@ -1800,9 +2038,10 @@ contract LightningUsdtHTLC {
     refreshGate();
   }
 
-  /* Back from the finished swap keeps the terms on screen. */
+  /* Back from the finished swap or the waiting screen keeps the terms on
+     screen. */
   function backToForm() {
-    if (S.phase !== 'settled') return;
+    if (S.phase === 'idle') return;
     S.phase = 'idle';
     S.qrInv = '';
     var box = $('qrBox'); if (box) box.innerHTML = '';
@@ -1887,7 +2126,7 @@ contract LightningUsdtHTLC {
   var ACT = {
     mode: function (b) {
       S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
-      if (S.phase === 'settled') backToForm();
+      if (S.phase !== 'idle') backToForm();
       render();
       refreshGate();
     },
@@ -1951,6 +2190,28 @@ contract LightningUsdtHTLC {
     },
     sampleInv: function () { sampleInvoice(); },
     sampleAddr: function () { sampleAddress(); },
+    payCopyInv: function () {
+      if (!S.inv) { needInvoice(); return; }
+      copy(S.inv, 'Invoice copied');
+    },
+    payQrInv: function () {
+      var box = $('qrBox');
+      if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
+      if (!S.inv) { needInvoice(); return; }
+      S.qrInv = S.inv;
+      showQr('lightning:' + S.inv, 'The invoice for this swap', true);
+    },
+    payCopyAddr: function () {
+      if (!S.addr) { toast('Nothing to copy yet'); return; }
+      copy(S.addr, 'Address copied');
+    },
+    payQrAddr: function () {
+      var box = $('qrBox');
+      if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
+      if (!S.addr) { toast('Nothing to show yet'); return; }
+      S.qrInv = S.addr;
+      showQr(S.addr, 'The address the USDT goes to', true);
+    },
     reset: function () { reset(); }
   };
 
@@ -1998,7 +2259,8 @@ contract LightningUsdtHTLC {
 
   window.CLEANSWAP = {
     state: S, SEL: SEL, EVM: EVM, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
-    sha256Hex: sha256Hex, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
+    sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
+    base58Bytes: base58Bytes, tronAddressBytes: tronAddressBytes, chainOf: chainOf,
     decodeBolt11: decodeBolt11, decodeBolt12: decodeSwapOffer, decodeSwapOffer: decodeSwapOffer,
     mintInvoice: mintInvoice, mintOffer: mintOffer,
     lockCalldata: lockCalldata, decodeLockCalldata: decodeLockCalldata, readLockProof: readLockProof,
@@ -2008,7 +2270,7 @@ contract LightningUsdtHTLC {
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
     applyCode: applyCode, acceptCode: function (t) { return applyCode(t); },
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
-    approve: approve, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
+    approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
     sampleInvoice: sampleInvoice, sampleAddress: sampleAddress, revealQr: revealQr,
     historyEntry: historyEntry, pasted: pasted, addrIn: addrIn
   };

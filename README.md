@@ -10,8 +10,8 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-255%20passing-0f9d6e">
-  <img alt="android 0.4.2" src="https://img.shields.io/badge/android-0.4.2-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-317%20passing-0f9d6e">
+  <img alt="android 0.4.3" src="https://img.shields.io/badge/android-0.4.3-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -24,14 +24,16 @@ framework, no browser extension, no wallet vendor, no custodian. Three steps - *
 invoice, 2 the USDT address, 3 Approve** - and underneath them a Bitcoin-style SHA-256 hashlock that
 settles both legs with the same 32-byte secret.
 
-`v0.4.2` is the version that fits on one screen and, when it can, never leaves the phone.
+`v0.4.3` is the version that fits on one screen, never leaves the phone when it can, and does not
+call a swap finished until you say the money has left your wallet.
 
-## What `v0.4.2` does
+## What `v0.4.3` does
 
-* **Three steps, and the same three in both modes.** `1 Partner's Lightning invoice` (the `lnbc...`
-  the other side wants paid) -> `2 Your USDT address` (the `0x...` that receives the USDT) ->
-  `3 Approve`. Practice and Wallet build the same screen from the same markup, the same field in the
-  same place, the same numbers; a rehearsal cannot teach a different flow than the real thing.
+* **Three steps, and the same three in both modes.** `1 Partner's Lightning invoice` (an `lnbc...`
+  invoice or an `lno1...` offer the other side wants paid) -> `2 Your USDT address` (the `0x...` or
+  `T...` that receives the USDT) -> `3 Approve`. Practice and Wallet build the same screen from the
+  same markup, the same field in the same place, the same numbers; a rehearsal cannot teach a
+  different flow than the real thing.
 * **The direction reverses the steps.** One tap on the switch between the cards and the order swaps:
   sending USDT, `1 Partner's USDT address` comes before `2 Your Lightning invoice`, and the invoice
   row stops offering `Open in wallet` and offers `Copy` instead, because now the invoice is yours to
@@ -40,10 +42,23 @@ settles both legs with the same 32-byte secret.
   fills what the other side (or your own wallet) would supply: a real `lnbc...` invoice minted on the
   device for this amount, and a valid `0x` address. Wallet mode hides both buttons and takes only
   what you paste. A practice swap is never written to **Recent**; a real one is.
-* **`Approve` is the whole swap.** One tap verifies the two inputs, binds them to one hashlock,
-  builds the escrow's `lock()` call from that same hash, settles both legs at once and shows a small
-  receipt: what you sent, what you got, the address. If a check fails the button stays inert and the
-  sentence says what is wrong - a tap alone never moves money.
+* **`Approve` is the whole swap in Practice.** One tap verifies the two inputs, binds them to one
+  hashlock, builds the escrow's `lock()` call from that same hash, settles both legs at once and
+  shows a small receipt: what you sent, what you got, the address. If a check fails the button stays
+  inert and the sentence says what is wrong - a tap alone never moves money.
+* **In Wallet, `Approve` waits for the payment.** The tap checks the same things, but it ends on
+  **Waiting for payment**, not on a receipt: the invoice to pay (or, sending USDT, the address) with
+  `Open in wallet`, `Copy` and `QR`, and below it `I paid` and `<- Back`. Only `I paid` closes the
+  swap and shows the receipt, because until then nothing has been paid and calling the swap complete
+  would be a lie. Practice still settles on the one tap - a rehearsal moves nothing.
+* **A BOLT12 offer is a payment target, not a rejection.** Pasting `lno1...` - the offers Lexe and
+  other BOLT12 wallets hand out - is accepted: `Open in wallet` becomes `lightning:lno1...`, the QR
+  carries it, and it keeps working through the waiting screen. An offer has no `payment_hash` of its
+  own, so the swap binds to the offer itself (see below). Random text that only looks like bech32 is
+  still refused.
+* **TRON USDT addresses work.** Step 2 takes an EVM address (`0x` + 40 hex) or a TRC-20 one (`T` +
+  33 base58 characters), and the TRON form is verified with its real Base58Check SHA-256 checksum: a
+  mistyped, truncated or wrong-checksum address is refused instead of being paid.
 * **The terms leave as a code, not as a web address.** `Share code` copies
   `cleanswap:...` (base64url JSON: both amounts, the window, and - once known - the hashlock and the
   USDT address). It is not a link: no host, no path, no file, no name, nothing taken from
@@ -61,9 +76,9 @@ settles both legs with the same 32-byte secret.
 
 | Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
-| 1 | the Lightning invoice - `Open in wallet`, `QR` (Wallet), `Sample` (Practice) | bech32 checksum, `payment_hash` present, amount equal to the swap (an amountless invoice is allowed), not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned. A bare `lno1...` offer is refused with *That is an offer, not an invoice* |
-| 2 | the USDT address - `Sample` (Practice) | `0x` plus exactly 40 hex characters, and not the zero address |
-| 3 | `Approve` | the two are bound: the invoice's `payment_hash` becomes the swap's `H`, `lock(H, T2, yourAddress, USDT, amount)` is the escrow leg, and `swapId = sha256(abi.encodePacked(H, sender, receiver, token, amount, timelock))` is what both sides settle on |
+| 1 | the Lightning invoice or offer - `Open in wallet`, `QR` (Wallet), `Sample` (Practice) | bech32 checksum, `payment_hash` present (or a well-formed `lno1...` offer, which binds the swap to itself), amount equal to the swap (an amountless invoice or offer is allowed), not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned |
+| 2 | the USDT address - `Sample` (Practice) | an EVM `0x` address with exactly 40 hex characters, or a TRON `T` address of 34 base58 characters whose double-SHA-256 Base58Check checksum holds; not the zero address of either chain |
+| 3 | `Approve` | the two are bound: the invoice's `payment_hash` (or the offer's own hash) becomes the swap's `H`, `lock(H, T2, yourAddress, USDT, amount)` is the escrow leg, and `swapId = sha256(abi.encodePacked(H, sender, receiver, token, amount, timelock))` is what both sides settle on |
 
 Anything refused is named in plain English and never in jargon, and the hidden log keeps the decoded
 fields for a support question.
@@ -75,9 +90,9 @@ same three steps:
 
 | Step | Wallet mode | Practice mode |
 | --- | --- | --- |
-| 1 | you paste the invoice the other side made, or your own when you are the one being paid; `Open in wallet` is the standard `lightning:` deep link into BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green | `Sample` mints a `lnbc...` invoice for this amount and pastes it for you |
-| 2 | you paste your (or your partner's) `0x` address | `Sample` fills a valid address |
-| 3 | `Approve` | `Approve` - nothing opens, nothing is paid, and Recent stays empty |
+| 1 | you paste the invoice the other side made, or your own when you are the one being paid - an `lno1...` offer works the same way; `Open in wallet` is the standard `lightning:` deep link into BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green | `Sample` mints a `lnbc...` invoice for this amount and pastes it for you |
+| 2 | you paste your (or your partner's) `0x...` or `T...` address | `Sample` fills a valid `0x` address |
+| 3 | `Approve`, then `I paid` once the wallet shows the payment gone | `Approve` - nothing opens, nothing is paid, and Recent stays empty |
 
 There is no WebLN, no browser extension and no key request - the app never signs anything, and
 nothing is paid except in your own wallet.
@@ -86,8 +101,15 @@ nothing is paid except in your own wallet.
 issue carries *their* `payment_hash`. That hash *is* the swap: it becomes `H`, and the USDT `lock()`
 the escrow uses is built from the same `H`. One hashlock, both legs. What is *not* accepted: an
 invoice whose bech32 checksum does not hold, one that has expired, one for a different amount
-(`That invoice is for 25,000 sats, not 50,000.`), a bare `lno1...` offer with no payment hash, or an
-invoice on a hash that the shared code already fixed.
+(`That invoice is for 25,000 sats, not 50,000.`), or an invoice on a hash that the shared code
+already fixed.
+
+**Waiting is part of the flow.** After `Approve` the screen shows what to pay and where, and stays
+there until `I paid`. `<- Back` returns to the filled form without settling anything.
+
+<p align="center">
+  <img src="docs/paying.png" width="360" alt="CLEANSWAP in Wallet mode: waiting for the payment, with I paid">
+</p>
 
 Completed real swaps land as one-line entries under **Recent** (`+32.15 USDT`, `+50,000 sats`).
 
@@ -159,18 +181,27 @@ One reader takes anything: `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice),
 * Wallet hand-off: `lightning:<offer|invoice>` deep link, one-tap copy, and a locally generated QR
   (own encoder, byte mode, EC level M — falling back to L for long requests — versions 1–13).
 
-> Honest limit: a BOLT12 offer has **no `payment_hash` field of its own**. Offers minted here carry
-> the hashlock in the custom type-80 TLV; a wallet-generated invoice for the same swap carries the
-> standard one, and Wallet mode adopts it. A bare offer from someone else's wallet therefore stops
-> the wallet step with *That is an offer, not an invoice* — there is no hash in it to bind both legs
-> to, and accepting it would be accepting a promise instead of a lock.
+> Honest limit: a BOLT12 offer has **no `payment_hash` field of its own**, so a swap paid through
+> an offer has nothing in the offer to lock the USDT leg to. Offers minted here therefore carry the
+> swap hashlock in the custom type-80 TLV and keep it; an offer from someone else's wallet (Lexe,
+> say) binds the swap to the offer string itself - `H = SHA-256` of the offer's TLV bytes - which is
+> deterministic, identical on both phones, and travels in the `cleanswap:` code. A wallet-generated
+> invoice for the same swap carries the standard `invoice_payment_hash`, and Wallet mode adopts that
+> instead. Garbage, truncation and text that only resembles an offer are refused at the gate.
 
-### USDT side: AQUA / Liquid, with an EVM reference backend
+### USDT side: two addresses in, the same escrow
 
-AQUA does not expose hashlock scripts, so the prototype keeps the token leg at the level a wallet
-can actually do: an amount-bearing `liquidnetwork:` request and the EVM HTLC above for anyone who
-wants the lock enforced on-chain with the identical `H`. The escrow the gate checks is generated
-from that contract's ABI, so the calldata a partner sends is the calldata a wallet would send.
+Step 2 accepts either form a USDT holder actually pastes: an EVM address (`0x` + 40 hex) or a TRON
+TRC-20 address (`T` + 33 base58 characters). The TRON form is decoded from base58 and checked
+against its four-byte double-SHA-256 Base58Check checksum (the synchronous SHA-256 in `src/app.js`
+exists for exactly this, because an address check cannot wait on a promise), and its prefix byte must
+be `0x41`; a wrong character, a wrong length or a bad checksum is refused.
+
+The token leg itself is unchanged: AQUA/Liquid and TRON are wallet-level hand-offs, and the EVM HTLC
+above is the reference for anyone who wants the lock enforced on-chain with the identical `H`. The
+escrow the gate checks is generated from that contract's ABI, so the calldata a partner sends is the
+calldata a wallet would send. For a TRON address the app builds no EVM calldata and says so in the
+log rather than pretending.
 
 ### What the screen deliberately hides
 
@@ -206,7 +237,7 @@ tools/
   qr-check.js                dumps QR matrices for cross-checking
   docshots.js                regenerates docs/preview.png and docs/wallet.png
 test/
-  headless.js                Playwright end-to-end suite (120 checks)
+  headless.js                Playwright end-to-end suite (182 checks)
   contract-evm.py            contract behaviour on a real EVM + app calldata (26 checks)
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder (45 checks)
@@ -234,7 +265,7 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright, 360x780 / 390x844 / 1280x800) | The three steps and their numbers, the same screen in Practice and Wallet with `Sample` only in Practice, the flip that reverses the steps and swaps `Open in wallet` for `Copy`, invoice refusals (broken checksum, expired, other amount, an offer instead of an invoice, a hash that is not this swap's), address refusals (short, zero, empty), `Approve` staying inert with a field left empty, the `cleanswap:` code (shape, round trip, no path or host in it, QR equal in substance, two phones settling on the same hashlock *and* the same swap id), the QR clearing the Approve bar at 360x780, the action bar never covering the last line, no technical word or Hangul on screen, and zero horizontal overflow at three widths | **120/120 pass** |
+| `test/headless.js` (Playwright, 360x780 / 390x844 / 1280x800) | The three steps and their numbers, the same screen in Practice and Wallet with `Sample` only in Practice, the flip that reverses the steps and swaps `Open in wallet` for `Copy`, invoice refusals (broken checksum, expired, other amount, a hash that is not this swap's), a `lno1...` offer accepted both at the gate and on the screen with its `lightning:` hand-off and QR, address refusals and acceptances on both chains (short, zero, empty, EVM lower-casing, two real TRC-20 addresses, a bad TRON checksum, a wrong length, a lower-cased TRON address), the Wallet wait (`Approve` moves to Waiting for payment, nothing is in Recent, `I paid` produces the receipt, `<- Back` unsettles nothing), `Approve` staying inert with a field left empty, the `cleanswap:` code (shape, round trip, no path or host in it, QR equal in substance, two phones settling on the same hashlock *and* the same swap id), the QR clearing the Approve bar at 360x780, the waiting screen fitting that width, the action bar never covering the last line, no technical word or Hangul on screen, and zero horizontal overflow at three widths | **182/182 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: faucet/approve, `lock` escrows and debits, swap record and `computeSwapId` agree, wrong preimage reverts, correct preimage pays the receiver, `Claimed` carries `R`, double claim reverts, refund before/after the timelock, `Refunded` emitted — and the UI's `lock()` calldata decodes to the swap fields with the right keccak selector | **26/26 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads, including BOLT12 lengths at versions 12–13, matches `python-qrcode` exactly | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder: checksum, `payment_hash`, amount (including 1 sat and 250k sats), 35-bit timestamp, expiry tag, 65-byte signature slot, optional description, and a length that still fits a QR | **45/45 pass** |
@@ -246,13 +277,13 @@ bash test/run-all.sh      # build + English + headless + EVM + QR + invoices
 ```
 
 Screenshots of the form, the filled form, the blocked form, both directions, the finished swaps, the
-code QR, the 360x780 QR and the desktop view are written to `shots/v42-*.png` by the headless
-suite.
+waiting screen (invoice, offer and USDT-side), the code QR, the 360x780 QR and the desktop view are
+written to `shots/v43-*.png` by the headless suite.
 
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `app_name =
-CLEANSWAP`, `versionName 0.4.2`, `versionCode 5`, `android:screenOrientation="user"`, `#f2f4f7`
+CLEANSWAP`, `versionName 0.4.3`, `versionCode 6`, `android:screenOrientation="user"`, `#f2f4f7`
 status/nav bars, launcher icons generated from `icon-clean-1.png`). Build it with `gradle
 assembleDebug` after staging `dist/cleanswap.html` into `app/src/main/assets/index.html`
 (`build.py` writes that copy too).
@@ -276,6 +307,11 @@ The APK is uploaded as a workflow artifact.
 ## Security notes and limitations
 
 * This is a **prototype**. The practice sandbox is a local simulator — it never touches a chain.
+* `I paid` is the payer's word, not an observation: the app holds no node and no chain access, so it
+  cannot see whether the payment landed. The button exists so the screen never claims a swap the
+  money has not paid for; a production build would watch the invoice or the lock instead.
+* A TRON address is verified as a Base58Check address, not as a USDT-funded account; the token leg
+  on TRON is a wallet hand-off, exactly like AQUA/Liquid.
 * Minted offers and invoices carry deterministic filler signatures; they parse, checksum and hash
   correctly, but no node will route them. They exist so the gate can be exercised honestly.
 * The contract is minimal by design and has **not been audited**. Do not escrow real value with it.

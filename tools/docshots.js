@@ -50,6 +50,12 @@ const SHOTS = path.resolve(__dirname, '..', 'shots');
   await three.p.waitForTimeout(400);
   await three.p.screenshot({ path: path.join(DOCS, 'wallet.png'), fullPage: false });
 
+  // 3b. the screen Wallet mode parks on after Approve, before I paid
+  await three.p.click('#primary');
+  await three.p.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
+  await three.p.waitForTimeout(2800);   // let the toast fade before the shot
+  await three.p.screenshot({ path: path.join(DOCS, 'paying.png'), fullPage: false });
+
   // 4. the code QR, for whoever wants to see it
   const four = await page(390, 844);
   await four.p.click('[data-act="qrCode"]');

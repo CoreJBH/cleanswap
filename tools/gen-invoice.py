@@ -94,7 +94,7 @@ def build_offer():
         tlv(10, OFFER_DESC.encode()) +      # offer_description
         tlv(14, OFFER_EXPIRY.to_bytes(4, 'big')) +   # offer_absolute_expiry
         tlv(22, NODE_ID) +                  # node_id
-        tlv(80, bytes(64))                  # signature slot (not verified by the app)
+        tlv(240, bytes(64))                 # signature slot (not verified by the app)
     )
     words = to_words(tlvs, pad=True)
     hrp = 'lno'
