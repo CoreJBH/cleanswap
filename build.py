@@ -10,18 +10,47 @@ The build refuses to emit a page that contains Hangul: the repository and the
 UI are English only, and this is the last gate before a byte reaches dist/.
 """
 import base64
+import glob
+import json
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, 'src')
 CONTRACTS = os.path.join(HERE, 'contracts')
 ASSETS = os.path.join(HERE, 'assets')
+BUILD = os.path.join(HERE, 'build')
 OUT = os.path.abspath(os.path.join(HERE, '..', '..', 'ln-usdt-swap.html'))
 DIST = os.path.join(HERE, 'dist', 'cleanswap.html')
 APK_ASSET = os.path.join(HERE, 'android', 'app', 'src', 'main', 'assets', 'index.html')
 HANGUL = re.compile(r'[\uac00-\ud7af]')
+
+
+SOLC = os.environ.get('SOLC') or (glob.glob(os.path.join(HERE, '.tools', 'solc-linux-amd64-*')) or [None])[0]
+
+
+def escrow_bytecode():
+    """The escrow's creation bytecode, for the Setup panel's deploy hand-off.
+
+    solc 0.8.26 compiles contracts/CleanSwapHTLC.sol here when it is installed;
+    otherwise the bytecode committed beside the source is used, and
+    test/contract-evm.py fails if the two ever disagree.
+    """
+    committed = os.path.join(CONTRACTS, 'CleanSwapHTLC.bin')
+    if SOLC and os.path.exists(SOLC):
+        os.makedirs(BUILD, exist_ok=True)
+        subprocess.run([SOLC, '--optimize', '--optimize-runs', '200', '--combined-json', 'abi,bin',
+                        'contracts/CleanSwapHTLC.sol', 'contracts/TestUSDT.sol',
+                        '-o', BUILD, '--overwrite'], cwd=HERE, check=True, capture_output=True)
+        data = json.load(open(os.path.join(BUILD, 'combined.json'), encoding='utf-8'))
+        for key, art in data['contracts'].items():
+            if key.endswith(':CleanSwapHTLC'):
+                return art['bin']
+    if os.path.exists(committed):
+        return open(committed, encoding='ascii').read().strip()
+    sys.exit('ERROR: no solc and no contracts/CleanSwapHTLC.bin')
 
 
 def read(*p):
@@ -50,7 +79,8 @@ def main():
     css = read(SRC, 'app.css')
     qr = read(SRC, 'qr.js').strip()
     app = read(SRC, 'app.js').strip()
-    sol = read(CONTRACTS, 'LightningUsdtHTLC.sol').strip()
+    sol = read(CONTRACTS, 'CleanSwapHTLC.sol').strip()
+    code = escrow_bytecode()
 
     for name, blob in (('qr', qr), ('app', app), ('css', css), ('template', tpl), ('contract', sol)):
         if HANGUL.search(blob):
@@ -66,6 +96,7 @@ def main():
     out = out.replace('/*__QR__*/', qr)
     out = out.replace('/*__APP__*/', app)
     out = out.replace('/*__SOL__*/', sol)
+    out = out.replace('/*__BYTECODE__*/', code)
     out = out.replace('/*__BOLT11__*/', sample('bolt11'))
     out = out.replace('/*__BOLT12__*/', sample('bolt12'))
     out = out.replace('__ICON64__', icon_b64('icon-64.png'))

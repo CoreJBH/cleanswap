@@ -65,14 +65,43 @@ body{
 
 body[data-phase="settled"] .flip{display:none}
 body[data-phase="settled"] .step{opacity:1}
+body[data-phase="refunded"] .flip{display:none}
 body[data-phase="paying"] .flip{display:none}
+body[data-phase="paid"] .flip{display:none}
+body[data-phase="locking"] .flip{display:none}
 
-/* the waiting screen Wallet mode parks on: what to send, and `I paid` below */
+/* ------------------------------------------------------------ the chain -- */
+.chain{display:flex;align-items:center;gap:7px;width:100%;margin:10px 0 0;padding:10px 12px;
+  border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink2);
+  font-family:inherit;font-size:12.5px;font-weight:700;text-align:left;cursor:pointer}
+.chain span:nth-child(2){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chain .chev{color:var(--dim);font-size:17px;line-height:1;flex:none}
+.chain:active{background:#f7f8fa}
+.chain:focus-visible{outline:2px solid var(--em);outline-offset:2px}
+.chain .dot.live{background:var(--em)}
+
+/* the deploy-once panel: the only screen with an address on it */
+.setup{margin:10px 0 0;padding:14px 16px 8px;background:var(--card);border-radius:var(--r)}
+.setup-h{margin:0 0 10px;font-size:14.5px;font-weight:800;color:var(--ink)}
+.seg2{display:flex;gap:6px;margin:0 0 12px;padding:3px;border-radius:12px;background:#eef1f4}
+.seg2 button{flex:1 1 0;height:34px;border:0;border-radius:9px;background:transparent;color:var(--dim);
+  font-family:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.seg2 button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.seg2 button:focus-visible{outline:2px solid var(--em);outline-offset:1px}
+.setup .cap2{display:block;margin:0 0 5px;font-size:12.5px;font-weight:700;color:var(--dim)}
+.setup .field{margin:0 0 10px}
+.setup .field input{height:44px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,"Liberation Mono",Menlo,Consolas,monospace}
+.setup .row{margin:0 0 12px}
+.setup .pill{height:44px;font-size:13px}
+.hint{margin:2px 0 10px;font-size:12.5px;line-height:1.45;color:var(--dim);font-weight:500}
+
+.pay-esc{margin:-4px 0 12px;font-size:12.5px;line-height:1.45;color:var(--dim);font-weight:600}
 .pay{margin:14px 0 0;padding:16px 18px 6px;background:var(--card);border-radius:var(--r)}
 .pay-line{margin:0 0 12px;font-size:14.5px;line-height:1.5;color:var(--ink2);font-weight:600}
 .pay-addr{margin:0 0 12px;padding:10px 12px;border-radius:12px;background:#f5f7f9;font-size:12.5px;
   line-height:1.45;color:var(--ink2);word-break:break-all}
 .pay .row{margin:0 0 10px}
+.pay .pill{font-size:13px;padding:0 8px}
 
 .state{margin:6px 0 0;text-align:center;font-size:14px;font-weight:700;color:var(--dim)}
 .state[data-on="1"]{color:var(--em-ink)}
@@ -157,6 +186,7 @@ body[data-phase="paying"] .flip{display:none}
 .rc b{font-size:13.5px;font-weight:700;color:var(--ink);text-align:right;max-width:68%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rc b.mono{white-space:normal;word-break:break-all;line-height:1.35}
+.rc b.wrap{white-space:normal;line-height:1.35}
 
 /* ---------------------------------------------------------------- recent -- */
 .recent{margin:26px 0 0}

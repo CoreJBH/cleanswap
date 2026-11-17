@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run LightningUsdtHTLC.sol on a real EVM.
+"""Run CleanSwapHTLC.sol on a real EVM.
 
 Uses py-evm through eth-tester (no node, no network) to deploy TestUSDT and
-LightningUsdtHTLC and exercise the actual bytecode: lock, claim with the right
+CleanSwapHTLC and exercise the actual bytecode: lock, claim with the right
 preimage, claim with a wrong preimage, double claim, refund before and after the
-timelock, and the balance movements those imply.
+timelock, and the balance movements those imply - plus the `swaps(id)` getter
+the app reads over eth_call, encoded here with eth_abi and compared with what
+the page's mock endpoint answers with.
 
 Requires: solc (SOLC env var or .tools/solc-*), plus eth-tester, py-evm and eth-abi.
     pip install --target .tools/py eth-tester py-evm eth-abi eth-utils
@@ -41,7 +43,7 @@ def compile_contracts():
         sys.exit('solc not found — set SOLC=/path/to/solc')
     os.makedirs(BUILD, exist_ok=True)
     subprocess.run([SOLC, '--optimize', '--optimize-runs', '200', '--combined-json', 'abi,bin',
-                    'contracts/LightningUsdtHTLC.sol', 'contracts/TestUSDT.sol',
+                    'contracts/CleanSwapHTLC.sol', 'contracts/TestUSDT.sol',
                     '-o', BUILD, '--overwrite'], cwd=ROOT, check=True, capture_output=True)
     data = json.load(open(os.path.join(BUILD, 'combined.json')))
     out = {}
@@ -110,12 +112,12 @@ arts = compile_contracts()
 accounts = t.get_accounts()
 taker, maker = accounts[1], accounts[2]
 concrete = {k: v for k, v in arts.items() if v['bin']}
-check('solc: both contracts compiled to bytecode', len(concrete) == 2 and 'LightningUsdtHTLC' in concrete,
+check('solc: both contracts compiled to bytecode', len(concrete) == 2 and 'CleanSwapHTLC' in concrete,
       ', '.join('%s %dB' % (k, len(v['bin']) // 2) for k, v in concrete.items()))
 
 usdt = deploy(arts['TestUSDT'], accounts[0])
-htlc = deploy(arts['LightningUsdtHTLC'], accounts[0])
-check('deploy: TestUSDT + LightningUsdtHTLC live on py-evm', bool(usdt) and bool(htlc),
+htlc = deploy(arts['CleanSwapHTLC'], accounts[0])
+check('deploy: TestUSDT + CleanSwapHTLC live on py-evm', bool(usdt) and bool(htlc),
       'usdt=%s htlc=%s' % (str(usdt)[:12], str(htlc)[:12]))
 
 # faucet + approve
@@ -148,10 +150,31 @@ check('lock: taker debited', view(usdt, 'balanceOf(address)', ['address'], [take
 stored = view(htlc, 'getSwap(bytes32)', ['bytes32'], [swap_id],
               ['bytes32', 'uint256', 'uint256', 'address', 'address', 'address', 'bool', 'bool'])
 check('lock: swap record matches (hashlock, amount, timelock)', stored[0] == H and stored[1] == amount and stored[2] == timelock)
-check('lock: swapId equals computeSwapId()',
-      view(htlc, 'computeSwapId(bytes32,address,address,address,uint256,uint256)',
-           ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
-           [H, taker, maker, usdt, amount, timelock], ['bytes32'])[0] == swap_id)
+check('lock: swapId equals computeSwapId() - the terms, not the sender',
+      view(htlc, 'computeSwapId(bytes32,address,address,uint256,uint256)',
+           ['bytes32', 'address', 'address', 'uint256', 'uint256'],
+           [H, maker, usdt, amount, timelock], ['bytes32'])[0] == swap_id)
+
+# ---- the getter the app reads over eth_call --------------------------------
+# `swaps(id)` is the app's only source of truth for the USDT leg: eight static
+# words in the struct's order, exactly as an eth_call returns them.
+def swaps_raw(sid):
+    data = '0x' + (selector('swaps(bytes32)') + abi_encode(['bytes32'], [sid])).hex()
+    out = t.call({'from': accounts[0], 'to': htlc, 'data': data})
+    if isinstance(out, str):
+        out = bytes.fromhex(out[2:] if out.startswith('0x') else out)
+    return bytes(out), abi_decode(['bytes32', 'uint256', 'uint256', 'address', 'address', 'address', 'bool', 'bool'], bytes(out))
+
+_lock_bytes, _lock_words = swaps_raw(swap_id)
+check('swaps(id): the getter returns the whole record',
+      len(_lock_bytes) == 8 * 32 and _lock_words[0] == H and _lock_words[1] == amount and _lock_words[2] == timelock,
+      '%d bytes, %d USDT units' % (len(_lock_bytes), _lock_words[1]))
+check('swaps(id): token, sender, receiver and the one-shot flags',
+      _lock_words[3].lower() == usdt.lower() and _lock_words[4].lower() == taker.lower()
+      and _lock_words[5].lower() == maker.lower() and _lock_words[6] is False and _lock_words[7] is False)
+_unknown, _uwords = swaps_raw(bytes.fromhex('99' * 32))
+check('swaps(unknown): eight zero words, which the app reads as "not locked"',
+      _unknown == b'\x00' * 256 and _uwords[4] == '0x' + '0' * 40, _unknown.hex()[:16] + '...')
 
 # ---- claim -----------------------------------------------------------------
 wrong = revert_reason(htlc, 'claim(bytes32,bytes32)', ['bytes32', 'bytes32'],
@@ -172,6 +195,10 @@ check('claim: anyone may submit R (front-run is harmless, funds are fixed)',
 
 again = revert_reason(htlc, 'claim(bytes32,bytes32)', ['bytes32', 'bytes32'], [swap_id, R], accounts[3])
 check('claim: second claim reverts (AlreadySettled)', 'revert' in again.lower(), again[:60])
+
+_claimed, _cwords = swaps_raw(swap_id)
+check('swaps(id): after the claim the record says claimed and still pays the receiver',
+      _cwords[6] is True and _cwords[7] is False and _cwords[5].lower() == maker.lower() and _cwords[1] == amount)
 
 # ---- refund ----------------------------------------------------------------
 taker2 = accounts[4]
@@ -203,17 +230,42 @@ check('refund: second refund reverts (AlreadySettled)', 'revert' in again2.lower
 # encoding to this ABI: the selector constants in src/app.js have to hash to the
 # signature, and the calldata the page emitted has to decode to the swap fields.
 src = open(os.path.join(ROOT, 'src', 'app.js'), encoding='utf-8').read()
-m = re.search(r"SEL = \{ lock: '([0-9a-f]{8})', claim: '([0-9a-f]{8})', refund: '([0-9a-f]{8})' \}", src)
-check('app: selector table found in src/app.js', bool(m))
-if m:
-    want = {
-        'lock': selector('lock(bytes32,uint256,address,address,uint256)').hex(),
-        'claim': selector('claim(bytes32,bytes32)').hex(),
-        'refund': selector('refund(bytes32)').hex()
-    }
-    got = {'lock': m.group(1), 'claim': m.group(2), 'refund': m.group(3)}
-    check('app: JS selectors equal keccak of the contract signatures', got == want,
-          ', '.join('%s %s/%s' % (k, got[k], want[k]) for k in want))
+m = re.search(r"SEL = \{(.*?)\}", src, re.S)
+table = dict(re.findall(r"(\w+): '([0-9a-f]{8})'", m.group(1))) if m else {}
+want = {
+    'lock': 'lock(bytes32,uint256,address,address,uint256)',
+    'claim': 'claim(bytes32,bytes32)',
+    'refund': 'refund(bytes32)',
+    'swaps': 'swaps(bytes32)',
+    'balance': 'balanceOf(address)',
+    'approve': 'approve(address,uint256)',
+    'allowance': 'allowance(address,address)'
+}
+check('app: the selector table is in src/app.js', bool(table), ', '.join(sorted(table)))
+check('app: every selector the page sends equals keccak of the contract signature',
+      bool(table) and all(table.get(k) == selector(v).hex() for k, v in want.items()),
+      ', '.join('%s %s/%s' % (k, table.get(k), selector(v).hex()) for k, v in want.items() if table.get(k) != selector(v).hex()) or 'all match')
+
+# The creation bytecode embedded in the page is the one that deploys this source.
+committed = os.path.join(ROOT, 'contracts', 'CleanSwapHTLC.bin')
+if os.path.exists(committed):
+    cbin = open(committed, encoding='ascii').read().strip()
+    check('bytecode: contracts/CleanSwapHTLC.bin matches this source',
+          cbin == arts['CleanSwapHTLC']['bin'], '%d bytes' % (len(cbin) // 2))
+
+# The mock endpoint the page is tested against encodes `swaps(id)` here, with
+# eth_abi, so the layout the app decodes is not one the tests invented.
+mock_path = os.path.join(BUILD, 'mock-record.json')
+if os.path.exists(mock_path):
+    mock = json.load(open(mock_path))
+    rec = mock['record']
+    packed = abi_encode(['bytes32', 'uint256', 'uint256', 'address', 'address', 'address', 'bool', 'bool'],
+                        [to_bytes(hexstr=rec['hashlock']), int(rec['amount']), int(rec['timelock']),
+                         rec['token'], rec['sender'], rec['receiver'], bool(rec['claimed']), bool(rec['refunded'])])
+    check('mock: the test endpoint answers swaps(id) exactly as eth_abi encodes it',
+          mock['hex'].lower() == '0x' + packed.hex(), '%d bytes' % len(packed))
+else:
+    print('note: build/mock-record.json missing - run test/headless.js first')
 
 dump = os.path.join(BUILD, 'app-calldata.json')
 if os.path.exists(dump):

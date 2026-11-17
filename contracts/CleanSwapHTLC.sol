@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.26;
 
-/// @title  LightningUsdtHTLC
+/// @title  CleanSwapHTLC
 /// @notice One-file HTLC that escrows an ERC-20 (USDT on Arbitrum) behind a
 ///         Bitcoin-style SHA-256 hashlock, so a single 32-byte preimage settles
 ///         both legs of a Lightning <-> token atomic swap.
@@ -10,7 +10,14 @@ pragma solidity ^0.8.20;
 ///         Lightning HTLC. A keccak256 hashlock would be dead weight here: no
 ///         Lightning node can pay against it.
 ///
-///         The swap is keyed by the hashlock, so both legs share one secret.
+///         The swap id is derived from the terms alone —
+///         `sha256(hashlock, receiver, token, amount, timelock)` — so both
+///         phones compute the same id off-line, before either one has sent a
+///         transaction, and the app can read the escrow state with `swaps(id)`
+///         without knowing who locked it. The sender is recorded at lock time;
+///         it is not part of the id because the receiver, the amount, the
+///         hashlock and the timelock already fix the whole deal.
+///
 ///         Reveal R on this side (claim) and the Lightning HTLC becomes
 ///         claimable by whoever holds the invoice; if nobody claims here before
 ///         `timelock`, the token leg is refundable to the sender.
@@ -23,10 +30,10 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
-contract LightningUsdtHTLC {
+contract CleanSwapHTLC {
     struct Swap {
         bytes32 hashlock; // slot 0 — sha256(preimage)
-        uint256 amount;   // slot 1 — token units escrowed (test USDT: 6 decimals)
+        uint256 amount;   // slot 1 — token units escrowed (USDT: 6 decimals)
         uint256 timelock; // slot 2 — unix seconds; claim closes / refund opens
         address token;    // slot 3 — 20 bytes …
         address sender;   //          + 20 bytes  (one slot)
@@ -35,8 +42,10 @@ contract LightningUsdtHTLC {
         bool refunded;
     }
 
-    /// @notice swapId => swap. A zero `sender` means "no such swap".
-    mapping(bytes32 swapId => Swap) private _swaps;
+    /// @notice swapId => swap, readable by anyone: `swaps(id)` returns the whole
+    ///         record as a tuple, which is exactly what the app's `eth_call`
+    ///         decodes. A zero `sender` means "no such swap".
+    mapping(bytes32 swapId => Swap) public swaps;
 
     /// @notice Refuse timelocks so short a refund could race the claim.
     uint256 public constant MIN_TIMELOCK_DELTA = 5 minutes;
@@ -74,7 +83,7 @@ contract LightningUsdtHTLC {
     /// @param  hashlock sha256(preimage) — the secret both legs are tied to.
     /// @param  timelock unix seconds after which the sender may refund.
     /// @param  receiver who receives the tokens when `preimage` is revealed.
-    /// @param  token    ERC-20 to escrow (e.g. TestUSDT / Arbitrum USDT).
+    /// @param  token    ERC-20 to escrow (TestUSDT on testnet, USDT on Arbitrum One).
     /// @param  amount   token units, must already be approved to this contract.
     function lock(
         bytes32 hashlock,
@@ -88,10 +97,10 @@ contract LightningUsdtHTLC {
         uint256 minimum = block.timestamp + MIN_TIMELOCK_DELTA;
         if (timelock < minimum) revert TimelockTooSoon(timelock, minimum);
 
-        swapId = computeSwapId(hashlock, msg.sender, receiver, token, amount, timelock);
-        if (_swaps[swapId].sender != address(0)) revert SwapExists(swapId);
+        swapId = computeSwapId(hashlock, receiver, token, amount, timelock);
+        if (swaps[swapId].sender != address(0)) revert SwapExists(swapId);
 
-        Swap storage s = _swaps[swapId];
+        Swap storage s = swaps[swapId];
         s.hashlock = hashlock;
         s.amount = amount;
         s.timelock = timelock;
@@ -111,7 +120,7 @@ contract LightningUsdtHTLC {
     /// @dev    Callable by anyone holding R — the token can only go to the
     ///         receiver fixed at lock time, so a front-runner gains nothing.
     function claim(bytes32 swapId, bytes32 preimage) external {
-        Swap storage s = _swaps[swapId];
+        Swap storage s = swaps[swapId];
         if (s.sender == address(0)) revert SwapUnknown(swapId);
         if (s.claimed || s.refunded) revert AlreadySettled(swapId);
         if (block.timestamp >= s.timelock) revert TimelockExpired(s.timelock, block.timestamp);
@@ -129,7 +138,7 @@ contract LightningUsdtHTLC {
     /// @notice After the timelock, return the tokens to the sender.
     /// @dev    Permissionless: the destination is fixed, so anyone may clean up.
     function refund(bytes32 swapId) external {
-        Swap storage s = _swaps[swapId];
+        Swap storage s = swaps[swapId];
         if (s.sender == address(0)) revert SwapUnknown(swapId);
         if (s.claimed || s.refunded) revert AlreadySettled(swapId);
         if (block.timestamp < s.timelock) revert TimelockNotExpired(s.timelock, block.timestamp);
@@ -143,18 +152,18 @@ contract LightningUsdtHTLC {
 
     /// @notice The swap record, or zeroed fields when unknown.
     function getSwap(bytes32 swapId) external view returns (Swap memory) {
-        return _swaps[swapId];
+        return swaps[swapId];
     }
 
     /// @notice Claim window still open?
     function canClaim(bytes32 swapId) external view returns (bool) {
-        Swap storage s = _swaps[swapId];
+        Swap storage s = swaps[swapId];
         return s.sender != address(0) && !s.claimed && !s.refunded && block.timestamp < s.timelock;
     }
 
     /// @notice Refund window open?
     function canRefund(bytes32 swapId) external view returns (bool) {
-        Swap storage s = _swaps[swapId];
+        Swap storage s = swaps[swapId];
         return s.sender != address(0) && !s.claimed && !s.refunded && block.timestamp >= s.timelock;
     }
 
@@ -163,15 +172,14 @@ contract LightningUsdtHTLC {
         return sha256(abi.encodePacked(preimage));
     }
 
-    /// @notice Deterministic swap id; mirrors the id returned by `lock`.
+    /// @notice Deterministic swap id from the terms; mirrors the id `lock` uses.
     function computeSwapId(
         bytes32 hashlock,
-        address sender,
         address receiver,
         address token,
         uint256 amount,
         uint256 timelock
     ) public pure returns (bytes32) {
-        return sha256(abi.encodePacked(hashlock, sender, receiver, token, amount, timelock));
+        return sha256(abi.encodePacked(hashlock, receiver, token, amount, timelock));
     }
 }

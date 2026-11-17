@@ -97,6 +97,79 @@ function bolt12Offer(o) {
 const BOLT11_SAMPLE_HASH = '0x' + '11'.repeat(32);
 const BOLT12_NODE = '02d40d722b8fa32f8c588757c481462b27dadfece667ea0c662daa0e6d8a8b595e';
 
+/* ------------------------------------------------------------- mock chain ---
+   A JSON-RPC endpoint on 127.0.0.1 that answers the calls Arbitrum answers.
+   The app is pointed at it through Setup, so the page walks the same
+   eth_call / eth_getTransactionReceipt path it walks against a real node; the
+   tests write the record and watch what the screen does with it. */
+const http = require('http');
+/* the escrow, the token and the partner address the wallet tests use */
+const CONTRACT = '0x9d1f4c7a2b8e6035f4a7c1d9028be35f7a6c4d18';
+const TOKEN = '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9';
+const PARTNER = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
+const CHAIN = {
+  chainId: '0x66eee',                 /* Arbitrum Sepolia */
+  block: 0x2f0000,
+  records: {},                        /* swapId (lower-case) -> record */
+  receipts: {},                       /* tx hash -> {status, blockNumber} */
+  calls: [],                          /* every method the page asked for */
+  down: false                         /* flip to make the endpoint refuse */
+};
+function hexWord(v) { return BigInt(v).toString(16).padStart(64, '0'); }
+function hexAddr(a) { return String(a).replace(/^0x/, '').toLowerCase().padStart(64, '0'); }
+function hexB32(h) { return String(h).replace(/^0x/, '').toLowerCase().padStart(64, '0'); }
+function recordHex(r) {
+  return '0x' + [
+    hexB32(r.hashlock), hexWord(r.amount), hexWord(r.timelock),
+    hexAddr(r.token), hexAddr(r.sender), hexAddr(r.receiver),
+    hexWord(r.claimed ? 1 : 0), hexWord(r.refunded ? 1 : 0)
+  ].join('');
+}
+function chainJson(j) {
+  const p = (j && j.params) || [];
+  switch (j && j.method) {
+    case 'eth_chainId': return CHAIN.chainId;
+    case 'eth_blockNumber': return '0x' + CHAIN.block.toString(16);
+    case 'eth_getCode': return '0x6080604052348015600e575f80fd5b50';
+    case 'eth_call': {
+      const data = String((p[0] && p[0].data) || '');
+      if (data.toLowerCase().startsWith('0xeb84e7f2')) {              /* swaps(bytes32) */
+        const id = ('0x' + data.slice(10, 74)).toLowerCase();
+        const rec = CHAIN.records[id];
+        return rec ? recordHex(rec) : '0x' + '0'.repeat(64 * 8);
+      }
+      if (data.toLowerCase().startsWith('0x70a08231')) return '0x' + hexWord(32500000);
+      if (data.toLowerCase().startsWith('0xdd62ed3e')) return '0x' + hexWord(0);
+      return '0x';
+    }
+    case 'eth_getTransactionReceipt': {
+      const r = CHAIN.receipts[String(p[0] || '').toLowerCase()];
+      if (!r) return null;
+      return { transactionHash: p[0], status: r.status || '0x1', blockNumber: r.blockNumber || '0x' + CHAIN.block.toString(16), logs: [] };
+    }
+    default: return null;
+  }
+}
+const chainServer = http.createServer((req, res) => {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type'
+  };
+  if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    if (CHAIN.down) { res.writeHead(503, cors); res.end('down'); return; }
+    let j = null;
+    try { j = JSON.parse(body); } catch (e) { j = null; }
+    if (!j) { res.writeHead(400, cors); res.end('{}'); return; }
+    CHAIN.calls.push({ method: j.method, params: j.params || [] });
+    res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: chainJson(j) }));
+  });
+});
+
 /* Base58Check, as an independent implementation: bytes in, a TRON address out. */
 const B58A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 function base58Encode(buf) {
@@ -153,9 +226,26 @@ const view = (pg) => pg.evaluate(() => {
     payLine: t('payLine').textContent,
     payAddr: t('payAddr').textContent,
     payAddrShown: vis('payAddr'),
+    payEsc: t('payEsc').textContent,
     payRowInv: vis('payRowInv'),
     payRowAddr: vis('payRowAddr'),
     payLink: t('payWalletLink').getAttribute('href'),
+    callLink: t('payLink').getAttribute('href'),
+    callLinkShown: vis('payLink'),
+    paySend: vis('paySend'),
+    payCopyCall: vis('payCopyCall'),
+    payCheck: vis('payCheck'),
+    claimRow: vis('payRowClaim'),
+    claimBtn: vis('claimBtn'),
+    refundBtn: vis('refundBtn'),
+    secret: vis('secretRow'),
+    txRow: vis('txRow'),
+    chainRow: vis('chainRow'),
+    chainTxt: t('chainTxt').textContent,
+    setup: vis('setupBox'),
+    setupHint: t('setupHint').textContent,
+    rcNet: t('rcNet').textContent,
+    chainState: window.CLEANSWAP.state.chain && window.CLEANSWAP.state.chain.state,
     back: vis('headRow'),
     gate: window.CLEANSWAP.state.gate && window.CLEANSWAP.state.gate.code
   };
@@ -164,6 +254,8 @@ const view = (pg) => pg.evaluate(() => {
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   fs.mkdirSync(BUILD, { recursive: true });
+  await new Promise((r) => chainServer.listen(0, '127.0.0.1', r));
+  const RPC = 'http://127.0.0.1:' + chainServer.address().port;
   const browser = await chromium.launch();
 
   async function freshPage(width, height) {
@@ -171,7 +263,11 @@ const view = (pg) => pg.evaluate(() => {
     const p = await c.newPage();
     const errs = [], failed = [];
     p.on('pageerror', e => errs.push('pageerror: ' + e.message));
-    p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
+    /* a deliberately failed endpoint (the offline test) logs a resource error in
+       the console; that is the browser talking, not the page breaking */
+    p.on('console', m => {
+      if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) errs.push('console: ' + m.text());
+    });
     p.on('requestfailed', r => { if (!/mempool\.space/.test(r.url())) failed.push(r.url()); });
     await p.goto(URL, { waitUntil: 'load' });
     await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
@@ -212,7 +308,11 @@ const view = (pg) => pg.evaluate(() => {
   check('content: no test toolbox left in the page', !OLD_ACTS.some(a => new RegExp('data-act="' + a + '"').test(html)),
     OLD_ACTS.filter(a => new RegExp('data-act="' + a + '"').test(html)).join(','));
   check('content: no sample or mismatch helpers anywhere', !/use sample|mismatched|wrong r|advance clock/i.test(html));
-  check('content: no browser-extension wallet (window.ethereum)', !/window\.ethereum|eth_requestAccounts|ethereum\.request/i.test(html));
+  check('content: a page wallet can sign when there is one (EIP-1193)',
+    /window\.ethereum/.test(html) && /eth_requestAccounts/.test(html) && /eth_sendTransaction/.test(html) &&
+    /wallet_switchEthereumChain/.test(html));
+  check('content: no key, no seed and no password field anywhere',
+    !/privateKey|mnemonic|seed ?phrase|type="password"/i.test(html));
   check('content: no WebLN hand-off', !/webln/i.test(html));
   check('content: contract source embedded (sha256 hashlock)', /sha256\(abi\.encodePacked\(preimage\)\)/.test(html));
   check('content: no remote scripts or styles', !/<script[^>]+src=/i.test(html) && !/<link[^>]+rel="stylesheet"/i.test(html));
@@ -239,7 +339,7 @@ const view = (pg) => pg.evaluate(() => {
   w = await view(page);
   check('practice: Sample fills a 0x address', /^0x[0-9a-f]{40}$/i.test(await page.inputValue('#addrIn')));
   check('practice: both steps in, Approve is ready', w.ready === '1' && w.gate === 'ok', w.gate + '/' + w.ready);
-  check('practice: the sentence says what Approve does', /lock them and swap at once/.test(w.say), w.say);
+  check('practice: the sentence says what Approve does', /ties both legs to one secret/.test(w.say), w.say);
   check('practice: the state line says so too', w.state === 'Ready to approve', w.state);
   await page.screenshot({ path: path.join(SHOTS, 'v43-filled.png') });
 
@@ -248,6 +348,7 @@ const view = (pg) => pg.evaluate(() => {
     addr: document.getElementById('addrIn').value, units: window.CLEANSWAP.usdtUnits()
   }));
   const dec = await page.evaluate(i => window.CLEANSWAP.decodeBolt11(i), sent.inv);
+  const practiceToken = await page.evaluate(() => window.CLEANSWAP.tokenNow());
   check('practice: the sample invoice carries the amount on screen', dec.sats === 50000, String(dec.sats));
 
   await page.click('#primary');
@@ -278,20 +379,20 @@ const view = (pg) => pg.evaluate(() => {
   check('settle: the escrow holds the agreed USDT amount and window',
     settled.dec && Number(settled.dec.amount) === Number(settled.units) && Number(settled.dec.timelock) === Number(settled.t2),
     settled.dec && settled.dec.amount + ' / ' + settled.dec.timelock);
-  const packed = Buffer.alloc(156);
+  /* the id is the terms, packed: hashlock, receiver, token, amount, timelock.
+     The sender is not in it, so both phones know it before anything is sent. */
+  const packed = Buffer.alloc(136);
   Buffer.from(settled.H.slice(2), 'hex').copy(packed, 0);
-  const evm = await page.evaluate(() => window.CLEANSWAP.EVM);
-  Buffer.from(evm.usdtSide.slice(2), 'hex').copy(packed, 32);
-  Buffer.from(settled.addr.slice(2), 'hex').copy(packed, 52);
-  Buffer.from(evm.token.slice(2), 'hex').copy(packed, 72);
-  Buffer.from(BigInt(settled.units).toString(16).padStart(64, '0'), 'hex').copy(packed, 92);
-  Buffer.from(BigInt(settled.t2).toString(16).padStart(64, '0'), 'hex').copy(packed, 124);
+  Buffer.from(settled.addr.slice(2), 'hex').copy(packed, 32);
+  Buffer.from(practiceToken.slice(2), 'hex').copy(packed, 52);
+  Buffer.from(BigInt(settled.units).toString(16).padStart(64, '0'), 'hex').copy(packed, 72);
+  Buffer.from(BigInt(settled.t2).toString(16).padStart(64, '0'), 'hex').copy(packed, 104);
   const wantId = '0x' + crypto.createHash('sha256').update(packed).digest('hex');
   check('settle: the swap id binds both legs (abi.encodePacked)', settled.id === wantId,
     String(settled.id).slice(0, 14) + '…');
   fs.writeFileSync(path.join(BUILD, 'app-calldata.json'), JSON.stringify({
     calldata: settled.calldata, hashlock: settled.H, timelock: settled.t2,
-    receiver: settled.addr, token: evm.token, amount: String(settled.units)
+    receiver: settled.addr, token: practiceToken, amount: String(settled.units)
   }, null, 2));
 
   /* ------------------------------------------------- 3. Back and Done --- */
@@ -302,7 +403,7 @@ const view = (pg) => pg.evaluate(() => {
     await page.evaluate(() => !window.CLEANSWAP.state.H && !window.CLEANSWAP.state.addr &&
       !document.getElementById('invIn').value && !document.getElementById('addrIn').value));
 
-  /* ------------------------------------------- 4. the same screen, wallet --- */
+  /* ------------------------------------------- 4. wallet: the real escrow --- */
   await page.click('#modeWallet');
   await page.waitForTimeout(300);
   w = await view(page);
@@ -312,6 +413,8 @@ const view = (pg) => pg.evaluate(() => {
   check('wallet: Sample is gone', !w.sampleInv && !w.sampleAddr, [w.sampleInv, w.sampleAddr].join('/'));
   check('wallet: the invoice row hands off to a wallet',
     w.invRow && w.walletLink && !w.copyInv, [w.invRow, w.walletLink, w.copyInv].join('/'));
+  check('wallet: the chain line names the chain and says no escrow is set',
+    w.chainRow && /^Arbitrum Sepolia · escrow not set$/.test(w.chainTxt), w.chainTxt);
 
   const R2 = '77'.repeat(32);
   const H2 = '0x' + crypto.createHash('sha256').update(Buffer.from(R2, 'hex')).digest('hex');
@@ -332,93 +435,292 @@ const view = (pg) => pg.evaluate(() => {
   await page.fill('#addrIn', '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71');
   await page.waitForTimeout(300);
   w = await view(page);
-  check('wallet: both steps in, Approve is ready', w.ready === '1' && w.gate === 'ok', w.gate + '/' + w.ready);
-  await page.screenshot({ path: path.join(SHOTS, 'v43-wallet.png') });
+  check('wallet: with no escrow set the third step asks for one, it does not say ready',
+    w.gate === 'setup' && w.ready === '0' && /escrow contract/.test(w.say), w.gate + ' ' + w.say);
 
-  /* Approve is not the end in Wallet: nothing has been paid yet. */
-  await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
-  await page.waitForTimeout(300);
+  /* the escrow is set once, in Setup; the bytecode and Remix are the deploy path */
+  await page.click('#chainRow');
+  await page.waitForTimeout(250);
   w = await view(page);
-  check('wallet: Approve waits for the payment instead of finishing',
-    w.phase === 'paying' && w.title === 'Waiting for payment' && w.cta === 'I paid',
-    w.phase + ' / ' + w.title + ' / ' + w.cta);
-  check('wallet: nothing on the waiting screen says the swap is done',
-    !/swap complete|completed/i.test([w.title, w.state, w.say, w.toast].join(' ')) && !w.receipt,
-    [w.title, w.state, w.toast].join(' | '));
-  check('wallet: no receipt and no Recent entry before the money moves',
-    !w.receipt && !w.history && w.rows === 0, w.rows + ' rows');
-  check('wallet: the waiting screen says what to pay and how much',
+  check('setup: the chain line opens the setup panel', w.setup, String(w.setup));
+  const setupHtml = await page.textContent('#setupBox');
+  check('setup: it offers the deploy hand-off (bytecode + Remix)',
+    /Copy bytecode/.test(setupHtml) && (await page.getAttribute('#remixLink', 'href')) === 'https://remix.ethereum.org');
+  const codeBytes = await page.evaluate(() => window.CLEANSWAP.BYTECODE);
+  check('setup: the escrow bytecode is in the page (solc 0.8.26, creation code)',
+    /^6080[0-9a-f]{1000,}$/.test(codeBytes), codeBytes.length + ' hex chars');
+
+  await page.fill('#contractIn', CONTRACT);
+  await page.fill('#tokenIn', TOKEN);
+  await page.fill('#rpcIn', RPC);
+  await page.click('[data-act="saveSetup"]');
+  await page.waitForTimeout(1000);
+  w = await view(page);
+  check('setup: saving reads the chain and finds a contract there', /escrow ready/.test(w.chainTxt), w.chainTxt);
+  check('setup: the page really called the endpoint',
+    CHAIN.calls.some(c => c.method === 'eth_blockNumber') && CHAIN.calls.some(c => c.method === 'eth_getCode'));
+  check('setup: the block it read is on screen in the panel', /block [\d,]+/.test(w.setupHint), w.setupHint);
+  await page.screenshot({ path: path.join(SHOTS, 'v50-setup.png') });
+  await page.click('#chainRow');
+  await page.waitForTimeout(250);
+  w = await view(page);
+  check('setup: both steps in, the third one is ready again', w.gate === 'ok' && w.ready === '1', w.gate + '/' + w.ready);
+
+  /* the code a wallet swap hands over names the chain and the escrow too, and
+     still fits a QR */
+  const walletCode = await page.evaluate(() => window.CLEANSWAP.swapCode());
+  const walletCodeBack = await page.evaluate(c => window.CLEANSWAP.parseSwapCode(c), walletCode);
+  check('code: a wallet code carries the chain and the escrow',
+    walletCodeBack && walletCodeBack.net === 'testnet' && walletCodeBack.contract === CONTRACT,
+    walletCodeBack && (walletCodeBack.net + ' ' + walletCodeBack.contract));
+  check('code: it still fits a QR with the hashlock inside',
+    new TextEncoder().encode(walletCode).length <= 340 && /^0x[0-9a-f]{64}$/.test(walletCodeBack.H),
+    new TextEncoder().encode(walletCode).length + ' bytes');
+
+  /* 4a. nothing in the escrow: Approve may not start a swap */
+  await page.click('#primary');
+  await page.waitForTimeout(1500);
+  w = await view(page);
+  check('escrow: Approve is refused while the USDT is not locked', w.phase === 'idle', w.phase);
+  check('escrow: the refusal says what is missing', /not in the escrow yet/.test(w.say), w.say);
+  check('escrow: the refusal is plain English', !JARGON.test(w.say), w.say);
+  check('escrow: no receipt and nothing in Recent', !w.receipt && w.rows === 0, w.rows + ' rows');
+  check('escrow: the chain line says nothing is locked', /nothing locked yet/.test(w.chainTxt), w.chainTxt);
+  check('escrow: the page read the escrow record itself',
+    CHAIN.calls.some(c => c.method === 'eth_call' && String(c.params[0].data).toLowerCase().startsWith('0xeb84e7f2')),
+    String(CHAIN.calls.length) + ' calls');
+  await page.screenshot({ path: path.join(SHOTS, 'v50-blocked.png') });
+
+  /* 4b. the partner locks the USDT: the app reads it and lets the payment start */
+  const terms = await page.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return { H: s.H, units: s.units, t2: s.t2, addr: s.addr };
+  });
+  const swapId = await page.evaluate(() => window.CLEANSWAP.swapIdNow());
+  const lockRecord = {
+    hashlock: terms.H, amount: terms.units, timelock: terms.t2, token: TOKEN,
+    sender: PARTNER, receiver: terms.addr, claimed: false, refunded: false
+  };
+  CHAIN.records[swapId.toLowerCase()] = lockRecord;
+  /* the record and the bytes the mock answers with: test/contract-evm.py checks
+     that encoding against eth_abi, so the layout the page decodes is not one
+     these tests invented */
+  fs.writeFileSync(path.join(BUILD, 'mock-record.json'), JSON.stringify({ record: lockRecord, hex: recordHex(lockRecord) }, null, 2));
+  await page.click('#primary');
+  await page.waitForTimeout(1800);
+  w = await view(page);
+  check('locked: the app reads the escrow and moves on to the payment',
+    w.phase === 'paying' && w.chainState === 'locked', w.phase + ' / ' + w.chainState);
+  check('locked: the waiting screen says what to pay and how much',
     /^Send 50,000 sats to this invoice/.test(w.payLine), w.payLine);
-  check('wallet: the invoice is one tap from a wallet there too',
-    w.payRowInv && !w.payRowAddr && w.payLink === 'lightning:' + realInv, w.payLink.slice(0, 20) + '…');
-  check('wallet: Back is offered while waiting', w.back, String(w.back));
-  check('wallet: the two steps fold away while waiting', !w.steps && !w.presets && !w.terms, String(w.steps));
-  await page.screenshot({ path: path.join(SHOTS, 'v43-paying.png') });
+  check('locked: it shows the chain and the escrow state',
+    /Arbitrum Sepolia · block/.test(w.payEsc) && /holds your/.test(w.payEsc), w.payEsc);
+  check('locked: the invoice is one tap from a wallet there too',
+    w.payRowInv && !w.payRowAddr && w.payLink === 'lightning:' + realInv, String(w.payLink).slice(0, 20) + '…');
+  check('locked: Back is offered while waiting', w.back, String(w.back));
+  check('locked: the two steps fold away while waiting', !w.steps && !w.presets && !w.terms, String(w.steps));
+  await page.screenshot({ path: path.join(SHOTS, 'v50-paying.png') });
 
   await page.click('[data-act="payQrInv"]');
   await page.waitForTimeout(350);
-  check('wallet: the waiting screen can show the invoice as a QR', (await view(page)).qr);
+  check('locked: the waiting screen can show the invoice as a QR', (await view(page)).qr);
   await page.click('[data-act="payQrInv"]');
   await page.waitForTimeout(200);
-  check('wallet: and folds it away again', !(await view(page)).qr);
 
-  /* I paid is the only thing that closes the swap. */
+  /* 4c. I paid starts the watch; it does not finish the swap */
   await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(1600);
   w = await view(page);
-  check('wallet: I paid completes the swap', w.state === 'Completed' && w.cta === 'Done', w.state + '/' + w.cta);
-  check('wallet: the receipt appears only now',
-    w.receipt && w.rc[0] === '50,000 sats' && w.rc[2] === '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', w.rc.join(' | '));
-  check('wallet: a real swap is kept in Recent', w.history && w.rows === 1, String(w.rows));
-  check('wallet: the history row shows what arrived', await page.evaluate(() =>
+  check('paid: I paid waits for the escrow instead of finishing',
+    w.phase === 'paid' && w.cta === 'Check chain', w.phase + ' / ' + w.cta);
+  check('paid: nothing on the screen says the swap is done',
+    !/swap complete|completed/i.test([w.title, w.state, w.payLine, w.say].join(' ')) && !w.receipt,
+    [w.title, w.state].join(' | '));
+  check('paid: no receipt and no Recent entry yet', !w.receipt && w.rows === 0, w.rows + ' rows');
+  check('paid: the screen says what it is waiting for',
+    /closes the swap when the chain says so/.test(w.payLine), w.payLine);
+  await page.screenshot({ path: path.join(SHOTS, 'v50-paid.png') });
+
+  /* 4d. a lock without a claim is not a finished swap */
+  await page.click('#primary');
+  await page.waitForTimeout(1400);
+  w = await view(page);
+  check('claimed: a lock without a claim finishes nothing', w.phase === 'paid' && !w.receipt, w.phase);
+  check('claimed: the screen says the escrow still holds it', /still holds/.test(w.toast), w.toast);
+
+  /* 4e. an endpoint that does not answer completes nothing and says so */
+  CHAIN.down = true;
+  await page.click('#primary');
+  await page.waitForTimeout(2600);
+  w = await view(page);
+  check('offline: an unreachable chain completes nothing', w.phase === 'paid' && !w.receipt, w.phase);
+  check('offline: the chain line says it did not answer', /no answer/.test(w.chainTxt), w.chainTxt);
+  CHAIN.down = false;
+
+  /* 4f. a record that is not this swap is refused, not accepted */
+  lockRecord.amount = Number(terms.units) + 1000000;
+  await page.click('#primary');
+  await page.waitForTimeout(1600);
+  w = await view(page);
+  check('mismatch: a lock holding another amount finishes nothing', w.phase === 'paid' && !w.receipt, w.phase);
+  check('mismatch: the refusal names the amount', /different amount/.test(w.payLine), w.payLine);
+  lockRecord.amount = terms.units;
+
+  /* 4g. the claim lands: now, and only now, the swap completes */
+  lockRecord.claimed = true;
+  await page.click('#primary');
+  await page.waitForTimeout(1800);
+  w = await view(page);
+  check('chain: a claimed escrow completes the swap',
+    w.phase === 'settled' && w.state === 'Completed' && w.cta === 'Done',
+    w.phase + ' / ' + w.state + ' / ' + w.cta);
+  check('chain: the receipt says where it settled', /Arbitrum Sepolia · paid on chain/.test(w.rcNet), w.rcNet);
+  check('chain: the receipt shows both sides and the address',
+    w.receipt && /sats$/.test(w.rc[0]) && /USDT$/.test(w.rc[1]) && w.rc[2] === terms.addr, w.rc.join(' | '));
+  check('chain: the sentence names what arrived', /You received [\d,.]+ USDT on Arbitrum Sepolia\./.test(w.say), w.say);
+  check('chain: the swap is kept in Recent', w.history && w.rows === 1, String(w.rows));
+  check('chain: the history row shows what arrived', await page.evaluate(() =>
     /^\+\s?[\d,.]+ USDT$/.test(document.querySelector('#histList .hist-item b').textContent)),
     await page.evaluate(() => document.querySelector('#histList .hist-item b').textContent));
-  await page.screenshot({ path: path.join(SHOTS, 'v43-wallet-done.png') });
-
-  /* Back from the waiting screen returns to the filled form, not a new swap. */
-  await page.click('#primary');  /* Done */
-  await page.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
-  await page.fill('#invIn', realInv);
-  await page.fill('#addrIn', '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71');
-  await page.waitForTimeout(300);
-  await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
-  await page.waitForTimeout(250);
-  await page.click('[data-act="back"]');
-  await page.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
-  await page.waitForTimeout(250);
-  w = await view(page);
-  check('back: leaving the waiting screen keeps the terms on screen',
-    w.steps && w.invRow && (await page.inputValue('#invIn')) === realInv && (await page.inputValue('#addrIn')).length === 42,
-    String(w.steps));
-  check('back: it does not quietly settle a swap nobody paid', !w.receipt && w.rows === 1, w.rows + ' rows');
-  await page.evaluate(() => window.CLEANSWAP.reset());
-  await page.waitForTimeout(200);
-
-  /* Back from a finished practice swap keeps the terms too */
-  await page.click('#modePractice');
-  await page.waitForTimeout(200);
-  await page.click('[data-act="sampleInv"]');
-  await page.waitForTimeout(250);
-  await page.click('[data-act="sampleAddr"]');
-  await page.waitForTimeout(250);
-  await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
-  await page.waitForTimeout(250);
-  check('back: the finished swap offers Back', await page.evaluate(() => !!document.querySelector('[data-act="back"]')));
-  await page.click('[data-act="back"]');
-  await page.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
-  await page.waitForTimeout(250);
-  w = await view(page);
-  check('back: it returns to the filled form, not an empty one',
-    w.steps && (await page.inputValue('#invIn')).length > 10 && (await page.inputValue('#addrIn')).length === 42);
-  await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await page.screenshot({ path: path.join(SHOTS, 'v50-settled.png') });
   check('run: no page errors through both modes', A.errs.length === 0, A.errs.join(' | '));
-  await A.c.close();
 
+  /* ---------------------------------- 4h. wallet, sending the USDT --- */
+  const L = await freshPage(390, 844);
+  const p5 = L.p;
+  await p5.click('#modeWallet');
+  await p5.click('#swapDir');
+  await p5.waitForTimeout(250);
+  const H5 = '0x' + crypto.createHash('sha256').update(Buffer.from('99'.repeat(32), 'hex')).digest('hex');
+  const ownInv = await p5.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 3600 }), H5);
+  await p5.fill('#addrIn', PARTNER);
+  await p5.fill('#invIn', ownInv);
+  await p5.click('#chainRow');
+  await p5.fill('#contractIn', CONTRACT);
+  await p5.fill('#tokenIn', TOKEN);
+  await p5.fill('#rpcIn', RPC);
+  await p5.click('[data-act="saveSetup"]');
+  await p5.waitForTimeout(900);
+  await p5.click('#chainRow');
+  await p5.waitForTimeout(200);
+  check('u2b: the swap is ready to lock', (await view(p5)).ready === '1', (await view(p5)).say);
+
+  await p5.click('#primary');
+  await p5.waitForTimeout(1500);
+  w = await view(p5);
+  check('u2b: Approve asks for the lock, it does not finish anything',
+    w.phase === 'locking' && w.title === 'Lock your USDT' && !w.receipt, w.phase + ' / ' + w.title);
+  check('u2b: the screen says one call locks the USDT', /One call from your wallet/.test(w.payLine), w.payLine);
+  check('u2b: the call can be copied to a wallet', w.payCopyCall, String(w.payCopyCall));
+  check('u2b: no wallet in the page means no one-tap send', !w.paySend, String(w.paySend));
+  const deep = await p5.getAttribute('#payLink', 'href');
+  check('u2b: the call also opens as an EIP-681 link on the right chain and contract',
+    String(deep).startsWith('ethereum:' + CONTRACT + '@421614/lock?bytes32=') && String(deep).split('&').length === 5,
+    String(deep).slice(0, 60) + '…');
+  check('u2b: the link carries the receiver, the token and the amount',
+    String(deep).includes('&address=' + PARTNER) && String(deep).includes('&address=' + TOKEN) && /&uint256=\d+$/.test(deep),
+    String(deep).slice(-60));
+  const calldata = await p5.evaluate(() => window.CLEANSWAP.lockCalldata({
+    hashlock: window.CLEANSWAP.state.H, timelock: window.CLEANSWAP.state.t2,
+    receiver: window.CLEANSWAP.state.addr, token: window.CLEANSWAP.tokenNow(),
+    amount: window.CLEANSWAP.state.units
+  }));
+  check('u2b: the lock call encodes to the contract ABI', /^0x91644b2b[0-9a-f]{320}$/.test(calldata), calldata.slice(0, 12) + '… ' + calldata.length);
+  await p5.screenshot({ path: path.join(SHOTS, 'v50-lock.png') });
+
+  /* the lock lands in another wallet: the hash comes back and the escrow is read */
+  const id5 = await p5.evaluate(() => window.CLEANSWAP.swapIdNow());
+  const t5 = await p5.evaluate(() => ({ H: window.CLEANSWAP.state.H, units: window.CLEANSWAP.state.units, t2: window.CLEANSWAP.state.t2, addr: window.CLEANSWAP.state.addr }));
+  CHAIN.records[id5.toLowerCase()] = {
+    hashlock: t5.H, amount: t5.units, timelock: t5.t2, token: TOKEN,
+    sender: '0x5c1d3f8a92b04e67d1a8c3f5027be64d89a0c1f3', receiver: t5.addr,
+    claimed: false, refunded: false
+  };
+  const lockTx = '0x' + 'ab'.repeat(32);
+  CHAIN.receipts[lockTx] = { status: '0x1' };
+  await p5.click('[data-act="openTx"]');
+  await p5.fill('#txIn', lockTx);
+  await p5.click('[data-act="loadTx"]');
+  await p5.waitForTimeout(2000);
+  w = await view(p5);
+  check('u2b: a pasted transaction hash is read, not trusted', w.phase === 'paid' && w.chainState === 'locked',
+    w.phase + ' / ' + w.chainState);
+  check('u2b: the receipt check really happened', CHAIN.calls.some(c => c.method === 'eth_getTransactionReceipt'),
+    String(CHAIN.calls.length) + ' calls');
+  check('u2b: the screen says the side is locked and what happens next',
+    /bitcoin arrives when your partner pays/.test(w.payLine), w.payLine);
+
+  /* the secret opens the escrow; a wrong one never reaches a wallet */
+  await p5.click('[data-act="claimOpen"]');
+  await p5.fill('#secretIn', '00'.repeat(32));
+  await p5.click('[data-act="sendClaim"]');
+  await p5.waitForTimeout(1200);
+  w = await view(p5);
+  check('claim: a secret that does not hash to the swap is refused', /does not open this swap/.test(w.toast), w.toast);
+  check('claim: and the swap is still not finished', w.phase === 'paid' && !w.receipt, w.phase);
+
+  CHAIN.records[id5.toLowerCase()].claimed = true;
+  await p5.click('#primary');
+  await p5.waitForTimeout(1800);
+  w = await view(p5);
+  check('u2b: the claim on chain closes the swap', w.phase === 'settled', w.phase);
+  check('u2b: the receipt reads the other way round', /USDT$/.test(w.rc[0]) && /sats$/.test(w.rc[1]), w.rc.join(' | '));
+  check('u2b: the bitcoin is named as received', /You received 50,000 sats\./.test(w.say), w.say);
+  await p5.screenshot({ path: path.join(SHOTS, 'v50-u2b-done.png') });
+  check('u2b: no page errors', L.errs.length === 0, L.errs.join(' | '));
+
+  /* ---------------------------------------- 4i. the window runs out --- */
+  const W2 = await freshPage(390, 844);
+  const p6 = W2.p;
+  await p6.click('#modeWallet');
+  await p6.click('#swapDir');
+  await p6.waitForTimeout(200);
+  const H6 = '0x' + crypto.createHash('sha256').update(Buffer.from('66'.repeat(32), 'hex')).digest('hex');
+  const inv6 = await p6.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 3600 }), H6);
+  await p6.fill('#addrIn', PARTNER);
+  await p6.fill('#invIn', inv6);
+  await p6.click('#chainRow');
+  await p6.fill('#contractIn', CONTRACT);
+  await p6.fill('#tokenIn', TOKEN);
+  await p6.fill('#rpcIn', RPC);
+  await p6.click('[data-act="saveSetup"]');
+  await p6.waitForTimeout(900);
+  await p6.click('#chainRow');
+  await p6.waitForTimeout(200);
+  await p6.click('#primary');
+  await p6.waitForTimeout(1500);
+  const id6 = await p6.evaluate(() => window.CLEANSWAP.swapIdNow());
+  const t6 = await p6.evaluate(() => ({ H: window.CLEANSWAP.state.H, units: window.CLEANSWAP.state.units, t2: window.CLEANSWAP.state.t2, addr: window.CLEANSWAP.state.addr }));
+  CHAIN.records[id6.toLowerCase()] = {
+    hashlock: t6.H, amount: t6.units, timelock: t6.t2, token: TOKEN,
+    sender: PARTNER, receiver: t6.addr, claimed: false, refunded: false
+  };
+  await p6.click('#primary');   /* Check chain: the record is there now */
+  await p6.waitForTimeout(1600);
+  w = await view(p6);
+  check('window: the lock is picked up on the next check', w.phase === 'paid', w.phase);
+
+  /* the window passes: the refund opens, and only a refunded record closes it */
+  await p6.evaluate(() => { window.CLEANSWAP.state.sim = 4000; window.CLEANSWAP.render(); });
+  await p6.waitForTimeout(300);
+  w = await view(p6);
+  check('window: after the window the refund is offered', w.refundBtn, String(w.refundBtn));
+  const refundData = await p6.evaluate(() => window.CLEANSWAP.refundCalldata(window.CLEANSWAP.state.id || '0x' + '00'.repeat(32)));
+  check('window: the refund call encodes to the contract ABI', /^0x7249fbb6[0-9a-f]{64}$/.test(refundData), refundData.slice(0, 12) + '…');
+  CHAIN.records[id6.toLowerCase()].refunded = true;
+  await p6.click('#primary');
+  await p6.waitForTimeout(1600);
+  w = await view(p6);
+  check('window: a refunded record closes the swap as refunded, not complete',
+    w.phase === 'refunded' && w.title === 'Swap closed' && !/swap complete/i.test(w.title), w.phase + ' / ' + w.title);
+  check('window: the receipt says the USDT came back', /back$/.test(w.rc[1]), w.rc.join(' | '));
+  check('window: the receipt names the chain', /refunded on chain/.test(w.rcNet), w.rcNet);
+  check('window: nothing was added to Recent', w.rows === 0, String(w.rows));
+  await p6.screenshot({ path: path.join(SHOTS, 'v50-refund.png') });
+  check('window: no page errors', W2.errs.length === 0, W2.errs.join(' | '));
+  await W2.c.close();
+  await L.c.close();
+  await A.c.close();
   /* ------------------------------------------------- 5. direction flip --- */
   const B = await freshPage(390, 844);
   const p2 = B.p;
@@ -681,86 +983,55 @@ const view = (pg) => pg.evaluate(() => {
   await D.c.close();
 
   /* -------------- 7b. an offer and a TRON address, on the actual screen --- */
-  const F = await freshPage(390, 844);
-  const p6 = F.p;
-  await p6.click('#modeWallet');
-  await p6.waitForTimeout(250);
+  const W3 = await freshPage(390, 844);
+  const p7 = W3.p;
   const screenOffer = bolt12Offer({ desc: 'Lexe offer', expiry: Math.floor(Date.now() / 1000) + 86400 });
-  await p6.fill('#invIn', screenOffer);
-  await p6.fill('#addrIn', 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
-  await p6.waitForTimeout(300);
-  w = await view(p6);
+  await p7.fill('#invIn', screenOffer);
+  await p7.fill('#addrIn', 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
+  await p7.waitForTimeout(350);
+  w = await view(p7);
   check('screen: an offer and a TRON address together make Approve ready',
     w.ready === '1' && w.gate === 'ok', w.gate + '/' + w.ready);
-  check('screen: Open in wallet carries the offer itself',
-    w.href === 'lightning:' + screenOffer, w.href.slice(0, 22) + '…');
-  await p6.click('[data-act="qrInvoice"]');
-  await p6.waitForTimeout(350);
-  check('screen: the offer also opens as a QR', (await view(p6)).qr);
-  await p6.click('[data-act="qrInvoice"]');
-  await p6.waitForTimeout(200);
+  check('screen: an offer is read as an offer, not as an invoice to pay',
+    await p7.evaluate(() => window.CLEANSWAP.readInvoice(document.getElementById('invIn').value).basis === 'offer'));
 
-  await p6.click('#primary');
-  await p6.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
-  await p6.waitForTimeout(250);
-  w = await view(p6);
-  check('screen: an offer swap waits for the sats like any other',
-    /^Send 50,000 sats to this invoice/.test(w.payLine), w.payLine);
-  check('screen: the waiting screen hands the offer to a wallet',
-    w.payLink === 'lightning:' + screenOffer, w.payLink.slice(0, 22) + '…');
-  check('screen: no address row while the sats are still to go', !w.payRowAddr && !w.payAddrShown, String(w.payAddrShown));
-  await p6.screenshot({ path: path.join(SHOTS, 'v43-paying-offer.png') });
-
-  await p6.click('#primary');
-  await p6.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
-  await p6.waitForTimeout(250);
-  const offerSettled = await p6.evaluate(() => ({
-    basis: window.CLEANSWAP.state.basis, addr: window.CLEANSWAP.state.addr,
-    rc: document.getElementById('rcAddr').textContent, title: document.getElementById('stepTitle').textContent
+  await p7.click('#primary');
+  await p7.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await p7.waitForTimeout(400);
+  const offerSettled = await p7.evaluate(() => ({
+    basis: window.CLEANSWAP.state.basis,
+    addr: window.CLEANSWAP.state.addr,
+    rc: document.getElementById('rcAddr').textContent,
+    title: document.getElementById('stepTitle').textContent
   }));
-  check('screen: the offer swap completes on I paid', offerSettled.title === 'Swap complete', offerSettled.title);
+  check('screen: the offer swap completes', offerSettled.title === 'Swap complete', offerSettled.title);
   check('screen: the swap records that it was paid as an offer', offerSettled.basis === 'offer', String(offerSettled.basis));
   check('screen: the receipt shows the TRON address as it was typed',
     offerSettled.rc === 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', offerSettled.rc);
   check('screen: the TRON address is the one on record',
     offerSettled.addr === 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', offerSettled.addr);
+  await p7.screenshot({ path: path.join(SHOTS, 'v50-offer-done.png') });
 
-  /* the other direction in Wallet: USDT leaves this phone */
-  await p6.click('#primary');            /* Done */
-  await p6.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
-  await p6.click('#swapDir');
-  await p6.waitForTimeout(250);
-  const ownInv = await p6.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '9a'.repeat(32), sats: 50000, expiry: 3600 }));
-  await p6.fill('#addrIn', 'TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G');
-  await p6.fill('#invIn', ownInv);
-  await p6.waitForTimeout(300);
-  w = await view(p6);
-  check('screen: a partner TRON address and your own invoice are ready', w.ready === '1' && w.dir === 'u2b', w.dir + '/' + w.ready);
-  await p6.click('#primary');
-  await p6.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
-  await p6.waitForTimeout(250);
-  w = await view(p6);
-  check('screen: sending USDT waits on the transfer, not on an invoice',
-    /^Send [\d,.]+ USDT to this address/.test(w.payLine) && w.payRowAddr && !w.payRowInv, w.payLine);
-  check('screen: the TRON address sits on the waiting screen',
-    w.payAddr === 'TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G' && w.payAddrShown, w.payAddr);
-  check('screen: your own invoice is still one tap from a wallet', w.href === 'lightning:' + ownInv, w.href.slice(0, 20) + '…');
-  await p6.screenshot({ path: path.join(SHOTS, 'v43-paying-usdt.png') });
-  await p6.click('#primary');
-  await p6.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
-  await p6.waitForTimeout(250);
-  w = await view(p6);
-  check('screen: I paid closes the USDT side and the receipt reads the other way',
-    w.state === 'Completed' && /USDT$/.test(w.rc[0]) && /sats$/.test(w.rc[1]), w.rc.join(' | '));
-  check('screen: Recent keeps both wallet swaps', w.rows === 2, String(w.rows));
-  await p6.screenshot({ path: path.join(SHOTS, 'v43-tron-done.png') });
-  check('run: no page errors with an offer and a TRON address', F.errs.length === 0, F.errs.join(' | '));
-  await F.c.close();
+  /* Wallet mode pays the USDT on Arbitrum, so a T address gets an answer, not a pass */
+  await p7.click('#primary');            /* Done */
+  await p7.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
+  await p7.click('#modeWallet');
+  await p7.waitForTimeout(250);
+  await p7.fill('#invIn', screenOffer);
+  await p7.fill('#addrIn', 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
+  await p7.waitForTimeout(350);
+  w = await view(p7);
+  check('screen: wallet mode explains that the address is an Arbitrum one',
+    w.gate === 'chain' && /0x one/.test(w.say) && /TRON/.test(w.say), w.gate + ' \u00b7 ' + w.say);
+  check('screen: that guidance is plain English', !JARGON.test(w.say), w.say);
+  await p7.screenshot({ path: path.join(SHOTS, 'v50-tron-wallet.png') });
+  check('run: no page errors with an offer and a TRON address', W3.errs.length === 0, W3.errs.join(' | '));
+  await W3.c.close();
 
   /* ------------------------------------------------- 8. protocol vectors --- */
   const E = await freshPage(390, 844);
-  const p5 = E.p;
-  const vectors = await p5.evaluate(() => {
+  const p9 = E.p;
+  const vectors = await p9.evaluate(() => {
     const out = {};
     for (const t of ['A12UEL5L', 'abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw',
       'split1checkupstagehandshakeupstreamerranterredcaperred2y9e3w']) {
@@ -773,7 +1044,7 @@ const view = (pg) => pg.evaluate(() => {
     Object.entries(vectors).filter(([k]) => k !== 'bad').every(([, x]) => x === 'ok'), JSON.stringify(vectors));
   check('bech32: bad checksum rejected', /checksum/.test(vectors.bad), vectors.bad);
 
-  const b12 = await p5.evaluate(() => {
+  const b12 = await p9.evaluate(() => {
     const raw = document.getElementById('sample-bolt12').textContent.trim();
     const d = window.CLEANSWAP.decodeSwapOffer(raw);
     return { kind: d.kind, form: d.form, desc: d.description, node: d.nodeId, hash: d.paymentHash, expiry: d.absoluteExpiry };
@@ -784,7 +1055,7 @@ const view = (pg) => pg.evaluate(() => {
   check('BOLT12 sample: absolute_expiry TLV decoded', b12.expiry === 1798761600, b12.expiry);
   check('BOLT12 sample: a bare offer carries no payment_hash', b12.hash === null, String(b12.hash));
 
-  const b11 = await p5.evaluate(() => {
+  const b11 = await p9.evaluate(() => {
     const raw = document.getElementById('sample-bolt11').textContent.trim();
     const d = window.CLEANSWAP.decodeBolt11(raw);
     return { hash: d.paymentHash, sats: d.sats, net: d.network };
@@ -795,13 +1066,13 @@ const view = (pg) => pg.evaluate(() => {
 
   const R0 = 'ab'.repeat(32);
   const expected = crypto.createHash('sha256').update(Buffer.from(R0, 'hex')).digest('hex');
-  const got = await p5.evaluate(r => window.CLEANSWAP.sha256Hex(r), R0);
+  const got = await p9.evaluate(r => window.CLEANSWAP.sha256Hex(r), R0);
   check('crypto: SHA256(R) equals node crypto', got === expected, got.slice(0, 16) + '…');
-  const multi = await p5.evaluate(() => window.CLEANSWAP.sha256Hex('00ffff00'));
+  const multi = await p9.evaluate(() => window.CLEANSWAP.sha256Hex('00ffff00'));
   check('crypto: multi-byte preimage vector', multi === crypto.createHash('sha256').update(Buffer.from('00ffff00', 'hex')).digest('hex'));
 
   /* the synchronous SHA-256 behind the address checksum, against node */
-  const sync = await p5.evaluate(() => {
+  const sync = await p9.evaluate(() => {
     const hex = (u8) => Array.from(u8).map(x => x.toString(16).padStart(2, '0')).join('');
     const enc = new TextEncoder();
     return {
@@ -821,40 +1092,40 @@ const view = (pg) => pg.evaluate(() => {
   /* Base58Check: an address is built here from its 20 bytes and must decode
      back to them in the app, which is how a TRON address is verified. */
   const tronSelf = tronFrom('7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71');
-  const tronBack = await p5.evaluate((a) => {
+  const tronBack = await p9.evaluate((a) => {
     const bytes = window.CLEANSWAP.tronAddressBytes(a);
     return bytes ? Array.from(bytes).map(x => x.toString(16).padStart(2, '0')).join('') : null;
   }, tronSelf);
   check('tron: an address built here keeps its 34 characters', tronSelf.length === 34 && tronSelf.charAt(0) === 'T', tronSelf);
   check('tron: Base58Check decodes back to its 20 bytes',
     tronBack === '7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', String(tronBack));
-  const b58 = await p5.evaluate((a) => Array.from(window.CLEANSWAP.base58Bytes(a)).map(x => x.toString(16).padStart(2, '0')).join(''), tronSelf);
+  const b58 = await p9.evaluate((a) => Array.from(window.CLEANSWAP.base58Bytes(a)).map(x => x.toString(16).padStart(2, '0')).join(''), tronSelf);
   const b58want = Buffer.concat([Buffer.from([0x41]), Buffer.from('7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', 'hex'),
     crypto.createHash('sha256').update(crypto.createHash('sha256').update(Buffer.concat([Buffer.from([0x41]),
       Buffer.from('7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', 'hex')])).digest()).digest().subarray(0, 4)]).toString('hex');
   check('tron: base58 decodes to the same 25 bytes as an independent encoder', b58 === b58want, b58.slice(0, 12) + '…');
-  const tronFlip = await p5.evaluate((a) => {
+  const tronFlip = await p9.evaluate((a) => {
     const cut = a.slice(0, -2) + (a.slice(-2, -1) === 'B' ? 'C' : 'B') + a.slice(-1);
     return { accepted: window.CLEANSWAP.readAddress(a).ok, flipped: window.CLEANSWAP.readAddress(cut).code };
   }, tronSelf);
   check('tron: the address built here is accepted', tronFlip.accepted === true, tronSelf);
   check('tron: one character changed is refused', tronFlip.flipped === 'format', String(tronFlip.flipped));
 
-  const swapId = await p5.evaluate(async () => window.CLEANSWAP.computeSwapId(
+  /* the swap id, as the contract computes it: hashlock, receiver, token,
+     amount, timelock - no sender, so both phones agree before anything moves */
+  const vectorId = await p9.evaluate(async () => window.CLEANSWAP.computeSwapId(
     '0x' + '11'.repeat(32),
     '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71',
-    '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761',
     '0x8f2b7c1d94a63e05b8d71c4209af6e38b5d2c097',
     12345678, 1700000000));
-  const buf = Buffer.alloc(156);
-  Buffer.from('11'.repeat(32), 'hex').copy(buf, 0);
-  Buffer.from('7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', 'hex').copy(buf, 32);
-  Buffer.from('3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761', 'hex').copy(buf, 52);
-  Buffer.from('8f2b7c1d94a63e05b8d71c4209af6e38b5d2c097', 'hex').copy(buf, 72);
-  Buffer.from(12345678n.toString(16).padStart(64, '0'), 'hex').copy(buf, 92);
-  Buffer.from(1700000000n.toString(16).padStart(64, '0'), 'hex').copy(buf, 124);
-  const expectId = '0x' + crypto.createHash('sha256').update(buf).digest('hex');
-  check('contract: computeSwapId mirrors abi.encodePacked', swapId === expectId, swapId.slice(0, 18) + '…');
+  const vecBuf = Buffer.alloc(136);
+  Buffer.from('11'.repeat(32), 'hex').copy(vecBuf, 0);
+  Buffer.from('7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', 'hex').copy(vecBuf, 32);
+  Buffer.from('8f2b7c1d94a63e05b8d71c4209af6e38b5d2c097', 'hex').copy(vecBuf, 52);
+  Buffer.from(12345678n.toString(16).padStart(64, '0'), 'hex').copy(vecBuf, 72);
+  Buffer.from(1700000000n.toString(16).padStart(64, '0'), 'hex').copy(vecBuf, 104);
+  const expectId = '0x' + crypto.createHash('sha256').update(vecBuf).digest('hex');
+  check('contract: computeSwapId mirrors abi.encodePacked', vectorId === expectId, vectorId.slice(0, 18) + '…');
 
   /* ------------------------------------------------------ 9. layout --- */
   async function layout(width, height, label) {
@@ -885,10 +1156,33 @@ const view = (pg) => pg.evaluate(() => {
   await pp.waitForTimeout(250);
   const payInv = await pp.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '4d'.repeat(32), sats: 50000, expiry: 3600 }));
   await pp.fill('#invIn', payInv);
-  await pp.fill('#addrIn', 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
-  await pp.waitForTimeout(300);
+  await pp.fill('#addrIn', PARTNER);
+  await pp.click('#chainRow');
+  await pp.fill('#contractIn', CONTRACT);
+  await pp.fill('#tokenIn', TOKEN);
+  await pp.fill('#rpcIn', RPC);
+  await pp.click('[data-act="saveSetup"]');
+  await pp.waitForTimeout(800);
+  await pp.click('#chainRow');
+  await pp.waitForTimeout(200);
+  /* the terms the app will use, read the way it reads them, so the record the
+     mock holds is the record this swap asks about */
+  const payTerms = await pp.evaluate(async () => {
+    const st = window.CLEANSWAP.state;
+    const inv = window.CLEANSWAP.readInvoice(document.getElementById('invIn').value);
+    const addr = window.CLEANSWAP.readAddress(document.getElementById('addrIn').value).address;
+    st.t2 = Math.floor(Date.now() / 1000) + 3600;
+    const units = window.CLEANSWAP.usdtUnits();
+    const id = await window.CLEANSWAP.computeSwapId(inv.H, addr, window.CLEANSWAP.tokenNow(), units, st.t2);
+    return { id: id, H: inv.H, units: units, t2: st.t2, addr: addr };
+  });
+  CHAIN.records[payTerms.id.toLowerCase()] = {
+    hashlock: payTerms.H, amount: payTerms.units, timelock: payTerms.t2, token: TOKEN,
+    sender: '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761', receiver: payTerms.addr,
+    claimed: false, refunded: false
+  };
   await pp.click('#primary');
-  await pp.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 5000 });
+  await pp.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 8000 });
   await pp.waitForTimeout(300);
   const payFit = await pp.evaluate(() => {
     const vw = window.innerWidth;
@@ -954,13 +1248,13 @@ const view = (pg) => pg.evaluate(() => {
   await qp.waitForTimeout(350);
   await qp.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await qp.waitForTimeout(250);
-  const deep = await qp.evaluate(() => {
+  const qrDeep = await qp.evaluate(() => {
     const q = document.getElementById('qrBox').getBoundingClientRect();
     const b = document.querySelector('.bar').getBoundingClientRect();
     return { qrBottom: Math.round(q.bottom), qrTop: Math.round(q.top), barTop: Math.round(b.top) };
   });
   check('qr 360x780: the invoice QR never sits under the Approve bar',
-    deep.qrBottom <= deep.barTop - 4, 'qr ' + deep.qrTop + '..' + deep.qrBottom + ' bar ' + deep.barTop);
+    qrDeep.qrBottom <= qrDeep.barTop - 4, 'qr ' + qrDeep.qrTop + '..' + qrDeep.qrBottom + ' bar ' + qrDeep.barTop);
   await qp.screenshot({ path: path.join(SHOTS, 'v43-qr-360.png') });
   await qp.click('[data-act="qrInvoice"]');
   await qp.waitForTimeout(200);

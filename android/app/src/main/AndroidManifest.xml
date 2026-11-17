@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The page is local; the only network use is the optional BTC/USD quote. -->
+    <!-- The page is local. It talks to two things over the network: the
+         optional BTC/USD quote, and the Arbitrum JSON-RPC endpoint it reads the
+         escrow with. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -18,6 +20,12 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="bitcoin" />
+        </intent>
+        <!-- ethereum: is the EIP-681 hand-off of an escrow call (approve, lock,
+             claim, refund) to whichever wallet app is installed. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="ethereum" />
         </intent>
     </queries>
 

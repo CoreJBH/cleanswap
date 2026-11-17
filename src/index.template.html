@@ -28,6 +28,45 @@
 
   <p class="rate"><span class="dot" id="rateDot"></span><span id="rateTxt">1 BTC ≈ — USDT</span></p>
 
+  <!-- Wallet mode only: the Arbitrum the USDT moves on, and whether the escrow
+       contract behind it answers. Tapping it opens Setup. -->
+  <button class="chain" id="chainRow" data-act="settings" type="button" hidden>
+    <span class="dot" id="chainDot"></span>
+    <span id="chainTxt">Arbitrum Sepolia · escrow not set</span>
+    <span class="chev" aria-hidden="true">›</span>
+  </button>
+
+  <!-- the one place an address is on screen: it belongs to the person who
+       deploys the escrow, not to the swap itself -->
+  <section class="setup" id="setupBox" hidden>
+    <p class="setup-h">Arbitrum setup</p>
+    <div class="seg2" role="group" aria-label="Network">
+      <button id="netTest" data-act="net" data-v="testnet" class="on" type="button">Sepolia test</button>
+      <button id="netMain" data-act="net" data-v="mainnet" type="button">Arbitrum One</button>
+    </div>
+    <label class="cap2" for="contractIn">Escrow contract</label>
+    <div class="field"><div class="field-in">
+      <input id="contractIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Escrow contract address" placeholder="0x…">
+    </div></div>
+    <div class="row">
+      <button class="pill" data-act="copyBytecode" type="button">Copy bytecode</button>
+      <a class="pill" id="remixLink" href="https://remix.ethereum.org" target="_blank" rel="noopener">Open Remix</a>
+    </div>
+    <label class="cap2" for="tokenIn">USDT token</label>
+    <div class="field"><div class="field-in">
+      <input id="tokenIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT token address" placeholder="0x…">
+    </div></div>
+    <label class="cap2" for="rpcIn">RPC endpoint (optional)</label>
+    <div class="field"><div class="field-in">
+      <input id="rpcIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="RPC endpoint" placeholder="https://…">
+    </div></div>
+    <div class="row">
+      <button class="pill" data-act="saveSetup" type="button">Save</button>
+      <button class="pill" data-act="checkSetup" type="button">Check</button>
+    </div>
+    <p class="hint" id="setupHint">Deploy the escrow once, then paste its address here.</p>
+  </section>
+
   <section class="cards" aria-label="Swap amounts">
     <article class="card" id="cardSend">
       <div class="cap">
@@ -111,10 +150,11 @@
   </section>
 
   <!-- Wallet mode parks here after Approve: the money has not left the wallet
-       yet, so this is what to send and where - and `I paid` is the only thing
-       that closes the swap. -->
+       yet, so this is what to send and where - and the chain is what decides
+       when the swap is over. -->
   <section class="pay" id="payBox" hidden>
     <p class="pay-line" id="payLine">Send the sats from your wallet, then tap I paid.</p>
+    <p class="pay-esc" id="payEsc">—</p>
     <p class="pay-addr mono" id="payAddr" hidden>—</p>
     <div class="row" id="payRowInv">
       <a class="pill" id="payWalletLink" href="#">Open in wallet</a>
@@ -125,6 +165,33 @@
       <button class="pill" data-act="payCopyAddr" type="button">Copy address</button>
       <button class="pill" data-act="payQrAddr" type="button">QR</button>
     </div>
+    <!-- the USDT half, when this side has to move it: a wallet in the page
+         sends it, or the call goes to another wallet and the hash comes back -->
+    <div class="row" id="payRowCall">
+      <button class="pill" id="paySend" data-act="walletSend" type="button" hidden>Send from wallet</button>
+      <button class="pill" id="payCopyCall" data-act="copyCall" type="button" hidden>Copy call</button>
+      <a class="pill" id="payLink" href="#" hidden>Open in wallet</a>
+    </div>
+    <div class="row" id="payRowCheck">
+      <button class="pill" id="payCheck" data-act="checkChain" type="button">Check chain</button>
+      <button class="pill" data-act="openTx" type="button">Paste tx</button>
+    </div>
+    <div class="row" id="payRowClaim" hidden>
+      <button class="pill" id="claimBtn" data-act="claimOpen" type="button">Claim USDT</button>
+      <button class="pill" id="refundBtn" data-act="sendRefund" type="button" hidden>Refund</button>
+    </div>
+    <div class="field code" id="txRow" hidden>
+      <div class="field-in">
+        <input id="txIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Transaction hash" placeholder="0x… transaction">
+        <button class="sample" data-act="loadTx" type="button">Load</button>
+      </div>
+    </div>
+    <div class="field code" id="secretRow" hidden data-open="0">
+      <div class="field-in">
+        <input id="secretIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Payment secret" placeholder="The payment secret your wallet shows">
+        <button class="sample" data-act="sendClaim" type="button">Claim</button>
+      </div>
+    </div>
   </section>
 
   <div class="qrbox" id="qrBox"></div>
@@ -134,6 +201,7 @@
     <div class="rc"><span>You sent</span><b id="rcSend">—</b></div>
     <div class="rc"><span>You got</span><b id="rcGet">—</b></div>
     <div class="rc"><span>USDT address</span><b class="mono" id="rcAddr">—</b></div>
+    <div class="rc"><span>Settled on</span><b class="wrap" id="rcNet">—</b></div>
   </section>
 
   <section class="recent" id="history" hidden>
