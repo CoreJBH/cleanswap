@@ -41,6 +41,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+                cleanswap:... is the off-line swap code: terms carried as text, not
+                as a web address. A camera app, a scanner or a message app that hands
+                the text over opens this app on it, and the app takes the other side
+                of those terms. No host is involved, so nothing identifies the phone
+                or its owner.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cleanswap" />
+            </intent-filter>
         </activity>
     </application>
 

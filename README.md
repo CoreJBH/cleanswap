@@ -10,8 +10,8 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-303%20passing-0f9d6e">
-  <img alt="android 0.4.1" src="https://img.shields.io/badge/android-0.4.1-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-253%20passing-0f9d6e">
+  <img alt="android 0.4.2" src="https://img.shields.io/badge/android-0.4.2-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -19,109 +19,88 @@
   <img src="docs/preview.png" alt="CLEANSWAP on a phone: ready, both sides locked, completed" width="100%">
 </p>
 
-CLEANSWAP is a non-custodial **Lightning bitcoin ↔ USDT atomic swap** prototype: one HTML file, no
-framework, no browser extension, no wallet vendor, no custodian. Two amount cards, one plain
-sentence and one big button per step — and underneath them a Bitcoin-style SHA-256 hashlock that
+CLEANSWAP is a non-custodial **Lightning bitcoin <-> USDT atomic swap** prototype: one HTML file, no
+framework, no browser extension, no wallet vendor, no custodian. Three steps - **1 the Lightning
+invoice, 2 the USDT address, 3 Approve** - and underneath them a Bitcoin-style SHA-256 hashlock that
 settles both legs with the same 32-byte secret.
 
-`v0.4` is the version that stopped explaining itself. There are no symbol names, no hashes, no raw
-hex and no test buttons on the screen; the app says what to do next in one short sentence, and the
-sample and mismatch helpers of the practice sandbox are gone entirely. Everything the old screen
-showed for show — `Preimage R`, `H`, `Escrow proof`, `Wallet receipt · payment hash`, `T1 · block`,
-`T2 · unix`, `lno1… / lni1… / lnbc…` — is now checked in the background and never printed. What is
-left is a payment-app screen: **Practice | Wallet**, one rate line, two cards, a short state
-(`Ready` → `Bitcoin locked` → `Both locked` → `Completed`), and a single action.
+`v0.4.2` is the version that fits on one screen and, when it can, never leaves the phone.
 
-## What `v0.4.1` adds
+## What `v0.4.2` does
 
-`v0.4` was one clean screen per step, which left two things unsaid: **where you are in the swap**,
-and **how to get back**. `v0.4.1` keeps the same one-sentence rule and fills exactly those gaps.
+* **Three steps, and the same three in both modes.** `1 Partner's Lightning invoice` (the `lnbc...`
+  the other side wants paid) -> `2 Your USDT address` (the `0x...` that receives the USDT) ->
+  `3 Approve`. Practice and Wallet build the same screen from the same markup, the same field in the
+  same place, the same numbers; a rehearsal cannot teach a different flow than the real thing.
+* **The direction reverses the steps.** One tap on the switch between the cards and the order swaps:
+  sending USDT, `1 Partner's USDT address` comes before `2 Your Lightning invoice`, and the invoice
+  row stops offering `Open in wallet` and offers `Copy` instead, because now the invoice is yours to
+  hand over rather than one to pay.
+* **`Sample` in Practice, and nowhere else.** Beside step 1 and step 2 there is one small button that
+  fills what the other side (or your own wallet) would supply: a real `lnbc...` invoice minted on the
+  device for this amount, and a valid `0x` address. Wallet mode hides both buttons and takes only
+  what you paste. A practice swap is never written to **Recent**; a real one is.
+* **`Approve` is the whole swap.** One tap verifies the two inputs, binds them to one hashlock,
+  builds the escrow's `lock()` call from that same hash, settles both legs at once and shows a small
+  receipt: what you sent, what you got, the address. If a check fails the button stays inert and the
+  sentence says what is wrong - a tap alone never moves money.
+* **The terms leave as a code, not as a web address.** `Share code` copies
+  `cleanswap:...` (base64url JSON: both amounts, the window, and - once known - the hashlock and the
+  USDT address). It is not a link: no host, no path, no file, no name, nothing taken from
+  `location.href`, so a message app, a printed QR and *any* camera app can carry it. `Use code` on
+  the other phone takes the other side of those terms: the direction flips, the amounts and the
+  window are adopted, the USDT address is filled in, and an invoice that hashes to something else is
+  refused (`That invoice is for a different swap.`). The app also registers the `cleanswap:` scheme,
+  so a code handed over by another app opens CLEANSWAP on it.
+* **The QR never hides under the Approve bar.** Opening a QR scrolls it clear of the fixed bar (see
+  `qr 360x780` in the test suite); the page reserves the bar's height at the bottom.
+* **`<- Back` from the finished swap** returns to the filled-in form, so the terms can be reviewed
+  without retyping them; `Done` starts a clean swap.
 
-* **`← Back` on every step after `Start swap`.** Before anything is locked it returns straight to
-  the amount screen; once a side is locked it asks first, in a small sheet (`Stay` / `Leave`) that
-  says what happens to the locked money. There is no way to throw a running swap away with a stray
-  tap, and no way to get stuck on a step either.
-* **A three-stage tracker instead of empty space.** Practice used to show a title, a sentence and a
-  button, and nothing else. Now a white card walks the swap through **1 Lock your side → 2 Partner
-  locks → 3 Settle at once**, with the amount named at each stage, a green tick when a stage is done,
-  and one line underneath that says the whole safety argument: *nothing moves until both sides are
-  locked.* The same tracker appears in Wallet mode once the invoice step is behind you.
-* **`Partner cancels` — the case the swap exists for.** Practice now has one small helper that lets
-  you watch the guarantee instead of reading about it: after you lock, the partner walks away, and
-  the locked amount comes back. That is the whole point of the hashlock — either both sides lock and
-  swap at once, or nothing is exchanged.
-* **Wallet mode says what to do in order.** `Start swap` no longer opens on a blank field: the first
-  step is a numbered path — **1 Share your link** (`Copy link` / `QR`) → **2 Paste the invoice they
-  send back** → **3 Pay it from your wallet** (`Open in wallet`, `Copy`, `QR`), with the step in hand
-  highlighted and the ones ahead dimmed.
-* **Real wallet invoices are accepted — and bound, not waved through.** A normal `lnbc…` / `lntb…`
-  invoice carries its own `payment_hash`; Wallet mode adopts that hash as the swap's `H` (and drops
-  the local secret, because the partner now holds it) so the USDT `lock()` and the Lightning leg sit
-  on the *same* hashlock. A `lni1…` BOLT12 invoice is read the same way. Nothing weakens: a bad
-  checksum, an expired invoice, an amount that is not the swap's amount, an offer with no payment
-  hash, or a USDT lock on a different hash are all still refused in plain words.
-* **`Open in wallet` and `QR` are never a dead tap.** A good invoice immediately gets its QR on
-  screen and the deep link carries it; before that, tapping either one says *Paste the invoice first*
-  and shakes the field, instead of doing nothing.
-* The amount cards fold into one quiet summary while a swap runs, so the steps fit a phone screen.
+## The three steps
 
-## The four taps
-
-Practice mode is the whole swap on one screen; nothing is pasted and nothing is typed.
-
-| Tap | Button | What the app verifies before it moves |
+| Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
-| 1 | `Start swap` | a fresh 32-byte secret `R`, `H = SHA256(R)`, a 40-block Lightning window and a one-hour token window |
-| 2 | `Lock my BTC` (or `Lock my USDT`) | the partner's invoice decodes, its payment hash is exactly `H`, its amount equals the swap, and it is still inside its expiry window |
-| 3 | `Partner locks` | the partner's escrow decodes from `lock()` calldata to the **same `H`**, the **same `T2`** and the **same USDT amount** |
-| 4 | `Complete swap` | `SHA256(R) === H`, computed with WebCrypto; the hashlock releases both legs at once |
+| 1 | the Lightning invoice - `Open in wallet`, `QR` (Wallet), `Sample` (Practice) | bech32 checksum, `payment_hash` present, amount equal to the swap (an amountless invoice is allowed), not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned. A bare `lno1...` offer is refused with *That is an offer, not an invoice* |
+| 2 | the USDT address - `Sample` (Practice) | `0x` plus exactly 40 hex characters, and not the zero address |
+| 3 | `Approve` | the two are bound: the invoice's `payment_hash` becomes the swap's `H`, `lock(H, T2, yourAddress, USDT, amount)` is the escrow leg, and `swapId = sha256(abi.encodePacked(H, sender, receiver, token, amount, timelock))` is what both sides settle on |
 
-Then `Done` (or `New swap`) returns to the start. A tap alone never advances: if a check fails the
-button shakes, the button stays where it is, and the sentence says in plain English what is wrong
-("That invoice is for a different swap."). Practice swaps are **not** kept in the history — only a
-real swap is. At any point after `Start swap`, `← Back` is one tap away, and `Partner cancels` shows
-the other ending: the partner never locks, nothing is exchanged, and what you locked comes back.
+Anything refused is named in plain English and never in jargon, and the hidden log keeps the decoded
+fields for a support question.
 
-## Wallet mode — a real hand-off
+## Wallet mode - a real hand-off
 
-Practice replaces the counterparty with a simulator; **Wallet** replaces it with a real one. What
-stays on screen is only what a real swap needs, in the order a real swap needs it:
+Practice replaces the counterparty with a simulator; **Wallet** replaces it with a real one, in the
+same three steps:
 
-| Step | On screen | What it does |
+| Step | Wallet mode | Practice mode |
 | --- | --- | --- |
-| 1 | `Share your link with your partner` — `Copy link`, `QR` | the swap link carries the hashlock; the partner opens it, or takes the invoice from it |
-| 2 | `Paste the invoice they send back` — one single-line field | decodes the invoice, adopts its `payment_hash` as `H`, checks amount and expiry |
-| 3 | `Pay it from your wallet, then tap I paid` — `Open in wallet`, `Copy`, `QR` | the standard `lightning:` deep link into BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green; the QR appears the moment the invoice checks out |
+| 1 | you paste the invoice the other side made, or your own when you are the one being paid; `Open in wallet` is the standard `lightning:` deep link into BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green | `Sample` mints a `lnbc...` invoice for this amount and pastes it for you |
+| 2 | you paste your (or your partner's) `0x` address | `Sample` fills a valid address |
+| 3 | `Approve` | `Approve` - nothing opens, nothing is paid, and Recent stays empty |
 
-The USDT side gets a `Copy link` / `QR` invite instead, and after locking shares the invoice the
-partner pays. There is no WebLN, no browser extension and no key request — the app never signs
-anything, and nothing is paid except in your own wallet.
+There is no WebLN, no browser extension and no key request - the app never signs anything, and
+nothing is paid except in your own wallet.
 
 **A real wallet invoice binds the swap.** Wallets do not know about this app, so the invoice they
-issue carries *their* `payment_hash`, not the one this screen minted. Wallet mode treats that hash
-as the swap: it is adopted as `H`, the local secret is dropped (the partner holds the preimage now),
-the swap id is recomputed, and the USDT `lock()` calldata the partner is asked for is built from the
-same `H`. One hashlock, both legs — the atomicity is the same as in practice; only who holds the
-secret changed. What is *not* accepted: an invoice whose bech32 checksum does not hold, one that has
-expired, one for a different amount (`That invoice is for 25,000 sats, not 50,000.`), a bare
-`lno1…` offer that carries no payment hash to lock on, or a USDT lock encoded against another hash.
-
-<p align="center">
-  <img src="docs/wallet.png" width="360" alt="CLEANSWAP wallet mode with the invoice hand-off">
-</p>
+issue carries *their* `payment_hash`. That hash *is* the swap: it becomes `H`, and the USDT `lock()`
+the escrow uses is built from the same `H`. One hashlock, both legs. What is *not* accepted: an
+invoice whose bech32 checksum does not hold, one that has expired, one for a different amount
+(`That invoice is for 25,000 sats, not 50,000.`), a bare `lno1...` offer with no payment hash, or an
+invoice on a hash that the shared code already fixed.
 
 Completed real swaps land as one-line entries under **Recent** (`+32.15 USDT`, `+50,000 sats`).
 
+<p align="center">
+  <img src="docs/wallet.png" width="360" alt="CLEANSWAP wallet mode: invoice, address, approve">
+</p>
+
 ## Both directions
 
-One tap on the switch between the two cards flips the home screen: *you send bitcoin* (create the
-swap, lock bitcoin, the partner locks USDT) or *you send USDT* (lock USDT first, the bitcoin side
-pays your invoice). The amount, the direction and the mode freeze once a swap is open, so the
-numbers on screen are the numbers in the hashlock.
-
-A **share link** (`#s=1.<H>.<sats>.<units>.<T2>.<T1>`) still opens the same swap on another phone
-as the USDT side: same hashlock, no preimage, its own steps, and it can only finish when the
-bitcoin side reveals the secret.
+One tap on the switch between the two cards flips the whole screen: *you send bitcoin* (step 1 is
+the partner's invoice, step 2 is your USDT address) or *you send USDT* (step 1 is the partner's
+USDT address, step 2 is your invoice). The amounts travel in the `cleanswap:` code, so the two
+phones agree on the numbers and the window before either one approves.
 
 ---
 
@@ -208,9 +187,9 @@ same decoders that check a wallet's invoice check the simulated one.
 ln-usdt-swap.html            built single-file app (also dist/cleanswap.html)
 build.py                     src/ -> single file (+ the APK asset); refuses to emit Hangul
 src/
-  index.template.html        screen markup: two cards, one sentence, one button
+  index.template.html        screen markup: two cards, three steps, one Approve bar
   app.css                    light payment-app theme, fixed action bar, mobile-first
-  app.js                     state machine, gates, BOLT11/BOLT12 codecs, swap links, calldata
+  app.js                     three-step screen, invoice/address gates, swap code, BOLT11/12, calldata
   qr.js                      dependency-free QR encoder (byte mode, 1-13, L/M/Q/H)
 contracts/
   LightningUsdtHTLC.sol      sha256 hashlock, ERC-20 escrow, timelock refund
@@ -225,9 +204,9 @@ tools/
   make-icons.py              favicon + touch icon from icon-clean-1.png
   make-launcher-icons.py     Android launcher icons
   qr-check.js                dumps QR matrices for cross-checking
-  shots-extra.js             desktop and wallet hand-off inspection screenshots
+  docshots.js                regenerates docs/preview.png and docs/wallet.png
 test/
-  headless.js                Playwright end-to-end suite (168 checks)
+  headless.js                Playwright end-to-end suite (118 checks)
   contract-evm.py            contract behaviour on a real EVM + app calldata (26 checks)
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder (45 checks)
@@ -255,7 +234,7 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright, 360×780 / 390×844 / 1280×800) | The screen holds one sentence and one action per step, the amount highlight follows the selected preset, practice runs on four taps with no field to paste into, each gate is broken on purpose and the tap is shown to be refused (wrong invoice, wrong lock amount, wrong secret), wallet mode needs exactly one paste per hand-off, a practice swap adds nothing to Recent while a real one does, the action bar never covers the last line when scrolled to the end, no technical word reaches the screen, no Hangul, zero horizontal overflow at three widths, and the whole v0.4.1 layer: `← Back` on every step, the confirm sheet once a side is locked, the three-stage tracker, `Partner cancels`, the numbered wallet path, a real `lnbc…` invoice adopted as `H`, and QR / deep link updating from the paste | **168/168 pass** |
+| `test/headless.js` (Playwright, 360x780 / 390x844 / 1280x800) | The three steps and their numbers, the same screen in Practice and Wallet with `Sample` only in Practice, the flip that reverses the steps and swaps `Open in wallet` for `Copy`, invoice refusals (broken checksum, expired, other amount, an offer instead of an invoice, a hash that is not this swap's), address refusals (short, zero, empty), `Approve` staying inert with a field left empty, the `cleanswap:` code (shape, round trip, no path or host in it, QR equal in substance, two phones settling on the same hashlock *and* the same swap id), the QR clearing the Approve bar at 360x780, the action bar never covering the last line, no technical word or Hangul on screen, and zero horizontal overflow at three widths | **118/118 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: faucet/approve, `lock` escrows and debits, swap record and `computeSwapId` agree, wrong preimage reverts, correct preimage pays the receiver, `Claimed` carries `R`, double claim reverts, refund before/after the timelock, `Refunded` emitted — and the UI's `lock()` calldata decodes to the swap fields with the right keccak selector | **26/26 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads, including BOLT12 lengths at versions 12–13, matches `python-qrcode` exactly | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder: checksum, `payment_hash`, amount (including 1 sat and 250k sats), 35-bit timestamp, expiry tag, 65-byte signature slot, optional description, and a length that still fits a QR | **45/45 pass** |
@@ -266,14 +245,14 @@ All suites pass on this tree:
 bash test/run-all.sh      # build + English + headless + EVM + QR + invoices
 ```
 
-Screenshots of the ready, blocked, half-locked, both-locked, completed, expired, wallet, back sheet,
-partner-cancel and desktop states are written to `shots/v4-*.png` and `shots/v41-*.png` by the
-headless suite.
+Screenshots of the form, the filled form, the blocked form, both directions, the finished swaps, the
+code QR, the 360x780 QR and the desktop view are written to `shots/v42-*.png` by the headless
+suite.
 
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `app_name =
-CLEANSWAP`, `versionName 0.4.1`, `versionCode 4`, `android:screenOrientation="user"`, `#f2f4f7`
+CLEANSWAP`, `versionName 0.4.2`, `versionCode 5`, `android:screenOrientation="user"`, `#f2f4f7`
 status/nav bars, launcher icons generated from `icon-clean-1.png`). Build it with `gradle
 assembleDebug` after staging `dist/cleanswap.html` into `app/src/main/assets/index.html`
 (`build.py` writes that copy too).
@@ -283,6 +262,12 @@ cannot render) become an `ACTION_VIEW` intent, so **Open in wallet** opens the i
 instead of failing with `net::ERR_UNKNOWN_URL_SCHEME`. A phone with no such app gets a toast
 rather than a crash, and the manifest declares a `<queries>` entry for both schemes so Android
 11+ package visibility does not hide the wallet.
+
+The shell also receives the off-line code: an `android:scheme="cleanswap"` intent filter
+(`VIEW` / `DEFAULT` / `BROWSABLE`) means a camera app, a scanner or a message app that hands the code
+over opens CLEANSWAP on it, and `MainActivity` delivers it to the page once it has loaded
+(`onNewIntent` for a running app). The page is still loaded from `file:///android_asset/index.html`;
+that address never appears in anything the app shares.
 
 GitHub Actions builds `cleanswap.apk` on every push to `main` and on `v*` tags
 (`.github/workflows/apk.yml`); the same file is kept under `android/ci/build-apk.yml` for reference.
@@ -299,7 +284,11 @@ The APK is uploaded as a workflow artifact.
 * Timelock asymmetry is the safety margin: the Lightning leg must outlive the token leg
   (`T1 > T2`), otherwise the preimage could be revealed after the token side was refunded.
 * AQUA/Liquid has no hashlock script, so the token leg is a wallet-level hand-off in this build.
-* A swap lives in the page: reloading it forgets the secret. Nothing is written to storage.
+* A `cleanswap:` code carries terms only: the two amounts, the window, and - if they were already
+  known - the hashlock and the USDT address. It is not a web address, has no host, and is never
+  built from the page's own URL, so sharing one exposes no account, no file path and no name.
+* A swap lives in the page: reloading it forgets it. Nothing but the optional practice sample is
+  written anywhere, and nothing is written to storage.
 * The UI, code, tests and commit messages are English only, and `test/verify-english.py` enforces it.
 
 ## Contributors

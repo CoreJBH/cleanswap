@@ -30,10 +30,16 @@ import java.util.Locale;
  */
 public class MainActivity extends Activity {
 
+    /* The page itself lives in the APK. It is never served from a host and its
+       address never leaves the phone: the only thing that travels between two
+       people is a cleanswap:... code. */
     private static final String APP_URL = "file:///android_asset/index.html";
+    private static final String CODE_SCHEME = "cleanswap";
     private static final int BG = 0xFFF2F4F7;
 
     private WebView web;
+    private boolean pageReady;
+    private String pendingCode;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -47,6 +53,8 @@ public class MainActivity extends Activity {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
         }
+
+        pendingCode = codeFrom(getIntent());
 
         web = new WebView(this);
         web.setBackgroundColor(BG);
@@ -76,9 +84,56 @@ public class MainActivity extends Activity {
         setContentView(web);
         if (state != null) {
             web.restoreState(state);
+            pageReady = true;
         } else {
             web.loadUrl(APP_URL);
         }
+        deliverCode();
+    }
+
+    /**
+     * A cleanswap:... code arriving from another app (a scanner, a message, the
+     * camera) is handed to the page, which takes the other side of those terms.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String code = codeFrom(intent);
+        if (code != null) {
+            pendingCode = code;
+            deliverCode();
+        }
+    }
+
+    private void deliverCode() {
+        if (!pageReady || pendingCode == null || web == null) {
+            return;
+        }
+        String code = pendingCode;
+        pendingCode = null;
+        web.evaluateJavascript(
+                "window.CLEANSWAP && window.CLEANSWAP.acceptCode(" + jsString(code) + ")", null);
+    }
+
+    private static String codeFrom(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        Uri data = intent.getData();
+        if (data == null) {
+            return null;
+        }
+        String raw = data.toString();
+        if (raw == null || !raw.toLowerCase(Locale.ROOT).startsWith(CODE_SCHEME + ":")) {
+            return null;
+        }
+        return raw;
+    }
+
+    /** The code is [A-Za-z0-9_-] after cleanswap:, so quoting it is all it needs. */
+    private static String jsString(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     @Override
@@ -129,6 +184,12 @@ public class MainActivity extends Activity {
      * handler of its own and shows ERR_UNKNOWN_URL_SCHEME (lightning:) instead of the wallet.
      */
     private final class ShellClient extends WebViewClient {
+
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            pageReady = true;
+            deliverCode();
+        }
 
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
