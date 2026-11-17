@@ -1,4 +1,4 @@
-/* CLEANSWAP v0.5.0 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CLEANSWAP v0.5.1 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -35,7 +35,11 @@
    claim) with real WebCrypto, real bech32 and real ABI encoding, against an
    in-page stand-in for the escrow contract that speaks the same records. The
    practice partner is simulated, so no code is pasted; the same checks that
-   judge a real receipt judge the rehearsal.
+   judge a real receipt judge the rehearsal. v0.5.1: the rehearsal walks the
+   same screens in the same order as a real swap - Approve, the waiting screen
+   with I paid, then the escrow read that closes it - because the mode differs
+   in only two things: Sample beside the two inputs, and a stand-in escrow
+   instead of a deployed one (so nothing is written to Recent).
 
    Wallet mode swaps the simulated partner for a real invoice, a real Arbitrum
    escrow and the values the other side sends back. Signing stays outside the
@@ -367,7 +371,7 @@
     var t = String(u || '');
     return /^https:\/\/[^\s]+$/i.test(t) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/.*)?$/i.test(t);
   }
-  function tokenNow() { return S.token || curChain().token || (S.mode === 'practice' ? EVM.token : ''); }
+  function tokenNow() { return S.mode === 'practice' ? EVM.token : (S.token || curChain().token); }
   function escrowNow() { return S.mode === 'practice' ? EVM.htlc : S.contract; }
 
   /* The setup is the one thing worth remembering between launches: a contract
@@ -494,7 +498,7 @@
   }
 
   function swapIdNow() {
-    return computeSwapId(S.H, S.addr, S.token || tokenNow(), S.units != null ? S.units : usdtUnits(), S.t2);
+    return computeSwapId(S.H, S.addr, tokenNow(), S.units != null ? S.units : usdtUnits(), S.t2);
   }
 
   /* ------------------------------------------------------ reading it ------ */
@@ -502,7 +506,7 @@
     return {
       hashlock: String(S.H || ''),
       receiver: String(S.addr || ''),
-      token: String(S.token || tokenNow() || ''),
+      token: String(tokenNow() || ''),
       amount: String(S.units != null ? S.units : usdtUnits()),
       timelock: String(S.t2 || 0)
     };
@@ -564,13 +568,14 @@
   }
 
   function refreshChain() {
-    if (S.mode !== 'wallet' || !isAddr(S.contract) || !S.H) {
+    if (!S.H || (S.mode === 'wallet' && !isAddr(S.contract))) {
       S.chain = null;
       renderChain();
       return Promise.resolve(null);
     }
     var want = normHex(termsNow().hashlock);
     S.busy = true;
+    if (S.mode === 'practice') S.block = curHeight();
     renderChain();
     return chainRead().then(function (rec) {
       S.busy = false;
@@ -593,6 +598,14 @@
      A swap screen that points at an empty address explains nothing; this one
      says so before any money is asked for. */
   function chainProbe() {
+    /* A rehearsal has a stand-in escrow on the phone, so it already answers. */
+    if (S.mode === 'practice') {
+      S.busy = false;
+      S.rpcState = 'ok';
+      S.block = curHeight();
+      renderChain();
+      return Promise.resolve('ok');
+    }
     if (S.mode !== 'wallet') return Promise.resolve(null);
     if (!isAddr(S.contract)) { S.rpcState = 'idle'; S.block = null; renderChain(); return Promise.resolve(null); }
     S.busy = true;
@@ -674,7 +687,7 @@
   function busy(on) { S.busy = !!on; render(); }
 
   function lockCall() {
-    return { to: S.contract, data: lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr, token: tokenNow(), amount: usdtUnits() }) };
+    return { to: escrowNow(), data: lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr, token: tokenNow(), amount: usdtUnits() }) };
   }
   function approveCall() { return { to: tokenNow(), data: approveCalldata(S.contract, usdtUnits()) }; }
 
@@ -708,11 +721,11 @@
     toast(msg);
   }
 
-  /* The Approve tap in Wallet mode. Nothing moves on the tap itself: the USDT
+  /* The Approve tap, in both modes. Nothing moves on the tap itself: the USDT
      has to be in the escrow before the bitcoin leg is worth starting - this
      side locks it, or the other side already did. */
-  function startWallet() {
-    if (!isAddr(S.contract)) { openSetup(); log('BLOCK', 'no escrow contract is set for this chain', 'c-err'); toast('Set the escrow contract first'); return; }
+  function startSwap() {
+    if (S.mode === 'wallet' && !isAddr(S.contract)) { openSetup(); log('BLOCK', 'no escrow contract is set for this chain', 'c-err'); toast('Set the escrow contract first'); return; }
     busy(true);
     return chainProbe().then(function () {
       if (S.rpcState === 'nocon') {
@@ -728,6 +741,7 @@
         toast('The chain did not answer. Nothing was approved.');
         return null;
       }
+      simSeed();
       return refreshChain();
     }).then(function (c) {
       if (!c) { render(); return; }
@@ -765,6 +779,7 @@
     var p = provider();
     log('LOCK', 'one call puts ' + usdtTxt() + ' USDT in the escrow');
     render();
+    if (S.mode === 'practice') { simLock(); return; }   /* no wallet here: the stand-in signs for it */
     if (!p) { toast('Copy the call into your wallet, then paste the transaction'); return; }
     runLock(p);
   }
@@ -855,6 +870,7 @@
 
   function startWatch() {
     stopWatch();
+    var every = S.mode === 'practice' ? 1200 : 12000;
     S.watch = setInterval(function () {
       if (S.phase !== 'paid') { stopWatch(); return; }
       refreshChain().then(function (c) {
@@ -862,7 +878,8 @@
         if (c.state === 'claimed') settleByChain(c);
         else if (c.state === 'refunded') wentBack(c);
       });
-    }, 12000);
+    }, every);
+    simClaim();
   }
   function stopWatch() {
     if (S.watch) { clearInterval(S.watch); S.watch = 0; }
@@ -884,8 +901,17 @@
         toast('That secret does not open this swap');
         return;
       }
+      /* The stand-in escrow takes the same secret and the same reading closes
+         the swap, so a rehearsal cannot be claimed with a wrong secret. */
+      if (S.mode === 'practice') {
+        if (!S.simRec) { blockChain({ state: 'none' }); return; }
+        S.simRec.claimed = true;
+        return refreshChain().then(function (c) {
+          if (c && c.state === 'claimed') settleByChain(c); else blockChain(c);
+        });
+      }
       return swapIdNow().then(function (id) {
-        var call = { to: S.contract, data: claimCalldata(id, '0x' + pre) };
+        var call = { to: escrowNow(), data: claimCalldata(id, '0x' + pre) };
         S.txPending = { kind: 'claim', call: call };
         var p = provider();
         if (!p) { render(); copy(callPacket(call, 'claim'), 'Claim call copied'); return; }
@@ -902,9 +928,14 @@
   function doRefund() {
     busy(true);
     swapIdNow().then(function (id) {
-      var call = { to: S.contract, data: refundCalldata(id) };
+      var call = { to: escrowNow(), data: refundCalldata(id) };
       S.txPending = { kind: 'refund', call: call };
       busy(false);
+      if (S.mode === 'practice') {
+        if (S.simRec) S.simRec.refunded = true;
+        refreshChain().then(function (c) { if (c && c.state === 'refunded') wentBack(c); else blockChain(c); });
+        return;
+      }
       var p = provider();
       if (!p) { render(); copy(callPacket(call, 'refund'), 'Refund call copied'); return; }
       busy(true);
@@ -925,7 +956,8 @@
     var h = String(hash || '').trim().toLowerCase();
     if (!/^0x[0-9a-f]{64}$/.test(h)) { toast('Paste the transaction hash'); return; }
     busy(true);
-    waitReceipt(h).then(function () {
+    var waited = S.mode === 'practice' ? simReceipt() : waitReceipt(h);
+    waited.then(function () {
       busy(false);
       return refreshChain();
     }).then(function (c) {
@@ -1618,10 +1650,11 @@
     $('invTitle').textContent = sendBtc ? "Partner's Lightning invoice" : 'Your Lightning invoice';
     $('addrTitle').textContent = sendBtc ? 'Your USDT address' : "Partner's USDT address";
 
-    // the invoice row: pay it when it is the other side's, hand it over when it is yours
-    // Wallet hands the invoice to another app (pay it, or copy it out); practice
-    // keeps everything on this screen, with Sample in place of a wallet.
-    $('invRow').hidden = S.mode !== 'wallet';
+    // the invoice row: pay it when it is the other side's, hand it over when it
+    // is yours. The same row is on screen in both modes; only Wallet can reach
+    // a wallet with it, so in Practice the hand-off says what mode this is
+    // instead of opening one (see the click handler at the bottom).
+    $('invRow').hidden = false;
     $('walletLink').hidden = !sendBtc;
     $('copyInv').hidden = sendBtc;
     var inv = readInvoice(pasted());
@@ -1681,21 +1714,23 @@
   }
 
   /* The chain line under the rate: which Arbitrum, and whether the escrow
-     behind it answers at all. Wallet mode only - a rehearsal has no chain. */
+     behind it answers at all. It is on screen in both modes: a rehearsal runs
+     against the stand-in escrow, which is always there, so the line never asks
+     for a deployment in Practice. */
   function renderChain() {
     var row = $('chainRow');
     if (!row) return;
-    row.hidden = S.mode !== 'wallet';
-    if (S.mode !== 'wallet') return;
+    row.hidden = false;
+    var practice = S.mode === 'practice';
     var c = curChain(), txt = c.label, dot = 'off';
-    if (!isAddr(S.contract)) {
-      txt += ' \u00b7 escrow not set';
-    } else if (S.busy) {
+    if (S.busy && !practice) {
       txt += ' \u00b7 reading the chain\u2026';
       dot = '';
-    } else if (S.rpcState === 'bad') {
+    } else if (!practice && !isAddr(S.contract)) {
+      txt += ' \u00b7 escrow not set';
+    } else if (!practice && S.rpcState === 'bad') {
       txt += ' \u00b7 no answer from the chain';
-    } else if (S.rpcState === 'nocon') {
+    } else if (!practice && S.rpcState === 'nocon') {
       txt += ' \u00b7 no contract at that address';
     } else if (S.chain) {
       if (S.chain.state === 'error') { txt += ' \u00b7 no answer from the chain'; }
@@ -1705,12 +1740,12 @@
       else if (S.chain.state === 'mismatch') { txt += ' \u00b7 not this swap'; }
       else { txt += ' \u00b7 nothing locked yet'; }
     } else {
-      txt += S.rpcState === 'ok' ? ' \u00b7 escrow ready' : ' \u00b7 escrow set';
-      dot = S.rpcState === 'ok' ? 'live' : 'off';
+      txt += practice || S.rpcState === 'ok' ? ' \u00b7 escrow ready' : ' \u00b7 escrow set';
+      dot = practice || S.rpcState === 'ok' ? 'live' : 'off';
     }
     $('chainTxt').textContent = txt;
     $('chainDot').className = 'dot ' + dot;
-    paintSetup();
+    if (!practice) paintSetup();
   }
 
   /* The waiting screen: what to send and where, and nothing that claims the
@@ -1732,17 +1767,18 @@
         : 'Send ' + usdtTxt() + ' USDT to this address from your wallet, then tap I paid.';
     }
     $('payLine').textContent = S.note || line;
-    $('payEsc').textContent = practice
-      ? 'Practice \u00b7 the escrow answer is simulated'
-      : curChain().label + (S.block ? ' \u00b7 block ' + fmt(S.block) : '') + ' \u00b7 ' + chainSay(c).replace(/^The /, '');
+    $('payEsc').textContent = (practice
+      ? 'Practice \u00b7 ' + curChain().label
+      : curChain().label + (S.block ? ' \u00b7 block ' + fmt(S.block) : '')) + ' \u00b7 ' + chainSay(c).replace(/^The /, '');
     $('payAddr').hidden = sendBtc || S.phase !== 'paying';
     $('payAddr').textContent = sendBtc ? '' : (S.addr || '\u2014');
     $('payRowInv').hidden = !sendBtc || S.phase === 'locking' || S.phase === 'paid';
     $('payRowAddr').hidden = sendBtc || S.phase !== 'paying';
     $('payWalletLink').setAttribute('href', sendBtc && S.inv ? 'lightning:' + S.inv : '#');
 
-    // the wallet's share of the work: only the call this side still owes
-    var canCopy = !practice && isAddr(S.contract);
+    // the wallet's share of the work: only the call this side still owes.
+    // A rehearsal has no wallet to send it, but the same call is on screen.
+    var canCopy = isAddr(escrowNow());
     var locking = S.phase === 'locking';
     $('paySend').hidden = practice || !provider() || !locking;
     $('payCopyCall').hidden = !canCopy || !locking;
@@ -1754,11 +1790,10 @@
       'address=' + tokenNow(),
       'uint256=' + String(usdtUnits())
     ]) : '#');
-    $('payCheck').hidden = practice;
     // the secret opens the escrow; whoever holds it can claim, and the app
     // checks that it hashes to this swap before offering it to a wallet
     var open = c && c.state === 'locked' && S.phase === 'paid';
-    $('payRowClaim').hidden = !open || practice;
+    $('payRowClaim').hidden = !open;
     $('claimBtn').hidden = !open;
     $('refundBtn').hidden = !(open && S.direction === 'u2b' && S.t2 && nowSec() >= S.t2);
     $('secretRow').hidden = !$('secretRow').dataset.open || $('secretRow').dataset.open === '0';
@@ -1892,32 +1927,76 @@
       if (S.basis === 'offer') log('OFFER', 'the wallet pays the offer; H is the hash of that offer');
       /* Practice rehearses the same gates against a stand-in escrow. Wallet
          mode moves real USDT and the chain has the last word. */
-      if (S.mode === 'wallet') { startWallet(); return; }
-      practiceGo();
+      startSwap();
     });
   }
 
-  /* The rehearsal: the stand-in escrow locks, then pays out, and the same
-     reading that judges a real one judges it. */
-  function practiceGo() {
-    S.simRec = {
+  /* ------------------------------------------------- the rehearsal escrow --
+     Practice differs from Wallet in what it draws on, never in what it asks
+     the screen to do. Both modes tap the same Approve, park on the same
+     waiting screen, and close only on a claimed escrow record; in Practice
+     that record is the stand-in below, which is why nothing has to be
+     deployed, signed or pasted to rehearse a swap. */
+  function simRecord() {
+    return {
       hashlock: S.H, amount: usdtUnits(), timelock: S.t2,
       token: tokenNow(), sender: EVM.usdtSide, receiver: S.addr,
       claimed: false, refunded: false
     };
-    chainRead().then(function (rec) {
-      var c = classify(rec);
-      if (c.state !== 'locked') { blockChain(c); return; }
-      log('LOCK', 'the escrow holds ' + usdtTxt() + ' USDT for this swap');
+  }
+
+  /* A rehearsal has no deployment and no partner to wait for, so the stand-in
+     escrow starts in the state a real swap reaches at this point: when this
+     side sends bitcoin, the USDT is already locked for it. */
+  function simSeed() {
+    if (S.mode !== 'practice') return;
+    var c = classify(simRead());
+    if (c.state === 'locked' || c.state === 'claimed' || c.state === 'refunded') return;
+    if (S.direction === 'u2b') { S.simRec = null; return; }   /* this side locks first */
+    S.simRec = simRecord();
+    log('LOCK', 'the escrow holds ' + usdtTxt() + ' USDT for this swap');
+  }
+
+  /* The lock this side owes, landing in the stand-in escrow. */
+  function simLockNow() {
+    if (S.mode !== 'practice' || !S.H) return null;
+    S.simRec = simRecord();
+    S.block = curHeight() + 1;
+    log('LOCK', 'the escrow holds ' + usdtTxt() + ' USDT for this swap');
+    return S.simRec;
+  }
+
+  /* No wallet signs in a rehearsal, so the stand-in does: the lock lands a
+     moment after the tap, and the reading that follows picks it up. */
+  function simLock(delay) {
+    var want = normHex(S.H);
+    setTimeout(function () {
+      if (S.mode !== 'practice' || S.phase !== 'locking' || normHex(S.H) !== want) return;
+      simLockNow();
+      refreshChain().then(function (c) { if (S.phase === 'locking') lockedMine(c); });
+    }, delay == null ? 1500 : delay);
+  }
+
+  /* The partner takes the USDT once the sats are paid: the stand-in claims a
+     moment later, and the watch that closes a real swap closes this one on
+     the same reading. */
+  function simClaim(delay) {
+    var want = normHex(S.H);
+    setTimeout(function () {
+      if (S.mode !== 'practice' || S.phase !== 'paid' || normHex(S.H) !== want || !S.simRec) return;
       S.simRec.claimed = true;
-      return chainRead().then(function (rec2) {
-        var c2 = classify(rec2);
-        if (c2.state !== 'claimed') { blockChain(c2); return; }
-        settleByChain(c2);
-      });
-    }, function (e) {
-      log('BLOCK', 'the escrow could not be read', 'c-err');
-      render();
+      refreshChain().then(function (c) { if (c && c.state === 'claimed') settleByChain(c); });
+    }, delay == null ? 2000 : delay);
+  }
+
+  /* A pasted transaction hash in Practice stands for the moment the lock
+     lands; there is no node to ask about it. */
+  function simReceipt() {
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        if (S.phase === 'locking' && !S.simRec) simLockNow();
+        resolve({ blockNumber: '0x' + (curHeight() + 1).toString(16) });
+      }, 900);
     });
   }
 
@@ -1952,6 +2031,9 @@
   function checkChain() {
     if (S.busy) return;
     S.note = '';
+    /* Practice: a check on the lock this side owes is the moment the stand-in
+       takes it, so the screen never strands a rehearsal. */
+    if (S.mode === 'practice' && S.phase === 'locking' && !S.simRec) simLockNow();
     busy(true);
     refreshChain().then(function (c) {
       busy(false);
@@ -2132,12 +2214,21 @@
     mode: function (b) {
       S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
       if (S.phase !== 'idle') backToForm();
+      /* the two escrows are not each other's: a rehearsal's stand-in record
+         never carries into a real swap, and a chain reading never into one */
+      S.simRec = null;
+      S.chain = null;
       closeSetup();
       render();
       refreshGate();
       if (S.mode === 'wallet' && isAddr(S.contract)) chainProbe().then(function () { if (S.H) refreshChain(); });
     },
-    settings: function () { openSetup(); },
+    settings: function () {
+      /* Setup is where an escrow is deployed and pointed at; a rehearsal runs
+         on the stand-in, so there is nothing to set there. */
+      if (S.mode === 'practice') { toast('Practice runs on a stand-in escrow, so there is nothing to set.'); return; }
+      openSetup();
+    },
     net: function (b) { setNet(b.dataset.v); },
     saveSetup: function () { if (readSetup()) chainProbe().then(function () { if (S.H) refreshChain(); }); },
     checkSetup: function () {
@@ -2157,7 +2248,7 @@
       runLock(p);
     },
     copyCall: function () {
-      if (!isAddr(S.contract) || !S.H) { toast('Nothing to copy yet'); return; }
+      if (!isAddr(escrowNow()) || !S.H) { toast('Nothing to copy yet'); return; }
       if (S.phase === 'locking') { copy(callPacket(lockCall(), 'lock'), 'Call copied'); return; }
       toast('Nothing to copy yet');
     },
@@ -2288,9 +2379,21 @@
     if (fn) { e.preventDefault(); fn(b); }
   });
 
-  // A blank wallet link would open a wallet on nothing: say what is missing instead.
-  $('walletLink').addEventListener('click', function (e) {
-    if (!readInvoice(pasted()).ok) { e.preventDefault(); needInvoice(); }
+  // A blank wallet link would open a wallet on nothing: say what is missing
+  // instead. A rehearsal has no wallet to hand anything to, and its invoice is
+  // a sample, so it keeps the hand-off on the phone.
+  function walletHandoff(e) {
+    if (S.mode === 'practice') {
+      e.preventDefault();
+      toast('Practice keeps this on the phone: no wallet opens.');
+      return;
+    }
+    var ok = e.currentTarget.id === 'payWalletLink' ? !!S.inv : readInvoice(pasted()).ok;
+    if (!ok) { e.preventDefault(); needInvoice(); }
+  }
+  ['walletLink', 'payWalletLink'].forEach(function (id) {
+    var el = $(id);
+    if (el) el.addEventListener('click', walletHandoff);
   });
 
   [invIn(), addrEl(), $('codeIn')].forEach(function (el) {

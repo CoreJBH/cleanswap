@@ -301,7 +301,9 @@ const view = (pg) => pg.evaluate(() => {
     w.presets && w.on.length === 1 && w.on[0] === '50,000', w.on.join(','));
   check('boot: practice offers Sample beside both fields', w.sampleInv && w.sampleAddr,
     [w.sampleInv, w.sampleAddr].join('/'));
-  check('boot: practice offers no wallet hand-off at all', !w.invRow, String(w.invRow));
+  check('boot: practice shows the same invoice row as wallet', w.invRow && w.walletLink, [w.invRow, w.walletLink].join('/'));
+  check('boot: practice already names the chain and its stand-in escrow',
+    w.chainRow && /^Arbitrum Sepolia · escrow ready$/.test(w.chainTxt), w.chainTxt);
   check('boot: the terms code is a small helper, not a step', w.terms && !w.receipt, String(w.terms));
 
   const html = await page.content();
@@ -324,7 +326,7 @@ const view = (pg) => pg.evaluate(() => {
   check('content: no Hangul in rendered text', !HANGUL.test(uiText), (uiText.match(HANGUL) || []).length + ' chars');
   check('content: no technical words on the screen', !JARGON.test(uiText), (uiText.match(JARGON) || [''])[0]);
 
-  await page.screenshot({ path: path.join(SHOTS, 'v43-idle.png') });
+  await page.screenshot({ path: path.join(SHOTS, 'v51-idle.png') });
 
   /* --------------------------------------------- 2. practice: the 3 steps --- */
   await page.click('[data-act="sampleInv"]');
@@ -333,6 +335,16 @@ const view = (pg) => pg.evaluate(() => {
   w = await view(page);
   check('practice: Sample fills a real lnbc invoice', w.gate === 'empty' && w.ready === '0', w.gate + '/' + w.ready);
   check('practice: the sentence now asks for the address', /Add the USDT address/.test(w.say), w.say);
+  check('practice: the invoice row carries the invoice, as in wallet',
+    w.invRow && w.walletLink && w.href === 'lightning:' + w.href.replace('lightning:', ''), String(w.href).slice(0, 22) + '…');
+
+  /* the hand-off row is the same in both modes; a rehearsal just keeps it on
+     the phone instead of opening a wallet */
+  await page.click('#walletLink');
+  await page.waitForTimeout(300);
+  check('practice: Open in wallet says the invoice stays on the phone',
+    /no wallet opens/.test((await view(page)).toast), (await view(page)).toast);
+  check('practice: and nothing left the page', page.url() === URL, page.url());
 
   await page.click('[data-act="sampleAddr"]');
   await page.waitForTimeout(300);
@@ -352,17 +364,65 @@ const view = (pg) => pg.evaluate(() => {
   check('practice: the sample invoice carries the amount on screen', dec.sats === 50000, String(dec.sats));
 
   await page.click('#primary');
-  await page.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await page.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 8000 });
   await page.waitForTimeout(300);
   w = await view(page);
-  check('practice: Approve settles the swap', w.state === 'Completed' && w.cta === 'Done', w.state + '/' + w.cta);
+  check('practice: Approve parks on the waiting screen, not on a finished swap',
+    w.phase === 'paying' && w.title === 'Waiting for payment' && w.cta === 'I paid' && !w.receipt,
+    w.phase + ' / ' + w.title + ' / ' + w.cta);
+  check('practice: the waiting screen says what to pay and how much',
+    /^Send 50,000 sats to this invoice/.test(w.payLine), w.payLine);
+  check('practice: the invoice waits there with the same hand-off',
+    w.payRowInv && w.payLink === 'lightning:' + sent.inv, String(w.payLink).slice(0, 22) + '…');
+  check('practice: Check chain and Paste tx are both on the screen, as in wallet',
+    w.payCheck && !w.claimRow, w.payCheck + '/' + w.claimRow);
+  check('practice: the escrow line names the same chain and the stand-in escrow',
+    /^Practice · Arbitrum Sepolia · escrow holds your/.test(w.payEsc), w.payEsc);
+  check('practice: the chain bar is on screen and says the USDT is locked',
+    w.chainRow && /^Arbitrum Sepolia · USDT locked$/.test(w.chainTxt), w.chainTxt);
+  check('practice: Back is offered while waiting', w.back, String(w.back));
+  check('practice: the two steps fold away while waiting', !w.steps && !w.presets && !w.terms, String(w.steps));
+  check('practice: nothing on the screen says the swap is done',
+    !/swap complete|completed/i.test([w.title, w.state, w.payLine, w.say].join(' ')) && !w.receipt,
+    [w.title, w.state].join(' | '));
+  await page.screenshot({ path: path.join(SHOTS, 'v51-practice-paying.png') });
+
+  await page.click('[data-act="payQrInv"]');
+  await page.waitForTimeout(350);
+  check('practice: the waiting screen can show the invoice as a QR', (await view(page)).qr);
+  await page.click('[data-act="payQrInv"]');
+  await page.waitForTimeout(200);
+
+  /* I paid starts the watch; the stand-in claim is what finishes it */
+  await page.click('#primary');
+  await page.waitForTimeout(350);
+  w = await view(page);
+  check('practice: I paid waits for the escrow instead of finishing',
+    w.phase === 'paid' && w.cta === 'Check chain' && !w.receipt, w.phase + ' / ' + w.cta);
+  check('practice: the screen says what it is waiting for',
+    /closes the swap when the chain says so/.test(w.payLine), w.payLine);
+  check('practice: a lock without a claim offers the claim, as in wallet', w.claimRow, String(w.claimRow));
+  await page.screenshot({ path: path.join(SHOTS, 'v51-practice-paid.png') });
+
+  await page.click('#primary');            /* Check chain, before the claim lands */
+  await page.waitForTimeout(350);
+  w = await view(page);
+  check('practice: Check chain on a lock alone finishes nothing',
+    w.phase === 'paid' && !w.receipt, w.phase);
+  check('practice: and says the escrow still holds it', /still holds/.test(w.toast), w.toast);
+
+  await page.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 10000 });
+  await page.waitForTimeout(300);
+  w = await view(page);
+  check('practice: the stand-in claim closes the swap', w.state === 'Completed' && w.cta === 'Done', w.state + '/' + w.cta);
   check('practice: the receipt shows both sides and the address',
     w.receipt && w.rc[0] === '50,000 sats' && /^[\d,.]+ USDT$/.test(w.rc[1]) && w.rc[2] === sent.addr.toLowerCase(),
     w.rc.join(' | '));
+  check('practice: the receipt says it was a rehearsal', /^Practice · simulated$/.test(w.rcNet), w.rcNet);
   check('practice: the sentence names what arrived', /You received [\d,.]+ USDT\./.test(w.say), w.say);
   check('practice: the steps fold away once settled', !w.steps && !w.presets && !w.terms, String(w.steps));
   check('practice: a rehearsal adds nothing to Recent', !w.history && w.rows === 0, String(w.rows));
-  await page.screenshot({ path: path.join(SHOTS, 'v43-done.png') });
+  await page.screenshot({ path: path.join(SHOTS, 'v51-done.png') });
 
   /* the settled state is a real swap record, not just a label */
   const settled = await page.evaluate(() => {
@@ -745,7 +805,24 @@ const view = (pg) => pg.evaluate(() => {
   check('flip: then the invoice makes Approve ready', (await view(p2)).ready === '1');
 
   await p2.click('#primary');
-  await p2.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await p2.waitForFunction(() => document.body.dataset.phase === 'locking', null, { timeout: 8000 });
+  await p2.waitForTimeout(200);
+  w = await view(p2);
+  check('flip: the USDT side is asked to lock first, as in wallet',
+    w.title === 'Lock your USDT' && w.cta === 'Check chain' && !w.receipt, w.title + ' / ' + w.cta);
+  check('flip: the lock call is on screen to copy or open, even in a rehearsal',
+    w.payCopyCall && String(w.callLink).startsWith('ethereum:'), String(w.callLink).slice(0, 34) + '…');
+  check('flip: the chain bar says nothing is locked yet',
+    w.chainRow && /nothing locked yet/.test(w.chainTxt), w.chainTxt);
+  await p2.screenshot({ path: path.join(SHOTS, 'v51-practice-lock.png') });
+
+  await p2.waitForFunction(() => document.body.dataset.phase === 'paid', null, { timeout: 8000 });
+  await p2.waitForTimeout(200);
+  w = await view(p2);
+  check('flip: the stand-in lock lands and the screen says the USDT is locked',
+    w.phase === 'paid' && w.title === 'Your USDT is locked', w.phase + ' / ' + w.title);
+
+  await p2.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 10000 });
   await p2.waitForTimeout(250);
   w = await view(p2);
   check('flip: the USDT side completes and names the bitcoin received',
@@ -842,7 +919,7 @@ const view = (pg) => pg.evaluate(() => {
   check('join: the invoice on the pinned hash passes', (await view(other)).ready === '1',
     (await view(other)).gate + ' · ' + (await view(other)).say);
   await other.click('#primary');
-  await other.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await other.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 15000 });
   await other.waitForTimeout(300);
   const otherDone = await other.evaluate(() => ({
     H: window.CLEANSWAP.state.H, id: window.CLEANSWAP.state.id,
@@ -850,7 +927,10 @@ const view = (pg) => pg.evaluate(() => {
   }));
   const makerDone = await p3.evaluate(() => ({ H: window.CLEANSWAP.state.H, id: window.CLEANSWAP.state.id }));
   await p3.click('#primary');
-  await p3.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await p3.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 8000 });
+  await p3.waitForTimeout(200);
+  await p3.click('#primary');            /* I paid */
+  await p3.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 15000 });
   const makerSettled = await p3.evaluate(() => ({ H: window.CLEANSWAP.state.H, id: window.CLEANSWAP.state.id }));
   check('join: both phones settle on the same hashlock',
     otherDone.H.toLowerCase() === makerSettled.H.toLowerCase(), String(otherDone.H).slice(0, 12) + '…');
@@ -996,7 +1076,10 @@ const view = (pg) => pg.evaluate(() => {
     await p7.evaluate(() => window.CLEANSWAP.readInvoice(document.getElementById('invIn').value).basis === 'offer'));
 
   await p7.click('#primary');
-  await p7.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await p7.waitForFunction(() => document.body.dataset.phase === 'paying', null, { timeout: 8000 });
+  await p7.waitForTimeout(200);
+  await p7.click('#primary');            /* I paid */
+  await p7.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 15000 });
   await p7.waitForTimeout(400);
   const offerSettled = await p7.evaluate(() => ({
     basis: window.CLEANSWAP.state.basis,

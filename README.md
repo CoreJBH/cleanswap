@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-363%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-387%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.5.0" src="https://img.shields.io/badge/android-0.5.0-0f9d6e">
+  <img alt="android 0.5.1" src="https://img.shields.io/badge/android-0.5.1-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -30,7 +30,13 @@ same 32-byte secret.
 the app no longer believes the phone: the escrow is read over public JSON-RPC, and the swap only
 closes when the contract says the USDT is locked for these terms and then claimed.
 
-## What `v0.5.0` does
+`v0.5.1` makes **Practice walk that same road**: `Approve` no longer jumps to a finished swap. A
+rehearsal parks on the same **Waiting for payment** screen, with the same invoice hand-off, the same
+`Check chain` and `I paid`, and closes only when the stand-in escrow says the USDT was claimed. The
+two modes differ in exactly two things: `Sample` beside the two inputs, and a stand-in escrow on the
+phone instead of a deployed one (so a rehearsal is never written to Recent).
+
+## What `v0.5.1` does
 
 * **The same three steps as ever.** `1 Partner's Lightning invoice` (an `lnbc...` invoice or an
   `lno1...` offer the other side wants paid) -> `2 Your USDT address` (the `0x...` that receives the
@@ -52,11 +58,14 @@ closes when the contract says the USDT is locked for these terms and then claime
   locked yet / holds your X USDT until the swap closes or the window ends / paid out / sent back /
   not the agreed swap. A record that disagrees with the terms on screen is refused, not guessed
   about.
-* **Nothing completes on a tap.** In Wallet mode `Approve` is refused outright while the USDT is not
-  in the escrow; once the chain says `locked`, the screen waits for the bitcoin payment; `I paid`
-  starts a watch on the escrow (12 s poll) and **nothing** - not `I paid`, not `Check chain`, not a
-  reload - closes the swap before the contract says `claimed`. A refunded record closes it as
-  refunded, and the receipt says so.
+* **Nothing completes on a tap - in either mode.** In Wallet mode `Approve` is refused outright
+  while the USDT is not in the escrow; once the chain says `locked`, the screen waits for the
+  bitcoin payment; `I paid` starts a watch on the escrow (12 s poll) and **nothing** - not
+  `I paid`, not `Check chain`, not a reload - closes the swap before the contract says `claimed`.
+  A refunded record closes it as refunded, and the receipt says so. Practice runs the same
+  sequence: `Approve` -> **Waiting for payment** -> `I paid` -> the same reading -> **Swap
+  complete**, against the stand-in escrow, at rehearsal speed (a lock and a claim land a moment
+  after the tap rather than waiting for a partner).
 * **Signing stays in your wallet.** The app holds no key and never asks for one. With a wallet in
   the page (`window.ethereum`, EIP-1193 - an injected browser wallet) the approve/lock/claim/refund
   calls are sent from it, the USDT allowance is checked and an `approve` is requested only when it
@@ -83,7 +92,7 @@ closes when the contract says the USDT is locked for these terms and then claime
 
 | Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
-| 1 | the Lightning invoice or offer - `Open in wallet`, `QR` (Wallet), `Sample` (Practice) | bech32 checksum, `payment_hash` present (or a well-formed `lno1...` offer, which binds the swap to itself), amount equal to the swap, not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned |
+| 1 | the Lightning invoice or offer - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, `payment_hash` present (or a well-formed `lno1...` offer, which binds the swap to itself), amount equal to the swap, not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned |
 | 2 | the USDT address | an Arbitrum `0x` address with exactly 40 hex characters, not the zero address. In Wallet mode a TRON `T` address is decoded and checked, then refused with the reason: this swap pays on Arbitrum |
 | 3 | `Approve` | the two are bound to one `H`, and in Wallet mode the chain is asked before anything else happens: endpoint alive, contract deployed, escrow state for `swapId` |
 
@@ -123,8 +132,10 @@ Completed swaps land as one-line entries under **Recent**, and the receipt names
 settled on (`Arbitrum Sepolia · paid on chain`).
 
 **Practice mode** runs the identical screen, gates and readings against an in-page stand-in for the
-escrow: the same `swaps(id)` record shape, the same classifier, the same sentences. The receipt says
-`Practice · simulated`. A rehearsal is never written to Recent.
+escrow: the same `swaps(id)` record shape, the same classifier, the same sentences, the same
+**Waiting for payment** / `I paid` / **Paid, waiting for the USDT** screens. The chain line at the
+top names Arbitrum Sepolia and the stand-in escrow, so nothing has to be deployed to rehearse. The
+receipt says `Practice · simulated`. A rehearsal is never written to Recent.
 
 ---
 
@@ -225,7 +236,7 @@ test/
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.5.0, versionCode 7)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.5.1, versionCode 8)
 ```
 
 ## Build
@@ -246,7 +257,7 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers, the `cleanswap:` code round trip (chain and escrow included, still QR-sized), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded | **220/220 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers, the `cleanswap:` code round trip (chain and escrow included, still QR-sized), Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded | **246/246 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **32/32 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder | **45/45 pass** |
@@ -257,7 +268,7 @@ bash test/run-all.sh      # build + English + headless + EVM + QR + invoices
 ```
 
 Screenshots of the form, the wallet flow (waiting, paid, settled, refunded), the setup panel, the
-blocked form, the lock hand-off and the code QR are written to `shots/v50-*.png` by the headless
+blocked form, the lock hand-off and the code QR are written to `shots/v5*-*.png` by the headless
 suite.
 
 ## Deploying the escrow (once per network)
@@ -274,7 +285,7 @@ suite.
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.5.0`, `versionCode 7`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.5.1`, `versionCode 8`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and now `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
