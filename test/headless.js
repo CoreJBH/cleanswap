@@ -517,6 +517,10 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   check('wallet: the row is wallet, copy and QR only', walletUi.row.join('/') === 'Open in wallet/Copy/QR', walletUi.row.join(' · '));
   check('wallet: no WebLN button and no webln handler',
     (await page.$('#btnWebln')) === null && (await page.$$('[data-act="webln"]')).length === 0);
+  await page.click('#walletLink');
+  await page.waitForTimeout(200);
+  check('wallet: an empty link does not leave the app',
+    /Paste the offer or invoice first/.test(await page.textContent('#toast')), await page.textContent('#toast'));
   await page.fill('#invIn', await page.evaluate(() => {
     const s = window.CLEANSWAP.state;
     return window.CLEANSWAP.mintOffer({ paymentHash: s.H, sats: s.sats, expiry: 3600 });

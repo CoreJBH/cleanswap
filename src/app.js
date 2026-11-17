@@ -1346,6 +1346,10 @@
     var fn = ACT[b.dataset.act];
     if (fn) { e.preventDefault(); fn(b); }
   });
+  // A blank lightning: link would open a wallet on nothing: say what is missing instead.
+  $('walletLink').addEventListener('click', function (e) {
+    if (!currentInvoice()) { e.preventDefault(); toast('Paste the offer or invoice first'); }
+  });
   ['invIn', 'receiptIn', 'proofIn', 'preIn', 'swapIn'].forEach(function (id) {
     $(id).addEventListener('input', function () {
       if (id === 'invIn') $('walletLink').setAttribute('href', 'lightning:' + currentInvoice());
