@@ -90,6 +90,7 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
 
   const html = await page.content();
   check('content: no browser-extension wallet (window.ethereum) anywhere', !/window\.ethereum|eth_requestAccounts|ethereum\.request/i.test(html));
+  check('content: no WebLN hand-off left (installed wallet apps only)', !/webln/i.test(html));
   check('content: contract source embedded (sha256 hashlock)', /sha256\(abi\.encodePacked\(preimage\)\)/.test(html));
   check('content: no remote scripts or styles', !/<script[^>]+src=/i.test(html) && !/<link[^>]+rel="stylesheet"/i.test(html));
   check('content: no Hangul in the built page', !HANGUL.test(html), (html.match(HANGUL) || []).length + ' chars');
@@ -508,10 +509,14 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   const walletUi = await page.evaluate(() => ({
     receipt: !document.getElementById('receiptIn').hidden,
     share: document.getElementById('shareRow').hidden,
-    open: document.getElementById('walletLink').getAttribute('href').slice(0, 10)
+    open: document.getElementById('walletLink').getAttribute('href').slice(0, 10),
+    row: Array.from(document.querySelectorAll('#wRow .btn')).map((b) => b.textContent.trim())
   }));
   check('wallet: receipt field is shown', walletUi.receipt);
   check('wallet: share link hidden (this is a real hand-off)', walletUi.share);
+  check('wallet: the row is wallet, copy and QR only', walletUi.row.join('/') === 'Open in wallet/Copy/QR', walletUi.row.join(' · '));
+  check('wallet: no WebLN button and no webln handler',
+    (await page.$('#btnWebln')) === null && (await page.$$('[data-act="webln"]')).length === 0);
   await page.fill('#invIn', await page.evaluate(() => {
     const s = window.CLEANSWAP.state;
     return window.CLEANSWAP.mintOffer({ paymentHash: s.H, sats: s.sats, expiry: 3600 });
@@ -519,6 +524,9 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   await page.waitForTimeout(300);
   const walletHref = await page.getAttribute('#walletLink', 'href');
   check('wallet: deep link carries the pasted offer', walletHref.startsWith('lightning:lno1'), walletHref.slice(0, 28) + '…');
+  await page.click('[data-act="copyInv"]');
+  await page.waitForTimeout(200);
+  check('wallet: copy hands the invoice over', /Invoice copied/.test(await page.textContent('#toast')), await page.textContent('#toast'));
   await page.click('[data-act="qrIn"]');
   await page.waitForTimeout(300);
   const walletQr = await page.evaluate(() => {
@@ -596,6 +604,9 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   check('usdt start: an offer was minted and pasted in one step',
     /^lno1/.test(usdtOpen.inv) && usdtOpen.out === usdtOpen.inv, usdtOpen.out.slice(0, 20) + '…');
   check('usdt start: step 1 is the offer check', usdtOpen.step === 'Verify the offer', usdtOpen.step);
+  await page.click('[data-act="copyIssue"]');
+  await page.waitForTimeout(200);
+  check('usdt start: copy hands the offer over', /Invoice copied/.test(await page.textContent('#toast')), await page.textContent('#toast'));
   check('usdt start: the minted offer already passes the gate', /hashlock and 50,000 sats/.test(usdtOpen.gate), usdtOpen.gate);
 
   await page.waitForTimeout(400);

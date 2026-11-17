@@ -110,8 +110,8 @@
 
         <div class="wrow" id="wRow" hidden>
           <a class="btn ghost" id="walletLink" href="#">Open in wallet</a>
+          <button class="btn ghost" data-act="copyInv" type="button">Copy</button>
           <button class="btn ghost" data-act="qrIn" type="button">QR</button>
-          <button class="btn ghost" data-act="webln" id="btnWebln" type="button">Pay with WebLN</button>
         </div>
         <div class="qrbox" id="qrInBox"></div>
 
@@ -129,6 +129,7 @@
       <div class="panel" id="pIssue" hidden>
         <code class="out mono" id="issueOut">—</code>
         <div class="tools">
+          <button class="btn ghost sm" data-act="copyIssue" type="button">Copy</button>
           <button class="btn ghost sm" data-act="qrOut" type="button">QR</button>
         </div>
         <div class="qrbox" id="qrOutBox"></div>

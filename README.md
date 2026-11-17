@@ -63,8 +63,12 @@ USDT side: same hashlock, no preimage, and its own three steps.
 The simulated counterparty is replaced by a real one: paste the offer or invoice you were sent,
 open it in BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green through the standard
 `lightning:` deep link, and confirm the lock with the `payment_hash` your wallet shows for that
-payment. A receipt for any other hash does not unlock the step. With WebLN available the app pays
-through the wallet and checks the returned preimage against `H` itself.
+payment. A receipt for any other hash does not unlock the step.
+
+The wallet connection is only that hand-off: with the offer in place the row offers **Open in
+wallet** (the `lightning:` deep link to the installed wallet app), **Copy** (the same invoice as
+text) and **QR** (the same invoice for another phone to scan). There is no WebLN and no browser
+extension: the app never asks for a key, and nothing is paid without the wallet's own receipt.
 
 ---
 
@@ -206,6 +210,12 @@ Screenshots of the idle, locked, settled, expired, USDT-side and desktop states 
 CLEANSWAP`, `android:screenOrientation="user"`, `#07130d` status/nav bars, launcher icons generated
 from `icon-clean-1.png`). Build it with `gradle assembleDebug` after staging `dist/cleanswap.html`
 into `app/src/main/assets/index.html`.
+
+The shell owns the wallet hand-off: `lightning:` and `bitcoin:` links (any scheme the WebView
+cannot render) become an `ACTION_VIEW` intent, so **Open in wallet** opens the installed wallet
+instead of failing with `net::ERR_UNKNOWN_URL_SCHEME`. A phone with no such app gets a toast
+rather than a crash, and the manifest declares a `<queries>` entry for both schemes so Android
+11+ package visibility does not hide the wallet.
 
 GitHub Actions builds `cleanswap.apk` on every push to `main` and on `v*` tags
 (`.github/workflows/apk.yml`); the same file is kept under `android/ci/build-apk.yml` for reference.

@@ -58,7 +58,6 @@
     counterInv: '', altInv: '', inv: '', invDec: null,
     btcState: 'none', usdtState: 'none',
     log: [],
-    webln: null,
     sealOpen: false,
     usdtProof: '',
     gate: null
@@ -1290,39 +1289,19 @@
       refreshGate();
     },
     qrOut: function () { showQr('qrOutBox', S.inv ? 'lightning:' + S.inv : '', 'Scan from the other side'); },
+    copyIssue: function () {
+      if (!S.inv) { toast('Nothing to copy yet'); return; }
+      copy(S.inv, 'Invoice copied');
+    },
+    copyInv: function () {
+      var inv = currentInvoice();
+      if (!inv) { toast('Paste the offer or invoice first'); return; }
+      copy(inv, 'Invoice copied');
+    },
     qrIn: function () {
       var inv = currentInvoice();
       if (!inv) { toast('Paste the offer or invoice first'); return; }
       showQr('qrInBox', 'lightning:' + inv, 'Scan from a Lightning wallet');
-    },
-    webln: function () {
-      if (!window.webln) { log('FAIL', 'window.webln is absent', 'c-err'); render(); toast('No WebLN wallet in this browser'); return; }
-      Promise.resolve(window.webln.enable())
-        .then(function () { return window.webln.getInfo ? window.webln.getInfo() : {}; })
-        .then(function (info) {
-          S.webln = { node: (info && info.node && info.node.alias) || 'webln' };
-          log('WEBLN', 'node ' + S.webln.node + ' connected');
-          render();
-          var inv = currentInvoice();
-          if (!inv || !window.webln.sendPayment) { toast('Wallet connected'); return null; }
-          return window.webln.sendPayment(inv).then(function (res) {
-            var pre = res && res.preimage ? '0x' + normHex(res.preimage) : '';
-            if (!pre) { log('WEBLN', 'payment sent but no preimage returned'); toast('Wallet connected'); return; }
-            return sha256Hex(pre).then(function (h) {
-              if (normHex('0x' + h) === normHex(S.H)) {
-                $('receiptIn').value = '0x' + h;
-                log('VERIFY', 'WebLN preimage hashes to H \u2713');
-                toast('Payment verified');
-              } else {
-                log('BLOCK', 'WebLN preimage does not hash to H', 'c-err');
-                toast('That preimage does not match H');
-              }
-              render();
-              refreshGate();
-            });
-          });
-        })
-        .catch(function (e) { toast(e && e.message ? e.message : 'WebLN refused the connection'); });
     },
     copyData: function () {
       var d = nextCalldata();
