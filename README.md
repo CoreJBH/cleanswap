@@ -10,7 +10,7 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-253%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-255%20passing-0f9d6e">
   <img alt="android 0.4.2" src="https://img.shields.io/badge/android-0.4.2-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
@@ -206,7 +206,7 @@ tools/
   qr-check.js                dumps QR matrices for cross-checking
   docshots.js                regenerates docs/preview.png and docs/wallet.png
 test/
-  headless.js                Playwright end-to-end suite (118 checks)
+  headless.js                Playwright end-to-end suite (120 checks)
   contract-evm.py            contract behaviour on a real EVM + app calldata (26 checks)
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder (45 checks)
@@ -234,7 +234,7 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright, 360x780 / 390x844 / 1280x800) | The three steps and their numbers, the same screen in Practice and Wallet with `Sample` only in Practice, the flip that reverses the steps and swaps `Open in wallet` for `Copy`, invoice refusals (broken checksum, expired, other amount, an offer instead of an invoice, a hash that is not this swap's), address refusals (short, zero, empty), `Approve` staying inert with a field left empty, the `cleanswap:` code (shape, round trip, no path or host in it, QR equal in substance, two phones settling on the same hashlock *and* the same swap id), the QR clearing the Approve bar at 360x780, the action bar never covering the last line, no technical word or Hangul on screen, and zero horizontal overflow at three widths | **118/118 pass** |
+| `test/headless.js` (Playwright, 360x780 / 390x844 / 1280x800) | The three steps and their numbers, the same screen in Practice and Wallet with `Sample` only in Practice, the flip that reverses the steps and swaps `Open in wallet` for `Copy`, invoice refusals (broken checksum, expired, other amount, an offer instead of an invoice, a hash that is not this swap's), address refusals (short, zero, empty), `Approve` staying inert with a field left empty, the `cleanswap:` code (shape, round trip, no path or host in it, QR equal in substance, two phones settling on the same hashlock *and* the same swap id), the QR clearing the Approve bar at 360x780, the action bar never covering the last line, no technical word or Hangul on screen, and zero horizontal overflow at three widths | **120/120 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: faucet/approve, `lock` escrows and debits, swap record and `computeSwapId` agree, wrong preimage reverts, correct preimage pays the receiver, `Claimed` carries `R`, double claim reverts, refund before/after the timelock, `Refunded` emitted — and the UI's `lock()` calldata decodes to the swap fields with the right keccak selector | **26/26 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads, including BOLT12 lengths at versions 12–13, matches `python-qrcode` exactly | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder: checksum, `payment_hash`, amount (including 1 sat and 250k sats), 35-bit timestamp, expiry tag, 65-byte signature slot, optional description, and a length that still fits a QR | **45/45 pass** |

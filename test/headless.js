@@ -45,6 +45,35 @@ function check(name, ok, detail) {
   console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail === undefined ? '' : '   [' + detail + ']'));
 }
 
+/* A BOLT12 invoice string (lni...) built here, not by the app: the amount in TLV
+   170 and the payment hash in the standard TLV 168, bech32 without a checksum. */
+const B32C = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function fiveBits(bytes) {
+  const out = []; let acc = 0, bits = 0;
+  for (const b of bytes) {
+    acc = (acc << 8) | b; bits += 8;
+    while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); }
+  }
+  if (bits > 0) out.push((acc << (5 - bits)) & 31);
+  return out;
+}
+function bigsize(n) {
+  if (n < 0xfd) return [n];
+  if (n <= 0xffff) return [0xfd, (n >> 8) & 255, n & 255];
+  return [0xfe, (n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+}
+function tlv(t, v) { return [...bigsize(t), ...bigsize(v.length), ...v]; }
+function u64(n) { const o = []; for (let k = 7; k >= 0; k--) o.push(Number((BigInt(n) >> BigInt(8 * k)) & 255n)); return o; }
+function bolt12Invoice(hashHex, sats, created, expiry) {
+  const bytes = [
+    ...tlv(168, [...Buffer.from(hashHex.slice(2), 'hex')]),
+    ...tlv(170, u64(sats * 1000)),
+    ...tlv(164, u64(created)),
+    ...tlv(166, u64(expiry))
+  ];
+  return 'lni1' + fiveBits(bytes).map(i => B32C[i]).join('');
+}
+
 const BOLT11_SAMPLE_HASH = '0x' + '11'.repeat(32);
 const BOLT12_NODE = '02d40d722b8fa32f8c588757c481462b27dadfece667ea0c662daa0e6d8a8b595e';
 const BOLT12_DESC = 'CleanSwap - BTC for USDT';
@@ -460,6 +489,19 @@ const view = (pg) => pg.evaluate(() => {
   check('gate: a short address is refused', gates.short.code === 'format' && /40/.test(gates.short.msg), gates.short.msg);
   check('gate: an empty address is refused in plain words', gates.empty.code === 'empty' && !JARGON.test(gates.empty.msg), gates.empty.msg);
   check('gate: a full 0x address passes and is lower-cased', gates.good.ok && gates.good.address === '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71', gates.good.address);
+
+  /* a BOLT12 invoice (lni...) is read the same way: TLV 168 hash, TLV 170 amount */
+  const nowS = Math.floor(Date.now() / 1000);
+  const lni = bolt12Invoice('0x' + '5a'.repeat(32), 50000, nowS, 3600);
+  const lniOld = bolt12Invoice('0x' + '5a'.repeat(32), 50000, nowS - 7200, 600);
+  const lniOut = await p4.evaluate(({ a, b }) => ({
+    live: window.CLEANSWAP.readInvoice(a),
+    dead: window.CLEANSWAP.readInvoice(b)
+  }), { a: lni, b: lniOld });
+  check('gate: a BOLT12 invoice is accepted, with its own payment hash',
+    lniOut.live.ok && lniOut.live.H === '0x' + '5a'.repeat(32), lniOut.live.code + ' ' + lniOut.live.msg);
+  check('gate: a BOLT12 invoice over the amount is refused',
+    lniOut.dead.code === 'expired', lniOut.dead.code + ' · ' + lniOut.dead.msg);
 
   /* Approve with nothing in it must not move */
   await p4.click('#primary');
