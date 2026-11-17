@@ -66,7 +66,7 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   await page.goto(URL, { waitUntil: 'load' });
   await page.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
 
-  const view = () => page.evaluate(() => ({
+  const view = (pg) => (pg || page).evaluate(() => ({
     phase: document.body.dataset.phase,
     mode: document.body.dataset.mode,
     role: document.body.dataset.role,
@@ -86,6 +86,23 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
     rows: document.querySelectorAll('#histList .hist-item').length,
     on: Array.from(document.querySelectorAll('#presets button.on')).map(b => b.textContent.trim()),
     rate: document.getElementById('rateTxt').textContent,
+    back: !document.getElementById('stepHead').hidden,
+    backLbl: document.getElementById('backBtn').textContent.trim(),
+    flow: !document.getElementById('flow').hidden,
+    steps: ['stepShare', 'stepPaste', 'stepPay'].map(id => document.getElementById(id).dataset.s),
+    nums: Array.from(document.querySelectorAll('.step-h .n')).map(b => b.textContent.trim()),
+    track: !document.getElementById('track').hidden,
+    marks: ['tr1', 'tr2', 'tr3'].map(id => document.getElementById(id).dataset.s),
+    trm: ['tr1', 'tr2', 'tr3'].map(id => document.querySelector('#' + id + ' .tr-mark').textContent.trim()),
+    trs: ['tr1s', 'tr2s', 'tr3s'].map(id => document.getElementById(id).textContent),
+    trt: ['tr1', 'tr2', 'tr3'].map(id => document.querySelector('#' + id + ' .tr-t').textContent),
+    note: document.getElementById('trackNote').textContent,
+    sim: !document.getElementById('simRow').hidden,
+    sheet: !document.getElementById('sheet').hidden,
+    sheetT: document.getElementById('sheetTitle').textContent,
+    qr: !!document.querySelector('#qrBox svg'),
+    href: document.getElementById('walletLink').getAttribute('href'),
+    toast: document.getElementById('toast').textContent,
     gate: window.CLEANSWAP.state.gate && window.CLEANSWAP.state.gate.code
   }));
 
@@ -389,9 +406,11 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   await page.waitForFunction(() => document.body.dataset.phase === 'open', null, { timeout: 5000 });
   await page.waitForTimeout(250);
   w = await view();
-  check('wallet: one paste field, one wallet row, one big button',
-    w.paste && w.pay && !w.invite && w.cta === 'I paid', [w.paste, w.pay, w.invite, w.cta].join('/'));
-  check('wallet: the first sentence asks for the invoice', /Paste the invoice/.test(w.say), w.say);
+  check('wallet: the numbered path shows share, paste and pay',
+    w.flow && w.invite && w.paste && w.pay && w.cta === 'I paid', [w.flow, w.invite, w.paste, w.pay, w.cta].join('/'));
+  check('wallet: the three steps are numbered 1-2-3 and start at the first',
+    w.nums.join(',') === '1,2,3' && w.steps.join(',') === 'now,now,next', w.nums.join(',') + ' / ' + w.steps.join(','));
+  check('wallet: the first sentence asks to share, then paste', /Share the link first, then paste the invoice/.test(w.say), w.say);
   check('wallet: the button waits for it', w.ready === '0', w.ready);
   await page.screenshot({ path: path.join(SHOTS, 'v4-wallet.png') });
 
@@ -413,6 +432,14 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   check('wallet: the deep link carries the invoice',
     (await page.getAttribute('#walletLink', 'href')).startsWith('lightning:lno1'),
     (await page.getAttribute('#walletLink', 'href')).slice(0, 24) + '…');
+  const autoQr = await page.evaluate(() => {
+    const svg = document.querySelector('#qrBox svg');
+    return svg ? (svg.innerHTML.match(/M\d+ \d+h1v1h-1z/g) || []).length : 0;
+  });
+  check('wallet: a good invoice opens its QR on the spot', autoQr > 100, autoQr + ' modules');
+  await page.click('[data-act="qrPay"]');
+  await page.waitForTimeout(200);
+  check('wallet: the QR button folds the QR away again', !(await page.evaluate(() => !!document.querySelector('#qrBox svg'))));
   await page.click('[data-act="qrPay"]');
   await page.waitForTimeout(250);
   const payQr = await page.evaluate(() => {
@@ -530,6 +557,233 @@ const BOLT12_DESC = 'CleanSwap - BTC for USDT';
   await taker.close();
 
   check('run: still no page or console errors', errors.length === 0, errors.join(' | '));
+
+  /* ----------------------- 10. back, the step tracker, partner cancel --- */
+  async function freshPage() {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+    const p = await c.newPage();
+    const errs = [];
+    p.on('pageerror', e => errs.push('pageerror: ' + e.message));
+    p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
+    await p.goto(URL, { waitUntil: 'load' });
+    await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+    await p.waitForTimeout(250);
+    return { c, p, errs };
+  }
+
+  const A = await freshPage();
+  const p2 = A.p;
+  let v2 = await view(p2);
+  check('back: no Back button on the start screen', !v2.back);
+  check('track: hidden before a swap starts', !v2.track);
+
+  await p2.click('#primary');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'open', null, { timeout: 5000 });
+  await p2.waitForTimeout(320);
+  v2 = await view(p2);
+  check('back: every step after Start swap carries a Back button', v2.back && /Back/.test(v2.backLbl), v2.backLbl);
+  check('track: practice shows the three stages',
+    v2.track && v2.trt.join('|') === 'Lock your side|Partner locks|Settle at once', v2.trt.join('|'));
+  check('track: the first stage is the one in hand', v2.marks.join(',') === 'now,next,next', v2.marks.join(','));
+  check('track: it names the amount that goes in', /50,000 sats goes in first/.test(v2.trs[0]), v2.trs[0]);
+  check('track: it explains why nothing can move yet', /Nothing moves until both sides are locked/.test(v2.note), v2.note);
+  check('practice: no partner-cancel helper before anything is locked', !v2.sim);
+  await p2.screenshot({ path: path.join(SHOTS, 'v41-open.png') });
+
+  /* nothing locked yet: Back returns at once, no question */
+  await p2.click('[data-act="back"]');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
+  await p2.waitForTimeout(200);
+  v2 = await view(p2);
+  check('back: from an open, empty swap it returns to the amount screen',
+    !v2.back && !v2.track && v2.cta === 'Start swap', v2.cta + '/' + v2.back);
+
+  await p2.click('#primary');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'open', null, { timeout: 5000 });
+  await p2.click('#primary');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'btc', null, { timeout: 5000 });
+  await p2.waitForTimeout(320);
+  v2 = await view(p2);
+  check('track: the first stage is ticked with its amount',
+    v2.marks.join(',') === 'done,now,next' && v2.trm[0] === '\u2713' && /50,000 sats is locked/.test(v2.trs[0]),
+    v2.marks.join(',') + ' ' + v2.trm.join(',') + ' ' + v2.trs[0]);
+  check('track: the partner stage waits for the USDT', /Waiting for [\d,.]+ USDT/.test(v2.trs[1]), v2.trs[1]);
+  check('track: the last stage explains the one-tap settle', /Both sides locked, then swapped together/.test(v2.trs[2]), v2.trs[2]);
+  check('practice: the partner-cancel helper appears once something is locked', v2.sim);
+  await p2.screenshot({ path: path.join(SHOTS, 'v41-half.png') });
+
+  /* something is locked: Back asks first */
+  await p2.click('[data-act="back"]');
+  await p2.waitForTimeout(250);
+  v2 = await view(p2);
+  check('back: with money locked it asks before leaving',
+    v2.sheet && /Leave this swap/.test(v2.sheetT), v2.sheetT);
+  const sheetBody = await p2.textContent('#sheetBody');
+  check('back: the question says the locked money comes back', /comes back when the time runs out/.test(sheetBody), sheetBody);
+  await p2.screenshot({ path: path.join(SHOTS, 'v41-sheet.png') });
+  await p2.click('[data-act="stay"]');
+  await p2.waitForTimeout(220);
+  v2 = await view(p2);
+  check('back: Stay leaves the swap exactly as it was',
+    !v2.sheet && (await p2.evaluate(() => document.body.dataset.phase)) === 'btc', String(v2.sheet));
+  await p2.click('[data-act="back"]');
+  await p2.waitForTimeout(220);
+  await p2.click('[data-act="leave"]');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'idle', null, { timeout: 5000 });
+  await p2.waitForTimeout(220);
+  check('back: Leave returns to the start with nothing left behind',
+    await p2.evaluate(() => !window.CLEANSWAP.state.H && !window.CLEANSWAP.state.R && document.getElementById('sheet').hidden));
+
+  /* the partner walks away: the money comes back */
+  await p2.click('#primary');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'open', null, { timeout: 5000 });
+  await p2.click('#primary');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'btc', null, { timeout: 5000 });
+  await p2.waitForTimeout(250);
+  await p2.click('[data-act="partnerCancel"]');
+  await p2.waitForFunction(() => document.body.dataset.phase === 'refunded', null, { timeout: 5000 });
+  await p2.waitForTimeout(300);
+  v2 = await view(p2);
+  check('cancel: the partner walking away ends the swap as Refunded', v2.state === 'Refunded', v2.state);
+  check('cancel: the screen says the money came back',
+    /walked away/.test(v2.say) && /came back/.test(v2.say), v2.say);
+  check('cancel: the locked leg is marked returned, nothing stays held',
+    await p2.evaluate(() => { const s = window.CLEANSWAP.state; return s.btcState === 'refunded' && s.usdtState === 'none'; }));
+  check('cancel: the tracker is gone on a refund', !v2.track && !v2.sim);
+  check('cancel: no Back button on a closed swap', !v2.back);
+  await p2.screenshot({ path: path.join(SHOTS, 'v41-cancel.png') });
+  check('run: no page errors on the practice interactions', A.errs.length === 0, A.errs.join(' | '));
+  await A.c.close();
+
+  /* --------------------- 11. wallet path: steps, QR, real wallet codes --- */
+  const B = await freshPage();
+  const p3 = B.p;
+  await p3.click('#modeWallet');
+  await p3.waitForTimeout(200);
+  await p3.click('#primary');
+  await p3.waitForFunction(() => document.body.dataset.phase === 'open', null, { timeout: 5000 });
+  await p3.waitForTimeout(300);
+  let v3 = await view(p3);
+  check('wallet flow: the numbered path is on screen', v3.flow && v3.invite && v3.paste && v3.pay, [v3.flow, v3.invite, v3.paste, v3.pay].join('/'));
+  check('wallet flow: steps are numbered and the third waits',
+    v3.nums.join(',') === '1,2,3' && v3.steps.join(',') === 'now,now,next', v3.nums.join(',') + ' ' + v3.steps.join(','));
+  check('wallet flow: the share step offers Copy link and QR',
+    await p3.evaluate(() => !!document.querySelector('#stepShare [data-act="copyInvite"]') && !!document.querySelector('#stepShare [data-act="qrInvite"]')));
+
+  /* a dead tap must say what is missing, right on the screen */
+  await p3.click('#walletLink');
+  await p3.waitForTimeout(250);
+  v3 = await view(p3);
+  check('wallet flow: Open in wallet with no invoice explains itself',
+    /Paste the invoice first/.test(v3.toast) && v3.href === '#', v3.toast + ' · ' + v3.href);
+  await p3.click('[data-act="qrPay"]');
+  await p3.waitForTimeout(250);
+  check('wallet flow: QR with no invoice explains itself too',
+    /Paste the invoice first/.test((await view(p3)).toast) && !(await view(p3)).qr, (await view(p3)).toast);
+
+  /* a real wallet invoice: its payment hash becomes the swap's hashlock */
+  const R2 = '77'.repeat(32);
+  const H2 = '0x' + crypto.createHash('sha256').update(Buffer.from(R2, 'hex')).digest('hex');
+  const realInv = await p3.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 0, expiry: 3600 }), H2);
+  check('wallet invoice: the sample is a normal lnbc invoice', /^lnbc1/.test(realInv), realInv.slice(0, 12) + '…');
+  await p3.fill('#pasteIn', realInv);
+  await p3.waitForTimeout(400);
+  v3 = await view(p3);
+  const adopted = await p3.evaluate(() => ({ H: window.CLEANSWAP.state.H, R: window.CLEANSWAP.state.R, id: window.CLEANSWAP.state.id }));
+  check('wallet invoice: a real lnbc invoice is accepted', v3.gate === 'ok' && v3.ready === '1', v3.gate + '/' + v3.ready);
+  check('wallet invoice: its payment hash becomes the swap hashlock',
+    adopted.H === H2 && adopted.R === null, String(adopted.H).slice(0, 14) + '…');
+  check('wallet invoice: the swap id is rebuilt on the adopted hash', /^0x[0-9a-f]{64}$/.test(adopted.id));
+  check('wallet invoice: Open in wallet carries it at once',
+    v3.href === 'lightning:' + realInv, v3.href.slice(0, 22) + '…');
+  check('wallet invoice: its QR opens at once', v3.qr);
+  check('wallet flow: step 3 is the one in hand now', v3.steps.join(',') === 'done,done,now', v3.steps.join(','));
+  await p3.screenshot({ path: path.join(SHOTS, 'v41-wallet-real.png') });
+  await p3.click('[data-act="qrPay"]');
+  await p3.waitForTimeout(220);
+  check('wallet invoice: the QR button folds it away', !(await view(p3)).qr);
+  await p3.click('[data-act="qrPay"]');
+  await p3.waitForTimeout(220);
+  check('wallet invoice: and opens it again', (await view(p3)).qr);
+
+  /* nothing weak gets through: wrong amount, expired, garbage, a bare offer */
+  const wrongAmt = await p3.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 25000, expiry: 3600 }), H2);
+  await p3.fill('#pasteIn', wrongAmt);
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('wallet invoice: another amount is refused', v3.gate === 'amount' && v3.ready === '0', v3.gate + ' · ' + v3.say);
+  check('wallet invoice: the amount refusal names both amounts', /25,000 sats, not 50,000/.test(v3.say), v3.say);
+
+  const oldInv = await p3.evaluate(h => window.CLEANSWAP.mintInvoice({
+    paymentHash: h, sats: 0, expiry: 60, timestamp: Math.floor(Date.now() / 1000) - 600
+  }), H2);
+  await p3.fill('#pasteIn', oldInv);
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('wallet invoice: an expired invoice is refused', v3.gate === 'expired' && /expired/.test(v3.say), v3.gate + ' · ' + v3.say);
+
+  const broken = realInv.slice(0, realInv.length - 3) + 'xyz';
+  await p3.fill('#pasteIn', broken);
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('wallet invoice: a broken checksum is refused', v3.ready === '0' && /cannot be read/.test(v3.say), v3.gate + ' · ' + v3.say);
+
+  const bareOffer = await p3.evaluate(() => document.getElementById('sample-bolt12').textContent.trim());
+  await p3.fill('#pasteIn', bareOffer);
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('wallet invoice: an offer with no payment hash is refused, in plain words',
+    v3.ready === '0' && /offer, not an invoice/.test(v3.say), v3.gate + ' · ' + v3.say);
+
+  /* a good invoice again, then the whole swap on the adopted hash */
+  await p3.fill('#pasteIn', realInv);
+  await p3.waitForTimeout(300);
+  check('wallet invoice: the good invoice still passes after the bad ones', (await view(p3)).gate === 'ok');
+  await p3.click('#primary');
+  await p3.waitForFunction(() => document.body.dataset.phase === 'btc', null, { timeout: 5000 });
+  await p3.waitForTimeout(250);
+  const proof = await p3.evaluate(() => window.CLEANSWAP.escrowProof());
+  const lockDec = await p3.evaluate(pr => window.CLEANSWAP.readLockProof(pr), proof);
+  check('atomic: the USDT lock is encoded against the adopted hash',
+    !!lockDec && String(lockDec.hashlock).toLowerCase() === H2, lockDec && String(lockDec.hashlock).slice(0, 14) + '…');
+
+  const wrongProof = await p3.evaluate(() => window.CLEANSWAP.lockCalldata({
+    hashlock: '0x' + '99'.repeat(32),
+    timelock: window.CLEANSWAP.state.t2,
+    receiver: window.CLEANSWAP.EVM.btcSide,
+    token: window.CLEANSWAP.EVM.token,
+    amount: window.CLEANSWAP.usdtUnits()
+  }));
+  await p3.fill('#pasteIn', wrongProof);
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('atomic: a USDT lock on another hash is refused', v3.gate === 'mismatch' && v3.ready === '0', v3.gate + ' · ' + v3.say);
+
+  await p3.fill('#pasteIn', proof);
+  await p3.waitForTimeout(300);
+  check('atomic: the matching lock opens the last step', (await view(p3)).gate === 'ok');
+  await p3.click('#primary');
+  await p3.waitForFunction(() => document.body.dataset.phase === 'both', null, { timeout: 5000 });
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('atomic: with both sides in, the partner code is what remains',
+    v3.paste && /Paste the code|code your partner sent/i.test(v3.say), v3.say);
+  await p3.fill('#pasteIn', '88'.repeat(32));
+  await p3.waitForTimeout(300);
+  check('atomic: a code that does not hash to H does not settle',
+    (await view(p3)).ready === '0', (await view(p3)).gate);
+  await p3.fill('#pasteIn', R2);
+  await p3.waitForTimeout(300);
+  check('atomic: SHA256(partner code) === H opens the settle', (await view(p3)).ready === '1');
+  await p3.click('#primary');
+  await p3.waitForFunction(() => document.body.dataset.phase === 'settled', null, { timeout: 5000 });
+  await p3.waitForTimeout(300);
+  v3 = await view(p3);
+  check('atomic: the real-invoice swap settles on the adopted hash', v3.state === 'Completed', v3.state);
+  check('atomic: all three stages read done', v3.marks.join(',') === 'done,done,done', v3.marks.join(','));
+  check('run: no page errors on the wallet interactions', B.errs.length === 0, B.errs.join(' | '));
+  await p3.screenshot({ path: path.join(SHOTS, 'v41-wallet-done.png') });
+  await B.c.close();
 
   /* --------------------------------------------- 10. layout and the bar --- */
   async function layout(width, height, label) {

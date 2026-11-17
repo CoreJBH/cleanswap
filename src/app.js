@@ -63,6 +63,8 @@
     log: [],
     sealOpen: false,
     usdtProof: '',
+    qrInv: '',                      /* the invoice whose QR is on screen */
+    left: null,                     /* why a swap was left: partner | time */
     gate: null
   };
 
@@ -411,7 +413,8 @@
       form: /^lni1/i.test(o) ? 'invoice' : 'offer',
       hrp: r.hrp,
       network: r.hrp.length > 3 ? r.hrp.slice(3) : 'bitcoin',
-      paymentHash: hash && hash.length === 32 ? '0x' + hexOf(hash) : null,
+      paymentHash: hash && hash.length === 32 ? '0x' + hexOf(hash)
+        : (fields[168] && fields[168].length === 32 ? '0x' + hexOf(fields[168]) : null),
       sats: fields[170] ? Math.round(beUint(fields[170]) / 1000)
         : (fields[8] && !fields[6] ? Math.round(beUint(fields[8]) / 1000) : null),
       amount: num(8),
@@ -540,7 +543,31 @@
     return String(el ? el.value : '').trim();
   }
 
-  /* the invoice the other side sends, checked against this swap */
+  /* the invoice the other side sends, checked against this swap.
+
+     A real wallet puts its own payment hash in the invoice it hands over. In
+     Wallet mode that hash is the swap: the invoice decides it, this side adopts
+     it, and whoever holds the secret (the partner) reveals it at the end. Only
+     Practice mode keeps the stricter rule that the invoice must already carry
+     the hash this screen made. */
+  function adoptHash(h) {
+    var next = '0x' + normHex(h);
+    if (!next || normHex(next) === normHex(S.H)) return false;
+    S.H = next;
+    S.R = null;                 /* the partner holds the secret from here on */
+    S.counterInv = '';
+    log('HASH', 'hashlock adopted from the invoice · H ' + short(S.H, 8));
+    refreshId();
+    return true;
+  }
+  function refreshId() {
+    if (!S.H || !S.t2) return;
+    computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, EVM.token, usdtUnits(), S.t2).then(function (id) {
+      S.id = id;
+      render();
+    });
+  }
+
   function readOffer(raw) {
     var t = String(raw || '').trim();
     if (!t) return bad('empty', 'Paste the invoice your partner sent.');
@@ -548,14 +575,36 @@
     try { d = parseLightning(t); } catch (e) { return bad('format', 'That code cannot be read. Paste the whole thing.'); }
     if (!d) return bad('format', 'That code cannot be read. Paste the whole thing.');
     var what = d.kind === 'bolt12' ? (d.form === 'invoice' ? 'BOLT12 invoice' : 'BOLT12 offer') : 'BOLT11 invoice';
-    if (!d.paymentHash) return bad('format', 'That code is not an invoice for this swap.');
-    if (normHex(d.paymentHash) !== normHex(S.H)) return bad('mismatch', 'That invoice is for a different swap.');
-    if (d.sats == null) return bad('amount', 'That invoice has no amount.');
-    if (d.sats !== S.sats) return bad('amount', 'That invoice is for ' + fmt(d.sats) + ' sats, not ' + fmt(S.sats) + '.');
-    if (d.absoluteExpiry != null && nowSec() > d.absoluteExpiry) return bad('expired', 'That invoice has expired. Ask for a new one.');
-    if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
-    log('VERIFY', what + ' · payment_hash == H · ' + fmt(d.sats) + ' sats');
-    return good('Invoice checked. Now pay it from your wallet.', { dec: d, raw: t });
+    var wallet = S.mode === 'wallet';
+
+    /* An offer is only a request to pay: it carries no payment hash, so there
+       is nothing to bind the two legs to. The invoice that comes back from it
+       does, and that is what this step needs. */
+    if (!d.paymentHash) {
+      if (d.kind === 'bolt12' && d.form === 'offer') {
+        log('BLOCK', 'an offer carries no payment hash to lock on', 'c-err');
+        return bad('offer', 'That is an offer, not an invoice. Ask your partner for the invoice that pays this swap.');
+      }
+      return bad('format', 'That code is not an invoice for this swap.');
+    }
+
+    /* nothing is adopted or logged until the invoice passes every check */
+    var same = normHex(d.paymentHash) === normHex(S.H);
+    if (!same && !wallet) return bad('mismatch', 'That invoice is for a different swap.');
+    if (d.sats != null && Number(d.sats) !== Number(S.sats)) {
+      return bad('amount', 'That invoice is for ' + fmt(d.sats) + ' sats, not ' + fmt(S.sats) + '. Ask for one for this amount.');
+    }
+    var exp = d.absoluteExpiry != null ? d.absoluteExpiry : (d.expiresAt != null ? d.expiresAt : null);
+    if (exp != null && nowSec() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
+    if (d.kind === 'bolt11' && d.network !== NET && !wallet) return bad('network', 'That invoice is for another bitcoin network.');
+
+    var note = '';
+    if (!same) {
+      adoptHash(d.paymentHash);
+      note = 'Invoice accepted. ';
+    }
+    log('VERIFY', what + (same ? ' · payment_hash == H' : ' · payment_hash adopted as H') + ' · ' + fmt(S.sats) + ' sats');
+    return good(note + 'Now pay it from your wallet, then tap I paid.', { dec: d, raw: t, note: !!note });
   }
 
   function partnerOffer() {
@@ -663,10 +712,13 @@
     if (S.phase === 'idle') {
       if (S.mode === 'wallet' && S.role === 'taker') {
         var raw = pasted();
-        if (!raw) return Promise.resolve(bad('empty', 'Paste the invite your partner sent.'));
+        if (!raw) return Promise.resolve(bad('empty', 'Paste the link your partner sent, then tap Start swap.'));
+        var link = parseSwapLink(raw);
+        if (link) return Promise.resolve(good('The invite is for ' + fmt(link.sats) + ' sats. Tap Start swap.'));
         var d;
         try { d = parseLightning(raw); } catch (e) { return Promise.resolve(bad('format', 'That invite cannot be read.')); }
-        if (!d || !d.paymentHash) return Promise.resolve(bad('format', 'That invite cannot start a swap.'));
+        if (!d) return Promise.resolve(bad('format', 'That invite cannot start a swap.'));
+        if (!d.paymentHash) return Promise.resolve(bad('format', 'That invite has no payment hash. Ask for the invoice for this swap.'));
         return Promise.resolve(good('Your USDT is ready to lock. Tap Start swap.'));
       }
       return Promise.resolve(good(S.role === 'maker'
@@ -678,12 +730,19 @@
         ? 'You received ' + usdtTxt() + ' USDT.'
         : 'You received ' + fmt(S.sats) + ' sats.'));
     }
-    if (S.phase === 'refunded') return Promise.resolve(good('Nothing moved. Start a new swap whenever you like.'));
+    if (S.phase === 'refunded') {
+      return Promise.resolve(good(S.left === 'partner'
+        ? 'Your partner walked away, so nothing was exchanged. Everything you locked came back.'
+        : 'Time ran out. Everything you locked came back.'));
+    }
     if (S.phase === 'expired') return Promise.resolve(good('Time is up. Tap to take your funds back.'));
 
     if (S.phase === 'open') {
       if (S.mode === 'wallet' && S.role === 'maker') {
-        return Promise.resolve(sayOk(partnerOffer(), 'Pay this invoice from your wallet, then tap I paid.'));
+        if (!pasted()) return Promise.resolve(bad('empty', 'Share the link first, then paste the invoice your partner sends back.'));
+        var offer = partnerOffer();
+        if (offer.ok && offer.note) return Promise.resolve(offer);
+        return Promise.resolve(sayOk(offer, 'Pay this invoice from your wallet, then tap I paid.'));
       }
       if (S.mode === 'wallet') return Promise.resolve(good('Tap to lock your USDT.'));
       if (S.role === 'maker') return Promise.resolve(sayOk(partnerOffer(), 'Tap to lock your bitcoin. It is held safely until the swap finishes.'));
@@ -802,51 +861,73 @@
   }
 
   function renderStep() {
-    var taker = S.role === 'taker', w = S.mode === 'wallet', l = locked();
+    var taker = S.role === 'taker', w = S.mode === 'wallet', l = locked(), p = S.phase;
     var title = 'Swap bitcoin for USDT', cta = 'Start swap', tone = '';
-    var paste = false, pasteLbl = '', invite = false, payRow = false, ghost = false;
+    var flow = false, share = false, shareLbl = 'Copy link', paste = false, pasteLbl = '';
+    var pay = false, ghost = false, track = false, sim = false, back = false;
 
-    if (S.phase === 'idle') {
+    if (p === 'idle') {
       title = taker ? 'Swap USDT for bitcoin' : 'Swap bitcoin for USDT';
-      paste = w && taker; pasteLbl = 'Invite from your partner';
-    } else if (S.phase === 'open') {
+      paste = w && taker; pasteLbl = 'Link from your partner';
+    } else if (p === 'open') {
+      back = true;
       if (taker) { title = 'Lock your USDT'; cta = 'Lock my USDT'; }
       else { title = 'Lock your bitcoin'; cta = w ? 'I paid' : 'Lock my BTC'; }
-      paste = w && !taker; pasteLbl = 'Invoice from your partner';
-      payRow = w && !taker;
-    } else if (S.phase === 'btc') {
+      flow = w && !taker;
+      share = flow; paste = flow; pay = flow;
+      pasteLbl = 'Paste the invoice your partner sends';
+      track = !flow;
+    } else if (p === 'btc') {
+      back = true;
       if (l.usdt) {
         title = taker ? 'Your partner pays you' : 'Your partner locks USDT';
-        cta = 'Partner locks';
-        paste = false;
+        cta = w && taker ? 'Partner paid' : 'Partner locks';
+        share = w && taker; shareLbl = 'Copy invoice';
       } else {
         title = 'Your partner locks USDT';
         cta = 'Partner locks';
         paste = w; pasteLbl = 'Lock code from your partner';
       }
-      invite = w && taker && l.usdt;
-    } else if (S.phase === 'both') {
+      track = true;
+    } else if (p === 'both') {
+      back = true;
       title = 'Complete the swap'; cta = 'Complete swap';
       paste = !S.R; pasteLbl = 'Code from your partner';
-    } else if (S.phase === 'settled') {
-      title = 'Swap complete'; cta = 'Done'; tone = 'done'; ghost = true;
-    } else if (S.phase === 'expired') {
+      track = true; sim = S.mode === 'practice';
+    } else if (p === 'settled') {
+      title = 'Swap complete'; cta = 'Done'; tone = 'done'; ghost = true; track = true;
+    } else if (p === 'expired') {
       title = 'Time is up'; cta = 'Refund'; ghost = true;
     } else {
       title = 'Swap refunded'; cta = 'Done'; ghost = true;
     }
+    if (S.mode === 'practice' && p === 'btc') sim = true;
 
     $('stepTitle').textContent = title;
     $('stepTitle').className = 'q' + (tone ? ' ' + tone : '');
     $('primary').textContent = cta;
 
-    $('presets').hidden = S.phase !== 'idle';
+    $('stepHead').hidden = !back;
+    $('presets').hidden = p !== 'idle';
     presetsOn();
 
+    $('flow').hidden = !(share || paste || pay);
+    $('stepShare').hidden = !share;
+    $('stepPaste').hidden = !paste;
+    $('stepPay').hidden = !pay;
+    $('inviteRow').hidden = !share;
     $('pasteRow').hidden = !paste;
-    $('pasteLbl').textContent = pasteLbl;
-    $('inviteRow').hidden = !invite;
-    $('walletRow').hidden = !payRow;
+    $('walletRow').hidden = !pay;
+    // the numbers belong to the wallet path; a lone field keeps its own label
+    $('shareHead').hidden = !flow;
+    $('pasteHead').hidden = !flow;
+    $('payHead').hidden = !flow;
+    $('fieldLbl').hidden = flow;
+    $('fieldLbl').textContent = pasteLbl;
+    $('copyInviteBtn').textContent = shareLbl;
+
+    $('track').hidden = !track;
+    $('simRow').hidden = !sim;
     $('ghost').hidden = !ghost;
     // the direction stays visible between the cards, inert once a swap is open
     $('swapDir').hidden = false;
@@ -856,6 +937,51 @@
     var inv = currentInvoice();
     $('walletLink').setAttribute('href', inv ? 'lightning:' + inv : '#');
     $('walletLink').dataset.empty = inv ? '0' : '1';
+
+    paintTrack();
+    paintFlow();
+  }
+
+  /* three plain stages, so the screen shows where the swap is and why it is safe */
+  function setMark(el, n, state) {
+    el.dataset.s = state;
+    var m = el.querySelector('.tr-mark');
+    if (m) m.textContent = state === 'done' ? '\u2713' : String(n);
+  }
+  function paintTrack() {
+    if (!($('track') && !$('track').hidden)) return;
+    var l = locked(), done = S.phase === 'settled';
+    var mine = S.role === 'maker' ? fmt(S.sats) + ' sats' : usdtTxt() + ' USDT';
+    var theirs = S.role === 'maker' ? usdtTxt() + ' USDT' : fmt(S.sats) + ' sats';
+    var mineIn = S.role === 'maker' ? l.btc : l.usdt;
+    var theirsIn = S.role === 'maker' ? l.usdt : l.btc;
+    var both = l.btc && l.usdt;
+
+    setMark($('tr1'), 1, mineIn ? 'done' : 'now');
+    setMark($('tr2'), 2, theirsIn ? 'done' : (mineIn ? 'now' : 'next'));
+    setMark($('tr3'), 3, done ? 'done' : (both ? 'now' : 'next'));
+
+    $('tr1s').textContent = mineIn ? mine + ' is locked.' : 'Your ' + mine + ' goes in first.';
+    $('tr2s').textContent = theirsIn ? theirs + ' is locked.'
+      : (mineIn ? 'Waiting for ' + theirs + '.' : 'They lock ' + theirs + ' to match.');
+    $('tr3s').textContent = done ? 'Both sides swapped at once.'
+      : (both ? 'Both sides are in. One tap swaps them together.' : 'Both sides locked, then swapped together.');
+    $('trackNote').textContent = done ? 'Both sides swapped at once. No side could take off with the other.'
+      : (both ? 'Both sides are locked. One tap finishes the swap.' : 'Nothing moves until both sides are locked.');
+  }
+
+  /* the wallet path marks the step in hand, and the two behind it */
+  function setStep(el, n, state) {
+    el.dataset.s = state;
+    var m = el.querySelector('.step-h .n');
+    if (m) m.textContent = state === 'done' ? '\u2713' : String(n);
+  }
+  function paintFlow() {
+    if (!($('flow') && !$('flow').hidden)) return;
+    var ok = !!(S.gate && S.gate.ok);
+    setStep($('stepShare'), 1, ok ? 'done' : 'now');
+    setStep($('stepPaste'), 2, ok ? 'done' : 'now');
+    setStep($('stepPay'), 3, ok ? 'now' : 'next');
   }
 
   function renderLog() {
@@ -897,6 +1023,33 @@
     if (el && !$('pasteRow').hidden) {
       el.dataset.state = r.ok ? 'ok' : (r.code === 'empty' ? '' : 'err');
     }
+    paintFlow();
+    showInvoiceQrOnce(r);
+  }
+
+  /* the moment the pasted invoice checks out, its QR is on screen and the
+     wallet link carries it: QR and Open in wallet are never a dead tap */
+  function showInvoiceQrOnce(r) {
+    if (!(S.mode === 'wallet' && S.phase === 'open' && S.role === 'maker')) return;
+    var inv = currentInvoice();
+    var box = $('qrBox');
+    if (!r || !r.ok || !inv) {
+      if (box.innerHTML) box.innerHTML = '';
+      S.qrInv = '';
+      return;
+    }
+    if (inv === S.qrInv) return;
+    S.qrInv = inv;
+    showQr('lightning:' + inv, 'Scan from your wallet, or tap Open in wallet');
+  }
+  function needInvoice() {
+    toast('Paste the invoice first, then this opens.');
+    var row = $('pasteRow');
+    if (row && !row.hidden) {
+      row.classList.remove('shake');
+      void row.offsetWidth;
+      row.classList.add('shake');
+    }
   }
   function shake() {
     var g = $('stepSay');
@@ -932,6 +1085,7 @@
       S.id = id;
       var el = $('pasteIn'); if (el) { el.value = ''; el.dataset.state = ''; }
       var box = $('qrBox'); if (box) box.innerHTML = '';
+      S.qrInv = '';
       render();
       refreshGate();
       toast('Swap started');
@@ -955,6 +1109,7 @@
       S.inv = ''; S.invDec = null; S.usdtProof = '';
       S.counterInv = S.mode === 'practice' ? mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN }) : '';
       S.phase = 'open';
+      S.qrInv = '';
       log('CREATE', 'swap opened from the USDT side · ' + usdtTxt() + ' USDT \u21c4 ' + fmt(S.sats) + ' sats');
       log('HASH', 'H = SHA256(R) = ' + short(S.H, 8));
       log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' · T2 unix ' + S.t2);
@@ -967,11 +1122,24 @@
       });
     };
     if (S.mode === 'wallet') {
+      var raw = pasted(), link = parseSwapLink(raw);
+      if (link) {
+        /* the invite is the swap: same hashlock, same amounts, same windows */
+        done(link.H);
+        S.sats = link.sats;
+        S.units = link.units;
+        S.t2 = link.t2;
+        S.t1 = link.t1 || S.t1;
+        render();
+        refreshGate();
+        return;
+      }
       try {
-        var d = parseLightning(pasted());
+        var d = parseLightning(raw);
         if (!d || !d.paymentHash) {
-          log('BLOCK', 'that invite carries no payment hash', 'c-err');
+          log('BLOCK', 'that invite carries no payment hash to lock on', 'c-err');
           render(); refreshGate();
+          toast('That invite has no payment hash. Ask for the invoice for this swap.');
           return;
         }
         if (d.sats) S.sats = d.sats;
@@ -1045,6 +1213,7 @@
     if (S.btcState === 'held') S.btcState = 'refunded';
     if (S.usdtState === 'locked') S.usdtState = 'refunded';
     S.phase = 'refunded';
+    S.left = 'time';
     log('REFUND', held ? 'both legs returned to their owners after T2' : 'nothing was locked; the swap expired unused');
     log('VOID', 'R was never revealed', 'c-warn');
     if (S.mode === 'wallet') historyEntry('Refund', 'nothing moved', 'warn');
@@ -1053,14 +1222,61 @@
     toast('Refunded');
   }
 
+  /* Practice only: the partner gives up after one side is already in. The point
+     of the three steps is exactly this - nothing can be taken, and what was
+     locked goes back to whoever locked it. */
+  function cancelByPartner() {
+    if (S.phase !== 'btc' && S.phase !== 'both') { toast('Nothing is locked yet'); return; }
+    if (S.btcState === 'held') S.btcState = 'refunded';
+    if (S.usdtState === 'locked') S.usdtState = 'refunded';
+    S.phase = 'refunded';
+    S.left = 'partner';
+    log('SIM', 'the partner walked away without locking', 'c-warn');
+    log('REFUND', 'every locked side went back to its owner');
+    log('VOID', 'nothing was exchanged', 'c-warn');
+    render();
+    refreshGate();
+    closeSheet();
+    toast('Your money came back');
+  }
+
+  /* --------------------------------------------------------------- back --- */
+  /* Back returns to the amount screen at any point. Once something is locked
+     it asks first, so a stray tap cannot throw a running swap away. */
+  function openSheet() {
+    var l = locked(), body;
+    if (l.btc && l.usdt) {
+      body = 'Both sides are locked, but nothing is exchanged until the last tap. Leave and anything you locked comes back when the time runs out.';
+    } else if (l.btc || l.usdt) {
+      body = 'One side is locked already. Leave and whatever you locked comes back when the time runs out.';
+    } else {
+      body = 'This swap is open, but nothing has been locked yet. Leave and you can start again with another amount.';
+    }
+    $('sheetBody').textContent = body;
+    $('sheet').hidden = false;
+    var stay = $('sheetStay');
+    if (stay) { try { stay.focus(); } catch (e) { /* ignore */ } }
+  }
+  function closeSheet() { $('sheet').hidden = true; }
+  function goBack() {
+    if (S.phase === 'idle' || S.phase === 'settled' || S.phase === 'refunded') return;
+    var l = locked();
+    if (l.btc || l.usdt) { openSheet(); return; }
+    reset();
+    toast('Back to the start');
+  }
+
   function reset() {
     S.phase = 'idle'; S.H = null; S.R = null; S.id = null;
     S.btcState = 'none'; S.usdtState = 'none';
     S.sim = 0; S.t1 = null; S.t2 = null; S.units = null; S.sealOpen = false;
     S.inv = ''; S.invDec = null; S.counterInv = ''; S.altInv = ''; S.usdtProof = '';
+    S.left = null;
+    S.qrInv = '';
     S.role = S.direction === 'u2b' ? 'taker' : 'maker';
     var el = $('pasteIn'); if (el) { el.value = ''; el.dataset.state = ''; }
     var box = $('qrBox'); if (box) box.innerHTML = '';
+    closeSheet();
     log('RESET', 'state cleared');
     render();
     refreshGate();
@@ -1182,6 +1398,10 @@
     },
     primary: function () { tap(); },
     reset: function () { reset(); },
+    back: function () { goBack(); },
+    stay: function () { closeSheet(); },
+    leave: function () { reset(); toast('Back to the start'); },
+    partnerCancel: function () { cancelByPartner(); },
     copyInvite: function () {
       var p = invitePayload();
       if (!p) { toast('Nothing to share yet'); return; }
@@ -1194,13 +1414,16 @@
     },
     copyPay: function () {
       var inv = currentInvoice();
-      if (!inv) { toast('Paste the invoice first'); return; }
+      if (!inv) { needInvoice(); return; }
       copy(inv, 'Invoice copied');
     },
     qrPay: function () {
       var inv = currentInvoice();
-      if (!inv) { toast('Paste the invoice first'); return; }
-      showQr('lightning:' + inv, 'Scan from your wallet');
+      if (!inv) { needInvoice(); return; }
+      var box = $('qrBox');
+      if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
+      S.qrInv = inv;
+      showQr('lightning:' + inv, 'Scan from your wallet, or tap Open in wallet');
     }
   };
 
@@ -1238,7 +1461,7 @@
   });
   // A blank wallet link would open a wallet on nothing: say what is missing instead.
   $('walletLink').addEventListener('click', function (e) {
-    if (!currentInvoice()) { e.preventDefault(); toast('Paste the invoice first'); }
+    if (!currentInvoice()) { e.preventDefault(); needInvoice(); }
   });
   $('pasteIn').addEventListener('input', function () {
     if (S.phase === 'idle' && S.mode === 'wallet' && S.role === 'taker') {
@@ -1273,8 +1496,10 @@
     checkProof: function () { return partnerEscrow(); }, checkPreimage: checkSecret,
     swapLink: swapLink, parseSwapLink: parseSwapLink, escrowProof: escrowProof, usdtUnits: usdtUnits,
     stepNo: stepNo, stage: stage, locked: locked, presetsOn: presetsOn,
+    paintTrack: paintTrack, paintFlow: paintFlow,
     join: join, reset: reset, createSwap: createSwap, createSwapUsdt: createSwapUsdt,
-    tap: tap, run: tap, refund: refund, tick: tick,
+    tap: tap, run: tap, refund: refund, tick: tick, goBack: goBack,
+    cancelByPartner: cancelByPartner, openSheet: openSheet, closeSheet: closeSheet,
     advanceClock: function (sec) { S.sim += (sec || (T2_SPAN + 60)); tick(); render(); refreshGate(); },
     historyEntry: historyEntry
   };

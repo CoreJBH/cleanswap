@@ -53,8 +53,56 @@
   <p class="state" id="stateTxt">Ready</p>
 
   <section class="act">
+    <div class="head" id="stepHead" hidden>
+      <button class="back" id="backBtn" data-act="back" type="button"><span class="arw" aria-hidden="true">←</span> Back</button>
+    </div>
     <h1 class="q" id="stepTitle">Swap bitcoin for USDT</h1>
     <p class="say" id="stepSay">Pick an amount, then tap Start swap.</p>
+
+    <!-- practice: the three steps of the swap, and why nothing can run off -->
+    <div class="track" id="track" hidden>
+      <div class="trs">
+        <div class="tr" id="tr1" data-s="now">
+          <span class="tr-mark">1</span>
+          <div class="tr-body"><p class="tr-t">Lock your side</p><p class="tr-s" id="tr1s">—</p></div>
+        </div>
+        <div class="tr" id="tr2" data-s="next">
+          <span class="tr-mark">2</span>
+          <div class="tr-body"><p class="tr-t">Partner locks</p><p class="tr-s" id="tr2s">—</p></div>
+        </div>
+        <div class="tr" id="tr3" data-s="next">
+          <span class="tr-mark">3</span>
+          <div class="tr-body"><p class="tr-t">Settle at once</p><p class="tr-s" id="tr3s">—</p></div>
+        </div>
+      </div>
+      <p class="tr-note" id="trackNote">Nothing moves until both sides are locked.</p>
+    </div>
+
+    <!-- wallet: a numbered path, one thing to do per step -->
+    <div class="flow" id="flow" hidden>
+      <div class="step" id="stepShare" data-s="now" hidden>
+        <p class="step-h" id="shareHead" hidden><b class="n">1</b><span>Share your link with your partner</span></p>
+        <div class="row" id="inviteRow" hidden>
+          <button class="pill" id="copyInviteBtn" data-act="copyInvite" type="button">Copy link</button>
+          <button class="pill" data-act="qrInvite" type="button">QR</button>
+        </div>
+      </div>
+      <div class="step" id="stepPaste" data-s="next" hidden>
+        <p class="step-h" id="pasteHead" hidden><b class="n">2</b><span>Paste the invoice they send back</span></p>
+        <label class="field" id="pasteRow" hidden>
+          <span class="field-lbl" id="fieldLbl">Invoice from your partner</span>
+          <input id="pasteIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste it here">
+        </label>
+      </div>
+      <div class="step" id="stepPay" data-s="next" hidden>
+        <p class="step-h" id="payHead" hidden><b class="n">3</b><span>Pay it from your wallet, then tap I paid</span></p>
+        <div class="row" id="walletRow" hidden>
+          <a class="pill" id="walletLink" href="#">Open in wallet</a>
+          <button class="pill" data-act="copyPay" type="button">Copy</button>
+          <button class="pill" data-act="qrPay" type="button">QR</button>
+        </div>
+      </div>
+    </div>
 
     <div class="presets" id="presets">
       <button data-act="sats" data-v="10000" type="button">10,000</button>
@@ -63,23 +111,14 @@
       <button data-act="sats" data-v="250000" type="button">250,000</button>
     </div>
 
-    <label class="field" id="pasteRow" hidden>
-      <span class="field-lbl" id="pasteLbl">From your partner</span>
-      <input id="pasteIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste it here">
-    </label>
-
-    <div class="row" id="inviteRow" hidden>
-      <button class="pill" data-act="copyInvite" type="button">Copy link</button>
-      <button class="pill" data-act="qrInvite" type="button">QR</button>
-    </div>
-
-    <div class="row" id="walletRow" hidden>
-      <a class="pill" id="walletLink" href="#">Open in wallet</a>
-      <button class="pill" data-act="copyPay" type="button">Copy</button>
-      <button class="pill" data-act="qrPay" type="button">QR</button>
-    </div>
-
     <div class="qrbox" id="qrBox"></div>
+
+    <!-- practice only: try the case the swap is built for, a partner who walks -->
+    <div class="sim" id="simRow" hidden>
+      <p class="sim-t">What if your partner never shows up?</p>
+      <p class="sim-s">Try it here. They walk away after you locked, nothing is exchanged, and your money comes back.</p>
+      <button class="pill" data-act="partnerCancel" type="button">Partner cancels</button>
+    </div>
 
     <button class="ghost" id="ghost" data-act="reset" type="button" hidden>New swap</button>
   </section>
@@ -95,6 +134,17 @@
 <div class="bar"><div class="bar-in">
   <button class="cta" id="primary" data-act="primary" type="button" data-ready="1">Start swap</button>
 </div></div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-in" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <p class="sheet-t" id="sheetTitle">Leave this swap?</p>
+    <p class="sheet-b" id="sheetBody">—</p>
+    <div class="sheet-row">
+      <button class="pill go" id="sheetStay" data-act="stay" type="button">Stay</button>
+      <button class="pill danger" id="sheetLeave" data-act="leave" type="button">Leave</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
