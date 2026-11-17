@@ -20,7 +20,7 @@ import java.util.Locale;
 
 /**
  * The whole application is one HTML file (assets/index.html) built from src/ by build.py.
- * This shell gives it a full-screen, dark, dependency-free WebView: no local server and no
+ * This shell gives it a full-screen, light, dependency-free WebView: no local server and no
  * permission beyond the optional BTC/USD quote the page itself requests.
  *
  * The page is the prototype: the practice sandbox works offline, and the wallet hand-off
@@ -31,7 +31,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
 
     private static final String APP_URL = "file:///android_asset/index.html";
-    private static final int BG = 0xFF07130D;
+    private static final int BG = 0xFFF2F4F7;
 
     private WebView web;
 

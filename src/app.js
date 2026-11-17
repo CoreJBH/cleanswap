@@ -1,8 +1,10 @@
-/* CLEANSWAP v0.3 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CLEANSWAP v0.4 — Lightning bitcoin <-> USDT atomic swap in one file.
 
-   The screen stays out of the way: a big amount card, two asset rows, one
-   input, one button. Underneath, every step is still gated on data a real
-   swap would need, and the gate runs here, in the browser:
+   The screen stays out of the way: two amount cards, one plain sentence and
+   one big button per step, the way a payment app reads. No symbol names, no
+   hashes and no raw hex are ever shown; practice mode needs no pasting at all.
+   Underneath, every step is still gated on data a real swap would need, and
+   the gate runs here, in the browser:
 
      step 1  a BOLT12 offer or invoice (or a BOLT11 hold invoice) whose
              payment_hash is exactly H, for the right amount, still unexpired
@@ -16,11 +18,12 @@
    type-80 TLV; invoices the app mints use the standard invoice_payment_hash
    field. BOLT11 hold invoices stay fully accepted as input.
 
-   Practice mode runs both sides on one screen (offer mint, escrow lock,
+   Practice mode runs both sides on one screen (invoice mint, escrow lock,
    reveal) with real WebCrypto, real bech32 and real ABI encoding, and a share
-   link that turns another tab into the USDT side. Wallet mode swaps the
-   simulated counterparty for a real offer or invoice, a real wallet hand-off
-   and the payment_hash your wallet shows afterwards.
+   link that turns another tab into the USDT side. The practice partner is
+   simulated, so no code is pasted; the same decoders check what it produces.
+   Wallet mode swaps the simulated partner for a real invoice, a real wallet
+   hand-off and the values the other side sends back.
 
    No chain, no funds, no browser-extension wallet. */
 (function () {
@@ -145,7 +148,9 @@
     S.log.unshift({ t: clock(), kind: kind, text: text, cls: cls || '' });
     if (S.log.length > 60) S.log.pop();
   }
+  /* Only real swaps are remembered: a practice run leaves no record behind. */
   function historyEntry(title, detail, cls) {
+    if (S.mode !== 'wallet') return;
     var box = $('histList'), it = document.createElement('div');
     it.className = 'hist-item' + (cls ? ' ' + cls : '');
     var a = document.createElement('span'); a.textContent = title;
@@ -505,14 +510,22 @@
     if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
     return { H: '0x' + p[1].toLowerCase(), sats: sats, units: units, t2: t2, t1: t1 };
   }
-
   /* ------------------------------------------------------------ gates --- */
+  /* The screen shows one plain sentence. Underneath, every step is still
+     gated on data a real swap needs: the other side's invoice (a BOLT12
+     offer or invoice, or a BOLT11 hold invoice) carrying this swap's hashlock
+     and amount, the USDT escrow decoded from lock() calldata, a lock record,
+     a Liquid lock URI or a lock tx hash, and the 32-byte preimage whose
+     SHA-256 is the hashlock. Practice mode builds those same objects on this
+     device, so the checks are identical - nobody has to paste anything. */
+
   function bad(code, msg) { return { ok: false, code: code, msg: msg }; }
   function good(msg, extra) {
     var r = { ok: true, code: 'ok', msg: msg };
     if (extra) { for (var k in extra) r[k] = extra[k]; }
     return r;
   }
+
   /* one reader for anything the other side sends: BOLT12 offer or invoice
      first (the default format), BOLT11 hold invoice second */
   function parseLightning(raw) {
@@ -521,38 +534,32 @@
     if (/^ln[io]1/i.test(t)) return decodeSwapOffer(t);
     return decodeBolt11(t);
   }
-  function checkSwapRequest() {
-    var raw = String($('invIn').value || '').trim();
-    if (!raw) return bad('empty', 'Paste the BOLT12 offer or invoice from the other side. Nothing locks without it.');
-    var d;
-    try { d = parseLightning(raw); } catch (e) { return bad('format', 'Rejected — ' + e.message + '.'); }
-    if (!d) return bad('empty', 'Paste the BOLT12 offer or invoice from the other side. Nothing locks without it.');
-    var what = d.kind === 'bolt12' ? (d.form === 'invoice' ? 'BOLT12 invoice' : 'BOLT12 offer') : 'BOLT11 invoice';
-    if (!d.paymentHash) return bad('format', 'That ' + what + ' carries no payment hash, so it cannot hold a hashlock.');
-    if (normHex(d.paymentHash) !== normHex(S.H)) {
-      return bad('mismatch', 'That ' + what + ' is for a different swap: its hash is not H. Revealing R could never claim it.');
-    }
-    if (d.sats == null) return bad('amount', 'The ' + what + ' sets no amount, so it cannot be tied to this swap.');
-    if (d.sats !== S.sats) {
-      return bad('amount', 'The ' + what + ' asks for ' + fmt(d.sats) + ' sats; this swap is ' + fmt(S.sats) + ' sats.');
-    }
-    if (d.absoluteExpiry != null && nowSec() > d.absoluteExpiry) {
-      return bad('expired', 'It expired at ' + clock(d.absoluteExpiry) + '. Ask for a fresh one.');
-    }
-    if (d.kind === 'bolt11' && d.network !== NET) {
-      return bad('network', 'Invoice network "' + d.network + '" does not match this swap (' + NET + ').');
-    }
-    return good(what + ' verified · ' + fmt(d.sats) + ' sats' +
-      (d.absoluteExpiry != null ? ' · expires ' + clock(d.absoluteExpiry) : ''), { dec: d, kind: what, raw: raw });
+
+  function pasted() {
+    var el = $('pasteIn');
+    return String(el ? el.value : '').trim();
   }
 
-  function checkReceipt() {
-    if (S.mode !== 'wallet') return good('practice: the wallet step is simulated here', { code: 'skip' });
-    var v = normHex($('receiptIn').value);
-    if (!v) return bad('empty', 'Wallet mode: paste the payment_hash your wallet shows after paying this offer.');
-    if (!/^[0-9a-f]{64}$/.test(v)) return bad('format', 'A payment hash is 32 bytes: 64 hex characters.');
-    if (v !== normHex(S.H)) return bad('mismatch', 'That receipt is for a different payment — its hash is not H.');
-    return good('Wallet receipt matches H.');
+  /* the invoice the other side sends, checked against this swap */
+  function readOffer(raw) {
+    var t = String(raw || '').trim();
+    if (!t) return bad('empty', 'Paste the invoice your partner sent.');
+    var d;
+    try { d = parseLightning(t); } catch (e) { return bad('format', 'That code cannot be read. Paste the whole thing.'); }
+    if (!d) return bad('format', 'That code cannot be read. Paste the whole thing.');
+    var what = d.kind === 'bolt12' ? (d.form === 'invoice' ? 'BOLT12 invoice' : 'BOLT12 offer') : 'BOLT11 invoice';
+    if (!d.paymentHash) return bad('format', 'That code is not an invoice for this swap.');
+    if (normHex(d.paymentHash) !== normHex(S.H)) return bad('mismatch', 'That invoice is for a different swap.');
+    if (d.sats == null) return bad('amount', 'That invoice has no amount.');
+    if (d.sats !== S.sats) return bad('amount', 'That invoice is for ' + fmt(d.sats) + ' sats, not ' + fmt(S.sats) + '.');
+    if (d.absoluteExpiry != null && nowSec() > d.absoluteExpiry) return bad('expired', 'That invoice has expired. Ask for a new one.');
+    if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
+    log('VERIFY', what + ' · payment_hash == H · ' + fmt(d.sats) + ' sats');
+    return good('Invoice checked. Now pay it from your wallet.', { dec: d, raw: t });
+  }
+
+  function partnerOffer() {
+    return readOffer(S.mode === 'wallet' ? pasted() : (S.counterInv || ''));
   }
 
   function readLockProof(text) {
@@ -589,67 +596,131 @@
         timelock: q.timelock || q.t2 || '', amount: q.amount || ''
       };
     }
-    return { kind: 'error', msg: 'Unrecognised proof. Paste lock() calldata, a swap JSON record, a Liquid lock URI or a 32-byte tx hash.' };
+    return { kind: 'error', msg: 'Unrecognised proof.' };
   }
 
-  function checkProof() {
-    var p = readLockProof($('proofIn').value);
-    if (p.kind === 'empty') {
-      return bad('empty', 'Paste the escrow proof: lock() calldata, a lock JSON record, a Liquid lock URI or the lock tx hash.');
-    }
-    if (p.kind === 'error') return bad('format', p.msg);
+  /* the USDT escrow, decoded and matched against H, T2 and the amount */
+  function readEscrow(raw) {
+    var p = readLockProof(raw);
+    if (p.kind === 'empty') return bad('empty', 'Paste the lock code your partner sent.');
+    if (p.kind === 'error') return bad('format', 'That lock code cannot be read.');
     if (p.kind === 'tx') {
-      if (/^0x0{64}$/.test(p.hash)) return bad('format', 'That transaction hash is all zeros.');
-      return { ok: true, code: 'ref', dec: p,
-        msg: 'Lock transaction ' + short(p.hash, 6) + ' recorded as a reference. A hash alone cannot be matched to H offline, so this leg is logged unverified.' };
+      if (/^0x0{64}$/.test(p.hash)) return bad('format', 'That lock code cannot be read.');
+      log('REF', 'lock transaction ' + short(p.hash, 6) + ' recorded; a hash alone cannot be matched offline');
+      return { ok: true, code: 'ref', msg: 'Lock recorded. Tap to finish this side.', dec: p };
     }
-    if (p.kind === 'calldata' && p.selector !== SEL.lock) {
-      return bad('format', 'This calldata calls 0x' + p.selector + ', not lock() (0x' + SEL.lock + ').');
-    }
+    if (p.kind === 'calldata' && p.selector !== SEL.lock) return bad('format', 'That lock code cannot be read.');
     var locked = String(p.hashlock || '').toLowerCase();
-    if (!/^0x[0-9a-f]{64}$/.test(locked)) return bad('format', 'The proof carries no 32-byte hashlock.');
-    if (normHex(locked) !== normHex(S.H)) {
-      return bad('mismatch', 'The escrow locks ' + short(locked, 6) + ', not H (' + short(S.H, 6) +
-        '). Revealing R could never claim it.');
-    }
+    if (!/^0x[0-9a-f]{64}$/.test(locked)) return bad('format', 'That lock code cannot be read.');
+    if (normHex(locked) !== normHex(S.H)) return bad('mismatch', 'That lock is for a different swap.');
     var tl = String(p.timelock == null ? '' : p.timelock).trim();
-    if (!tl) return bad('timelock', 'The proof has no timelock. T2 has to be visible to compare it with the swap.');
-    if (tl !== String(S.t2)) {
-      return bad('timelock', 'The escrow timelock is ' + tl + '; this swap needs T2 = ' + S.t2 + '.');
-    }
+    if (!tl) return bad('timelock', 'That lock has no end time.');
+    if (tl !== String(S.t2)) return bad('timelock', 'That lock ends at the wrong time.');
     var units = p.kind === 'liquid'
       ? (p.amount === '' ? null : Math.round(Number(p.amount) * 1e6))
       : (p.amount === '' ? null : Number(p.amount));
     if (units == null || !isFinite(units) || Math.round(units) <= 0) {
-      return bad('amount', 'The proof has no USDT amount to compare with ' + usdtTxt() + ' USDT.');
+      return bad('amount', 'That lock has no amount.');
     }
     var held = Math.round(units), want = Number(usdtUnits());
     var same = p.kind === 'liquid' ? Math.round(held / 1e4) === Math.round(want / 1e4) : held === want;
-    if (!same) {
-      return bad('amount', 'The escrow holds ' + (held / 1e6).toFixed(2) + ' USDT; this swap needs ' + usdtTxt() + ' USDT.');
-    }
+    if (!same) return bad('amount', 'That lock holds ' + (held / 1e6).toFixed(2) + ' USDT, not ' + usdtTxt() + '.');
     if (p.receiver && isAddr(p.receiver) && /^0x0{40}$/.test(p.receiver)) {
-      return bad('format', 'The escrow receiver is the zero address — nobody could claim it.');
+      return bad('format', 'That lock pays nobody.');
     }
-    var where = p.kind === 'calldata' ? 'lock() calldata' : p.kind === 'json' ? 'lock record' : 'Liquid lock ' + short(p.address, 6);
-    var who = p.receiver && isAddr(p.receiver) ? ' · pays ' + short(p.receiver, 4) : '';
-    return good(where + ' decoded: hashlock H, timelock T2, ' + usdtTxt() + ' USDT' + who, { dec: p });
+    log('VERIFY', 'USDT lock decoded · hashlock H · timelock T2 · ' + usdtTxt() + ' USDT');
+    return good('The USDT side is locked. Tap to finish this side.', { dec: p });
   }
 
-  function checkPreimage() {
-    var v = normHex($('preIn').value);
-    if (!v) return Promise.resolve(bad('empty', 'Paste the 32-byte preimage R. The escrow will not release without it.'));
-    if (!/^[0-9a-f]{64}$/.test(v)) return Promise.resolve(bad('format', 'R is 32 bytes: exactly 64 hex characters.'));
+  function partnerEscrow() {
+    if (S.mode === 'wallet') return readEscrow(pasted());
+    // practice: the partner's lock is made once, when it is the partner's turn,
+    // and then checked like any other lock - it is not regenerated to match.
+    return readEscrow(S.usdtProof || escrowProof());
+  }
+
+  /* the 32-byte preimage. In practice the device holds it; on the USDT side
+     of a real swap it arrives from the bitcoin side. */
+  function checkSecret() {
+    var own = !!S.R;
+    var v = normHex(own ? S.R : pasted());
+    if (!v) return Promise.resolve(bad('empty', own ? 'The secret for this swap is missing.' : 'Paste the code your partner sent.'));
+    if (!/^[0-9a-f]{64}$/.test(v)) return Promise.resolve(bad('format', 'That code is too short.'));
     return sha256Hex(v).then(function (h) {
       var got = '0x' + h;
-      if (normHex(got) !== normHex(S.H)) {
-        return bad('mismatch', 'SHA256(R) = ' + short(got, 8) + ' but H = ' + short(S.H, 8) +
-          '. The escrow rejects this preimage.');
-      }
-      return good('SHA256(R) matches H · this reveal releases the escrow and settles the HTLC.');
-    }).catch(function (e) { return bad('format', 'SHA-256 failed: ' + e.message); });
+      if (normHex(got) !== normHex(S.H)) return bad('mismatch', 'That code does not unlock this swap.');
+      log('CHECK', 'SHA256(preimage) == H');
+      return good('Unlocked. Tap to complete the swap.', { preimage: '0x' + v });
+    }).catch(function () { return bad('format', 'That code cannot be read.'); });
   }
 
+  /* ---------------------------------------------------------- one gate --- */
+  /* The checks produce codes; the stage decides the one sentence the screen
+     shows when a check passes, so a step reads like a payment app. */
+  function sayOk(r, msg) { if (r && r.ok) r.msg = msg; return r; }
+
+  function validate() {
+    if (S.phase === 'idle') {
+      if (S.mode === 'wallet' && S.role === 'taker') {
+        var raw = pasted();
+        if (!raw) return Promise.resolve(bad('empty', 'Paste the invite your partner sent.'));
+        var d;
+        try { d = parseLightning(raw); } catch (e) { return Promise.resolve(bad('format', 'That invite cannot be read.')); }
+        if (!d || !d.paymentHash) return Promise.resolve(bad('format', 'That invite cannot start a swap.'));
+        return Promise.resolve(good('Your USDT is ready to lock. Tap Start swap.'));
+      }
+      return Promise.resolve(good(S.role === 'maker'
+        ? 'Pick an amount, then tap Start swap.'
+        : 'Pick how much bitcoin you want, then tap Start swap.'));
+    }
+    if (S.phase === 'settled') {
+      return Promise.resolve(good(S.role === 'maker'
+        ? 'You received ' + usdtTxt() + ' USDT.'
+        : 'You received ' + fmt(S.sats) + ' sats.'));
+    }
+    if (S.phase === 'refunded') return Promise.resolve(good('Nothing moved. Start a new swap whenever you like.'));
+    if (S.phase === 'expired') return Promise.resolve(good('Time is up. Tap to take your funds back.'));
+
+    if (S.phase === 'open') {
+      if (S.mode === 'wallet' && S.role === 'maker') {
+        return Promise.resolve(sayOk(partnerOffer(), 'Pay this invoice from your wallet, then tap I paid.'));
+      }
+      if (S.mode === 'wallet') return Promise.resolve(good('Tap to lock your USDT.'));
+      if (S.role === 'maker') return Promise.resolve(sayOk(partnerOffer(), 'Tap to lock your bitcoin. It is held safely until the swap finishes.'));
+      return Promise.resolve(sayOk(partnerEscrow(), 'Tap to lock your USDT. It is released only when you get the bitcoin.'));
+    }
+    if (S.phase === 'btc') {
+      if (S.usdtState !== 'locked') {
+        var e = partnerEscrow();
+        if (!e.ok) return Promise.resolve(e);
+        return Promise.resolve(good(S.mode === 'wallet'
+          ? 'The USDT side is locked. Tap to finish your side.'
+          : 'Now the USDT side locks. Tap to let your partner lock it.'));
+      }
+      if (S.mode === 'wallet') return Promise.resolve(good('Your partner pays the invoice you shared. Tap when it shows up.'));
+      return Promise.resolve(sayOk(partnerOffer(), 'Your partner paid the invoice. Tap to continue.'));
+    }
+    if (S.phase === 'both') {
+      return checkSecret().then(function (r) {
+        return sayOk(r, 'Both sides are locked. Tap to complete the swap.');
+      });
+    }
+    return Promise.resolve(bad('state', 'Nothing to do here.'));
+  }
+
+  /* ------------------------------------------------------------ render --- */
+  function locked() {
+    return {
+      btc: S.btcState === 'held' || S.btcState === 'settled',
+      usdt: S.usdtState === 'locked' || S.usdtState === 'claimed'
+    };
+  }
+  function phaseNow() {
+    var l = locked();
+    if (l.btc && l.usdt) return 'both';
+    if (l.btc || l.usdt) return 'btc';
+    return 'open';
+  }
   function stepNo() {
     if (S.phase === 'idle') return 0;
     if (S.phase === 'open') return 1;
@@ -657,208 +728,134 @@
     if (S.phase === 'both') return 3;
     return 4;
   }
-  function mainInput() {
-    if (S.phase === 'open' && S.role === 'maker') return 'invIn';
-    if (S.phase === 'btc') return 'proofIn';
-    if (S.phase === 'both') return 'preIn';
-    return null;
+  function stage() {
+    if (S.phase === 'idle' || S.phase === 'open' || S.phase === 'btc' || S.phase === 'both') return S.phase;
+    return 'closed';
   }
 
-  function validate() {
-    if (S.phase === 'idle') {
-      if (S.role === 'taker') {
-        if (S.mode === 'wallet') {
-          var raw = String($('swapIn').value || '').trim();
-          if (!raw) return Promise.resolve(bad('empty', 'Wallet mode: paste the BOLT12 offer or invoice you were sent.'));
-          var d;
-          try { d = parseLightning(raw); } catch (e) { return Promise.resolve(bad('format', 'Rejected — ' + e.message + '.')); }
-          if (!d || !d.paymentHash) {
-            return Promise.resolve(bad('format', 'That string carries no payment hash to build the swap on.'));
-          }
-        }
-        return Promise.resolve(good('You send ' + usdtTxt() + ' USDT and receive bitcoin.'));
-      }
-      return Promise.resolve(good('Creating a swap generates a fresh secret R and H = SHA256(R).'));
+  function showTag(el, txt, on, done) {
+    el.hidden = !on;
+    txt.textContent = done ? 'Done' : 'Locked';
+  }
+
+  function presetsOn() {
+    var btns = document.querySelectorAll('#presets [data-act="sats"]'), i, on;
+    for (i = 0; i < btns.length; i++) {
+      on = Number(btns[i].dataset.v) === Number(S.sats);
+      btns[i].className = on ? 'on' : '';
+      btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
     }
-    if (S.phase === 'expired') return Promise.resolve(good('T2 has passed, so both legs can only be refunded.'));
-    if (S.phase === 'settled' || S.phase === 'refunded') return Promise.resolve(good('This swap is closed.'));
-    if (stepNo() === 1) {
-      if (S.role === 'taker') return Promise.resolve(good('The offer carries this swap\u2019s hashlock and ' + fmt(S.sats) + ' sats.'));
-      var inv = checkSwapRequest();
-      if (!inv.ok) return Promise.resolve(inv);
-      var rc = checkReceipt();
-      if (!rc.ok) return Promise.resolve(rc);
-      return Promise.resolve(good(inv.msg + (S.mode === 'wallet' ? ' · ' + rc.msg : ''), { inv: inv }));
+  }
+
+  function currentInvoice() {
+    if (S.mode === 'wallet' && S.role === 'maker' && S.phase === 'open') {
+      return pasted().replace(/^lightning:/i, '');
     }
-    if (stepNo() === 2) return Promise.resolve(checkProof());
-    if (stepNo() === 3) return checkPreimage();
-    return Promise.resolve(bad('state', 'Nothing to confirm in this state.'));
+    return S.inv || '';
   }
-
-  /* ------------------------------------------------------------ render --- */
-  function headline() {
-    var t = S.role === 'taker';
-    if (S.phase === 'idle') return [t ? 'You send USDT' : 'Swap bitcoin for USDT', ''];
-    if (S.phase === 'open') return t ? ['Get paid in bitcoin', ''] : ['Lock bitcoin to open the swap', ''];
-    if (S.phase === 'btc') return t ? ['Lock USDT in escrow', ''] : ['Bitcoin is locked · USDT next', ''];
-    if (S.phase === 'both') return ['Both sides locked · settle now', 'ready'];
-    if (S.phase === 'settled') return ['Swap settled', 'done'];
-    if (S.phase === 'expired') return ['Timelock expired', 'warn'];
-    return ['Both legs refunded', 'warn'];
-  }
-
-  function btcChip() {
-    if (S.btcState === 'settled') return { txt: 'Settled', cls: 'on' };
-    if (S.btcState === 'held') return { txt: 'HTLC held', cls: S.phase === 'expired' ? 'warn' : 'on' };
-    if (S.btcState === 'refunded') return { txt: 'Refunded', cls: 'warn' };
-    if (S.phase === 'expired') return { txt: 'Expired', cls: 'warn' };
-    return { txt: 'Unlocked', cls: '' };
-  }
-  function usdtChip() {
-    if (S.usdtState === 'claimed') return { txt: 'Claimed', cls: 'on' };
-    if (S.usdtState === 'locked') return { txt: 'Locked', cls: S.phase === 'expired' ? 'warn' : 'on' };
-    if (S.usdtState === 'refunded') return { txt: 'Refunded', cls: 'warn' };
-    if (S.phase === 'expired') return { txt: 'Expired', cls: 'warn' };
-    return { txt: 'Unlocked', cls: '' };
+  function invitePayload() {
+    if (S.mode === 'wallet' && S.role === 'taker' && S.inv) return 'lightning:' + S.inv;
+    return swapLink();
   }
 
   function render() {
-    var h = headline();
+    var l = locked(), sendingBtc = S.role === 'maker', done = S.phase === 'settled';
+
     document.body.dataset.phase = S.phase;
     document.body.dataset.mode = S.mode;
     document.body.dataset.role = S.role;
+    document.body.dataset.dir = S.direction;
 
-    $('statusTxt').textContent = h[0];
-    $('statusTxt').className = 'headline' + (h[1] ? ' ' + h[1] : '');
-    $('note').textContent = S.mode === 'wallet'
-      ? 'Wallet mode · a real offer or invoice, your wallet, its payment hash'
-      : S.role === 'taker'
-        ? 'Practice escrow · you are the USDT side'
-        : 'Practice escrow · no real funds move';
     $('modePractice').className = S.mode === 'practice' ? 'on' : '';
     $('modeWallet').className = S.mode === 'wallet' ? 'on' : '';
-    $('roleBadge').hidden = S.role !== 'taker';
-    $('roleTxt').textContent = 'USDT side';
-
-    $('btcAmt').textContent = fmt(S.sats);
-    $('usdtAmt').textContent = usdtTxt();
-    $('btcSub').textContent = '\u2248 ' + usdtTxt() + ' USDT' + (S.pstate === 'live' ? ' at the live rate' : ' at the demo rate');
-    $('usdtSub').textContent = '\u2248 ' + fmt(S.sats) + ' sats';
-
-    var cb = btcChip(), cu = usdtChip();
-    $('chipBtc').className = 'chip ' + cb.cls;
-    $('chipBtcTxt').textContent = cb.txt;
-    $('chipUsdt').className = 'chip ' + cu.cls;
-    $('chipUsdtTxt').textContent = cu.txt;
-
     $('rateDot').className = 'dot ' + (S.pstate === 'live' ? 'live' : S.pstate === 'offline' ? 'off' : '');
-    $('rateTxt').textContent = S.price ? '1 BTC \u2248 ' + fmt(Math.round(S.price)) + ' USDT' : '1 BTC \u2248 — USDT';
+    $('rateTxt').textContent = S.price ? '1 BTC \u2248 ' + fmt(Math.round(S.price)) + ' USDT' : '1 BTC \u2248 \u2014 USDT';
 
-    var btcOn = S.btcState === 'held' || S.btcState === 'settled';
-    var usdtOn = S.usdtState === 'locked' || S.usdtState === 'claimed';
-    $('cardBtc').dataset.on = btcOn ? '1' : '0';
-    $('cardUsdt').dataset.on = usdtOn ? '1' : '0';
-    $('lkBtc').className = 'lk' + (btcOn ? ' on' : '');
-    $('lkUsdt').className = 'lk' + (usdtOn ? ' on' : '');
-    $('railFill').style.setProperty('--f', (btcOn && usdtOn ? 100 : btcOn || usdtOn ? 50 : 0) + '%');
-    var rs = 'Neither side locked', rsOn = false;
-    if (S.phase === 'settled') { rs = 'Settled · both legs closed'; rsOn = true; }
-    else if (S.phase === 'refunded') { rs = 'Refunded · nothing was claimed'; }
-    else if (S.phase === 'expired') { rs = 'Timelock expired · refund open'; }
-    else if (btcOn && usdtOn) { rs = 'Both sides locked · settle before T2'; rsOn = true; }
-    else if (btcOn) { rs = 'Bitcoin locked · waiting for USDT'; rsOn = true; }
-    else if (usdtOn) { rs = 'USDT locked · waiting for bitcoin'; rsOn = true; }
-    else if (S.phase === 'open') { rs = S.role === 'taker' ? 'No lock yet · verify the offer' : 'No lock yet'; }
-    $('railState').textContent = rs;
-    $('railState').className = 'rail-state' + (rsOn ? ' on' : '');
+    if (sendingBtc) {
+      $('sendAmt').textContent = fmt(S.sats); $('sendUnit').textContent = 'sats';
+      $('sendSub').textContent = '\u2248 ' + (usdtOf() ? usdtTxt() + ' USDT' : '\u2014 USDT');
+      $('getAmt').textContent = usdtOf() ? usdtTxt() : '\u2014'; $('getUnit').textContent = 'USDT';
+      $('getSub').textContent = '\u2248 ' + fmt(S.sats) + ' sats';
+    } else {
+      $('sendAmt').textContent = usdtOf() ? usdtTxt() : '\u2014'; $('sendUnit').textContent = 'USDT';
+      $('sendSub').textContent = '\u2248 ' + fmt(S.sats) + ' sats';
+      $('getAmt').textContent = fmt(S.sats); $('getUnit').textContent = 'sats';
+      $('getSub').textContent = '\u2248 ' + (usdtOf() ? usdtTxt() + ' USDT' : '\u2014 USDT');
+    }
 
-    $('t1Row').hidden = !S.t1;
-    $('t2Row').hidden = !S.t2;
-    $('t1H').textContent = S.t1 ? fmt(S.t1) : '—';
-    $('t1Left').textContent = !S.t1 ? '—' : (S.phase === 'settled' || S.phase === 'refunded') ? 'closed' : '~' + spanTxt((S.t1 - curHeight()) * BLOCK_SECS);
-    $('t2U').textContent = S.t2 ? String(S.t2) : '—';
-    $('t2Left').textContent = !S.t2 ? '—' : (S.phase === 'settled' || S.phase === 'refunded') ? 'closed' : priceNow();
-    $('t1Meter').className = 'meter' + (S.t1 && (S.phase !== 'settled' && S.phase !== 'refunded') && ((S.t1 - curHeight()) * BLOCK_SECS) < T1_BLOCKS * BLOCK_SECS * .25 ? ' warn' : '');
-    $('t2Meter').className = 'meter' + (S.t2 && (S.phase !== 'settled' && S.phase !== 'refunded') && (S.t2 - nowSec()) < T2_SPAN * .25 ? ' warn' : '');
-    $('t1Bar').style.width = S.t1 ? Math.max(0, Math.min(100, (S.t1 - curHeight()) * BLOCK_SECS / (T1_BLOCKS * BLOCK_SECS) * 100)) + '%' : '0%';
-    $('t2Bar').style.width = S.t2 ? Math.max(0, Math.min(100, (S.t2 - nowSec()) / T2_SPAN * 100)) + '%' : '0%';
+    showTag($('sendTag'), $('sendTagTxt'), sendingBtc ? l.btc : l.usdt, done);
+    showTag($('getTag'), $('getTagTxt'), sendingBtc ? l.usdt : l.btc, done);
 
-    $('counterInv').textContent = S.counterInv || '—';
-    $('shareLink').textContent = swapLink() || '—';
-    $('shareRow').hidden = !(S.phase === 'open' && S.role === 'maker' && S.mode === 'practice');
-    $('receiptLbl').hidden = S.mode !== 'wallet';
-    $('receiptIn').hidden = S.mode !== 'wallet';
-    $('wRow').hidden = S.mode !== 'wallet';
-    $('walletLink').setAttribute('href', 'lightning:' + (currentInvoice() || ''));
-    $('issueOut').textContent = S.inv || '—';
-    $('sealR').textContent = S.R || '—';
-    $('seal').hidden = !S.sealOpen || !S.R || S.role === 'taker';
-    $('preHint').textContent = S.role === 'taker' ? '· revealed by the bitcoin side' : '· sealed on this device';
-    $('swapRow').hidden = !(S.phase === 'idle' && S.role === 'taker' && S.mode === 'wallet');
-    $('swapIn').hidden = !(S.phase === 'idle' && S.role === 'taker' && S.mode === 'wallet');
+    var st = 'Ready', on = false;
+    if (S.phase === 'settled') { st = 'Completed'; on = true; }
+    else if (S.phase === 'refunded') { st = 'Refunded'; }
+    else if (S.phase === 'expired') { st = 'Expired'; }
+    else if (l.btc && l.usdt) { st = 'Both locked'; on = true; }
+    else if (l.btc) { st = 'Bitcoin locked'; on = true; }
+    else if (l.usdt) { st = 'USDT locked'; on = true; }
+    $('stateTxt').textContent = st;
+    $('stateTxt').dataset.on = on ? '1' : '0';
 
+    $('counterInv').textContent = S.counterInv || '\u2014';
     renderStep();
     renderLog();
   }
 
-  function currentInvoice() {
-    var v = String($('invIn').value || '').trim();
-    return v || S.counterInv || '';
-  }
-
   function renderStep() {
-    var step = stepNo(), taker = S.role === 'taker';
-    var kick = 'START', title = taker ? 'You send USDT' : 'Choose an amount';
-    var actor = taker ? 'You · USDT side' : 'You · bitcoin side', panel = 'pCreate';
-    var desc = taker ? 'Verify the offer, lock USDT, settle in bitcoin.' : 'Open a swap, then lock each side against the same hashlock.';
-    var primary = taker ? 'Start swap' : 'Create swap', ghosts = false;
+    var taker = S.role === 'taker', w = S.mode === 'wallet', l = locked();
+    var title = 'Swap bitcoin for USDT', cta = 'Start swap', tone = '';
+    var paste = false, pasteLbl = '', invite = false, payRow = false, ghost = false;
 
-    if (S.phase === 'open' && taker) {
-      kick = 'STEP 1 OF 3'; title = 'Verify the offer'; actor = 'You · USDT side'; panel = 'pIssue';
-      desc = '';
-      primary = 'Verify & lock'; ghosts = true;
+    if (S.phase === 'idle') {
+      title = taker ? 'Swap USDT for bitcoin' : 'Swap bitcoin for USDT';
+      paste = w && taker; pasteLbl = 'Invite from your partner';
     } else if (S.phase === 'open') {
-      kick = 'STEP 1 OF 3'; title = 'Lock bitcoin'; actor = 'You · bitcoin side'; panel = 'pInvoice';
-      desc = '';
-      primary = 'Pay invoice & lock bitcoin'; ghosts = true;
-    } else if (S.phase === 'btc' && taker) {
-      kick = 'STEP 2 OF 3'; title = 'Lock USDT in escrow'; actor = 'You · USDT side'; panel = 'pProof';
-      desc = '';
-      primary = 'Lock USDT'; ghosts = true;
+      if (taker) { title = 'Lock your USDT'; cta = 'Lock my USDT'; }
+      else { title = 'Lock your bitcoin'; cta = w ? 'I paid' : 'Lock my BTC'; }
+      paste = w && !taker; pasteLbl = 'Invoice from your partner';
+      payRow = w && !taker;
     } else if (S.phase === 'btc') {
-      kick = 'STEP 2 OF 3'; title = 'Verify the USDT lock'; actor = 'Counterparty · USDT side'; panel = 'pProof';
-      desc = '';
-      primary = 'Verify escrow & continue'; ghosts = true;
+      if (l.usdt) {
+        title = taker ? 'Your partner pays you' : 'Your partner locks USDT';
+        cta = 'Partner locks';
+        paste = false;
+      } else {
+        title = 'Your partner locks USDT';
+        cta = 'Partner locks';
+        paste = w; pasteLbl = 'Lock code from your partner';
+      }
+      invite = w && taker && l.usdt;
     } else if (S.phase === 'both') {
-      kick = 'STEP 3 OF 3'; title = taker ? 'Settle the Lightning leg' : 'Settle with the preimage';
-      actor = taker ? 'You · USDT side' : 'You · bitcoin side'; panel = 'pClaim';
-      desc = '';
-      primary = taker ? 'Settle with revealed R' : 'Settle swap'; ghosts = true;
-    } else if (S.phase === 'expired') {
-      kick = 'TIMELOCK'; title = 'Refund both legs'; actor = 'Anyone'; panel = '';
-      desc = '';
-      primary = 'Refund both legs'; ghosts = true;
+      title = 'Complete the swap'; cta = 'Complete swap';
+      paste = !S.R; pasteLbl = 'Code from your partner';
     } else if (S.phase === 'settled') {
-      kick = 'CLOSED'; title = 'Swap settled'; actor = 'Both sides'; panel = '';
-      desc = '';
-      primary = 'Start a new swap';
-    } else if (S.phase === 'refunded') {
-      kick = 'CLOSED'; title = 'Both legs refunded'; actor = 'Both sides'; panel = '';
-      desc = '';
-      primary = 'Start a new swap';
+      title = 'Swap complete'; cta = 'Done'; tone = 'done'; ghost = true;
+    } else if (S.phase === 'expired') {
+      title = 'Time is up'; cta = 'Refund'; ghost = true;
+    } else {
+      title = 'Swap refunded'; cta = 'Done'; ghost = true;
     }
 
-    $('stepKicker').textContent = kick;
     $('stepTitle').textContent = title;
-    $('stepActor').textContent = actor;
-    $('stepActor').className = 'actor' + (actor.indexOf('Counterparty') === 0 ? ' other' : '');
-    $('stepDesc').textContent = desc;
-    ['pCreate', 'pIssue', 'pInvoice', 'pProof', 'pClaim'].forEach(function (id) {
-      $(id).hidden = (panel !== id);
-    });
-    $('primary').textContent = primary;
-    $('ghostA').hidden = !ghosts;
-    $('ghostB').hidden = !ghosts;
+    $('stepTitle').className = 'q' + (tone ? ' ' + tone : '');
+    $('primary').textContent = cta;
+
+    $('presets').hidden = S.phase !== 'idle';
+    presetsOn();
+
+    $('pasteRow').hidden = !paste;
+    $('pasteLbl').textContent = pasteLbl;
+    $('inviteRow').hidden = !invite;
+    $('walletRow').hidden = !payRow;
+    $('ghost').hidden = !ghost;
+    // the direction stays visible between the cards, inert once a swap is open
+    $('swapDir').hidden = false;
+    $('swapDir').dataset.lock = S.phase === 'idle' ? '0' : '1';
+    $('swapDir').setAttribute('aria-disabled', S.phase === 'idle' ? 'false' : 'true');
+
+    var inv = currentInvoice();
+    $('walletLink').setAttribute('href', inv ? 'lightning:' + inv : '#');
+    $('walletLink').dataset.empty = inv ? '0' : '1';
   }
 
   function renderLog() {
@@ -888,31 +885,32 @@
   var gateTimer;
   function refreshGate() {
     clearTimeout(gateTimer);
-    gateTimer = setTimeout(function () {
-      validate().then(paintGate);
-    }, 80);
+    gateTimer = setTimeout(function () { validate().then(paintGate); }, 60);
   }
   function paintGate(r) {
     S.gate = r;
-    var g = $('gate');
-    var state = r.ok ? (r.code === 'ref' ? 'ref' : 'ok') : (r.code === 'empty' ? 'idle' : 'err');
-    g.dataset.state = state;
-    $('gateTxt').textContent = r.msg;
+    var say = $('stepSay');
+    say.textContent = r.msg;
+    say.className = 'say' + (r.ok || r.code === 'empty' ? '' : ' err');
     $('primary').dataset.ready = r.ok ? '1' : '0';
-    var id = mainInput();
-    if (id) {
-      var el = $(id);
+    var el = $('pasteIn');
+    if (el && !$('pasteRow').hidden) {
       el.dataset.state = r.ok ? 'ok' : (r.code === 'empty' ? '' : 'err');
     }
   }
   function shake() {
-    var g = $('gate');
+    var g = $('stepSay');
     g.classList.remove('shake');
     void g.offsetWidth;
     g.classList.add('shake');
   }
 
   /* ------------------------------------------------------------ actions -- */
+  function startSwap() {
+    if (S.mode === 'wallet' && S.role === 'taker') { createSwapUsdt(); return; }
+    createSwap();
+  }
+
   function createSwap() {
     var R = rndHex(32);
     sha256Hex(R).then(function (H) {
@@ -921,174 +919,137 @@
       S.t2 = nowSec() + T2_SPAN;
       S.t1 = curHeight() + T1_BLOCKS;
       S.units = S.price ? Math.round(S.sats / 1e8 * S.price * 1e6) : null;
-      S.phase = 'open';
       S.btcState = 'none'; S.usdtState = 'none';
-      S.inv = ''; S.invDec = null;
-      $('invIn').value = ''; $('proofIn').value = ''; $('preIn').value = ''; $('receiptIn').value = '';
-      $('invIn').dataset.state = ''; $('proofIn').dataset.state = ''; $('preIn').dataset.state = '';
+      S.inv = ''; S.invDec = null; S.usdtProof = '';
       S.counterInv = S.mode === 'practice' ? mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN }) : '';
-      S.altInv = S.mode === 'practice' ? mintOffer({ paymentHash: '0x' + rndHex(32), sats: S.sats, expiry: T2_SPAN }) : '';
-      log('CREATE', 'Swap opened · ' + fmt(S.sats) + ' sats \u21c4 ' + usdtTxt() + ' USDT');
+      S.phase = 'open';
+      log('CREATE', 'swap opened · ' + fmt(S.sats) + ' sats \u21c4 ' + usdtTxt() + ' USDT');
       log('HASH', 'R sealed · H = SHA256(R) = ' + short(S.H, 8));
-      log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' (BTC) · T2 unix ' + S.t2 + ' (USDT)');
+      log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' · T2 unix ' + S.t2);
       if (S.counterInv) log('OFFER', 'BOLT12 offer minted · hashlock = H');
       return computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, EVM.token, usdtUnits(), S.t2);
     }).then(function (id) {
       S.id = id;
+      var el = $('pasteIn'); if (el) { el.value = ''; el.dataset.state = ''; }
+      var box = $('qrBox'); if (box) box.innerHTML = '';
       render();
       refreshGate();
-      toast('Swap opened · verify the offer');
+      toast('Swap started');
     }).catch(function (e) {
       log('FAIL', 'SHA-256: ' + e.message, 'c-err');
       render();
-      toast('WebCrypto is unavailable');
+      toast('This device cannot make the secret');
     });
   }
 
-  /* Send-USDT start: this device plays both sides, so the hashlock is created
-     here and the bitcoin side is simulated from the same secret. */
+  /* Send-USDT start: the hashlock comes from the invite, or is created here
+     when the practice partner is simulated on the same screen. */
   function createSwapUsdt() {
     var done = function (H, R) {
-      /* practice: this device simulates the bitcoin side, so it also holds
-         the preimage. wallet: R stays with the counterparty until the reveal. */
       S.R = R || null;
       S.H = '0x' + normHex(H);
       S.t2 = nowSec() + T2_SPAN;
       S.t1 = curHeight() + T1_BLOCKS;
       S.units = S.price ? Math.round(S.sats / 1e8 * S.price * 1e6) : null;
-      S.phase = 'open';
       S.btcState = 'none'; S.usdtState = 'none';
-      S.inv = ''; S.invDec = null;
-      $('proofIn').value = ''; $('preIn').value = ''; $('receiptIn').value = '';
-      $('proofIn').dataset.state = ''; $('preIn').dataset.state = '';
+      S.inv = ''; S.invDec = null; S.usdtProof = '';
       S.counterInv = S.mode === 'practice' ? mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN }) : '';
-      S.altInv = S.mode === 'practice' ? mintOffer({ paymentHash: '0x' + rndHex(32), sats: S.sats, expiry: T2_SPAN }) : '';
-      log('CREATE', 'Swap opened from the USDT side · ' + usdtTxt() + ' USDT \u21c4 ' + fmt(S.sats) + ' sats');
-      log('HASH', 'H = SHA256(R) = ' + short(S.H, 8) + ' · the bitcoin side keeps R');
-      log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' (BTC) · T2 unix ' + S.t2 + ' (USDT)');
-      if (S.mode === 'practice') {
-        S.inv = S.counterInv;
-        $('invIn').value = S.counterInv;
-        log('OFFER', 'BOLT12 offer minted · hashlock = H');
-        log('SIM', 'the bitcoin side is this device in practice mode', 'c-sim');
-        log('PASTE', 'offer pasted · hashlock verified');
-      } else {
-        log('OFFER', 'waiting for the offer or invoice you were sent');
-      }
-      historyEntry('Opened', '+' + fmt(S.sats) + ' sats');
+      S.phase = 'open';
+      log('CREATE', 'swap opened from the USDT side · ' + usdtTxt() + ' USDT \u21c4 ' + fmt(S.sats) + ' sats');
+      log('HASH', 'H = SHA256(R) = ' + short(S.H, 8));
+      log('TIMELOCK', 'T1 block ' + fmt(S.t1) + ' · T2 unix ' + S.t2);
+      render();
+      refreshGate();
       computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, EVM.token, usdtUnits(), S.t2).then(function (id) {
         S.id = id;
         render();
         refreshGate();
-        toast('Swap opened · lock your USDT');
       });
     };
     if (S.mode === 'wallet') {
       try {
-        var d = parseLightning($('swapIn').value);
+        var d = parseLightning(pasted());
         if (!d || !d.paymentHash) {
-          log('BLOCK', 'that string carries no payment hash to build the swap on', 'c-err');
-          render();
-          refreshGate();
+          log('BLOCK', 'that invite carries no payment hash', 'c-err');
+          render(); refreshGate();
           return;
         }
         if (d.sats) S.sats = d.sats;
         done(d.paymentHash);
       } catch (e) {
         log('BLOCK', e.message, 'c-err');
-        render();
-        refreshGate();
+        render(); refreshGate();
       }
       return;
     }
     var R = rndHex(32);
-    sha256Hex(R).then(function (H) {
-      done(H, '0x' + R);
-    });
+    sha256Hex(R).then(function (H) { done(H, '0x' + R); });
   }
 
   function lockBtc(r) {
-    var inv = (r && r.inv) || checkSwapRequest();
-    S.inv = inv.raw || String($('invIn').value || '').trim();
-    S.invDec = inv.dec;
     S.btcState = 'held';
-    S.phase = 'btc';
-    log('VERIFY', (inv.dec && inv.dec.kind === 'bolt12' ? 'BOLT12 ' + (inv.dec.form || 'offer') : 'BOLT11') +
-      ' · payment_hash == H · ' + fmt(S.sats) + ' sats');
+    if (S.mode === 'practice' && !S.usdtProof) {
+      S.usdtProof = escrowProof();
+      log('SIM', 'the USDT side locks against the same H while this screen plays both', 'c-sim');
+    }
+    S.invDec = (r && r.dec) || (S.inv ? decodeSwapOffer(S.inv) : null);
+    if (S.mode === 'wallet' && r && r.raw) S.inv = r.raw;
     log('LOCK', 'BTC · ' + fmt(S.sats) + ' sats held in the HTLC until block ' + fmt(S.t1));
-    if (S.mode === 'wallet') log('WALLET', 'Receipt accepted · ' + short(normHex($('receiptIn').value), 6));
+    S.phase = phaseNow();
+    var el = $('pasteIn'); if (el) el.value = '';
     render();
     refreshGate();
-    toast('Bitcoin locked · verify the USDT escrow');
+    toast('Bitcoin locked');
   }
 
-  function issueInvoice() {
-    if (!S.inv) S.inv = mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN });
-    var d;
-    try { d = decodeSwapOffer(S.inv); } catch (e) {
-      log('FAIL', 'minted offer does not decode: ' + e.message, 'c-err');
-      render();
-      toast('Offer could not be verified');
-      return;
+  function lockUsdtLeg(r) {
+    if (S.role === 'taker' && !S.inv) {
+      S.inv = mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN });
+      var self = decodeSwapOffer(S.inv);
+      if (!self || normHex(self.paymentHash) !== normHex(S.H)) {
+        log('FAIL', 'minted offer does not carry H', 'c-err');
+        render();
+        toast('Could not make the invoice');
+        return;
+      }
+      log('OFFER', 'BOLT12 invoice minted · hashlock = H');
     }
-    S.invDec = d;
-    log('OFFER', 'BOLT12 minted · ' + fmt(d.sats || S.sats) + ' sats · hashlock ' + short(d.paymentHash, 6));
-    if (normHex(d.paymentHash) !== normHex(S.H)) {
-      log('FAIL', 'minted offer hashlock is not H', 'c-err');
-      render();
-      toast('Offer hash mismatch');
-      return;
-    }
-    log('VERIFY', 'self-check · hashlock == H \u2713 · expires ' + clock(d.absoluteExpiry));
-    S.btcState = 'held';
-    S.phase = 'btc';
-    log('SIM', 'BTC side paid the hold invoice · HTLC held (simulated)', 'c-sim');
-    render();
-    refreshGate();
-    toast('Offer verified · lock your USDT');
-  }
-
-  function lockUsdt(r) {
     S.usdtState = 'locked';
-    S.phase = 'both';
-    S.usdtProof = String($('proofIn').value || '').trim();
-    log('VERIFY', (r && r.msg) || checkProof().msg);
+    S.usdtProof = S.mode === 'wallet' ? pasted() : escrowProof();
     log('LOCK', 'USDT · ' + usdtTxt() + ' USDT locked in escrow until T2 ' + S.t2);
+    S.phase = phaseNow();
+    var el = $('pasteIn'); if (el) el.value = '';
     render();
     refreshGate();
-    toast('USDT locked · settle with R');
+    toast('USDT locked');
   }
 
-  function settle(r) {
-    var pre = '0x' + normHex($('preIn').value);
+  function complete(r) {
+    var pre = (r && r.preimage) || (S.mode === 'wallet' && S.role === 'taker' ? '0x' + normHex(pasted()) : S.R);
     S.btcState = 'settled';
     S.usdtState = 'claimed';
     S.phase = 'settled';
-    if (S.role === 'maker') {
-      log('CLAIM', 'escrow claimed · ' + usdtTxt() + ' USDT \u2192 you');
-      log('REVEAL', 'R published ' + short(pre, 6) + ' · anyone can settle the HTLC with it');
-      log('SETTLE', 'bitcoin HTLC settled with R · swap closed');
-      historyEntry('Swapped', '+' + usdtTxt() + ' USDT', 'plus');
-    } else {
-      log('CHECK', (r && r.code === 'ok' ? 'SHA256(revealed R) == H \u2713' : 'reveal accepted'));
-      log('SETTLE', 'Lightning HTLC settled with the revealed R · swap closed');
-      historyEntry('Swapped', '+' + fmt(S.sats) + ' sats', 'plus');
+    log('REVEAL', 'R published ' + short(pre, 6) + ' · the HTLC settles with it');
+    log('SETTLE', 'both legs closed');
+    if (S.mode === 'wallet') {
+      historyEntry('Swap', (S.role === 'maker' ? '+' + usdtTxt() + ' USDT' : '+' + fmt(S.sats) + ' sats'), 'plus');
     }
     render();
     refreshGate();
-    toast('Swap settled');
+    toast('Swap complete');
   }
 
-  function doRefund() {
-    if (nowSec() < (S.t2 || 0)) { toast('T2 has not passed yet'); return; }
+  function refund() {
+    if (nowSec() < (S.t2 || 0)) { toast('Not time yet'); return; }
     var held = S.btcState === 'held' || S.usdtState === 'locked';
     if (S.btcState === 'held') S.btcState = 'refunded';
     if (S.usdtState === 'locked') S.usdtState = 'refunded';
     S.phase = 'refunded';
-    log('REFUND', held ? 'both legs returned to their owners after T2' : 'nothing was locked · the swap expired unused');
-    log('VOID', 'R was never revealed · the hashlock stays unused', 'c-warn');
-    historyEntry('Refunded', 'after T2', 'warn');
+    log('REFUND', held ? 'both legs returned to their owners after T2' : 'nothing was locked; the swap expired unused');
+    log('VOID', 'R was never revealed', 'c-warn');
+    if (S.mode === 'wallet') historyEntry('Refund', 'nothing moved', 'warn');
     render();
+    refreshGate();
     toast('Refunded');
   }
 
@@ -1096,12 +1057,11 @@
     S.phase = 'idle'; S.H = null; S.R = null; S.id = null;
     S.btcState = 'none'; S.usdtState = 'none';
     S.sim = 0; S.t1 = null; S.t2 = null; S.units = null; S.sealOpen = false;
-    S.inv = ''; S.invDec = null; S.counterInv = ''; S.altInv = '';
+    S.inv = ''; S.invDec = null; S.counterInv = ''; S.altInv = ''; S.usdtProof = '';
     S.role = S.direction === 'u2b' ? 'taker' : 'maker';
-    ['invIn', 'proofIn', 'preIn', 'receiptIn', 'swapIn'].forEach(function (id) {
-      $(id).value = ''; $(id).dataset.state = '';
-    });
-    log('RESET', 'State cleared · start a new swap');
+    var el = $('pasteIn'); if (el) { el.value = ''; el.dataset.state = ''; }
+    var box = $('qrBox'); if (box) box.innerHTML = '';
+    log('RESET', 'state cleared');
     render();
     refreshGate();
   }
@@ -1119,7 +1079,8 @@
     S.phase = 'open';
     S.btcState = 'none'; S.usdtState = 'none';
     S.inv = ''; S.invDec = null;
-    log('JOIN', 'Joined as the USDT side · ' + fmt(S.sats) + ' sats \u21c4 ' + usdtTxt() + ' USDT');
+    S.counterInv = S.mode === 'practice' ? mintOffer({ paymentHash: S.H, sats: S.sats, expiry: T2_SPAN }) : '';
+    log('JOIN', 'joined as the USDT side · ' + fmt(S.sats) + ' sats \u21c4 ' + usdtTxt() + ' USDT');
     log('HASH', 'H ' + short(S.H, 8) + ' · R stays with the bitcoin side');
     log('TIMELOCK', 'T2 unix ' + S.t2 + ' · T1 block ' + fmt(S.t1));
     computeSwapId(S.H, EVM.usdtSide, EVM.btcSide, EVM.token, usdtUnits(), S.t2).then(function (id) {
@@ -1130,18 +1091,11 @@
     render();
   }
 
-  function run() {
-    if (S.phase === 'settled' || S.phase === 'refunded' || S.phase === 'idle') {
-      if (S.phase === 'idle') {
-        if (S.role === 'taker') { createSwapUsdt(); return; }
-        createSwap();
-        return;
-      }
-      reset();
-      return;
-    }
-    if (S.phase === 'expired') { doRefund(); return; }
-    var step = stepNo();
+  /* one tap: the gate decides whether it moves on */
+  function tap() {
+    if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
+    if (S.phase === 'idle') { startSwap(); return; }
+    if (S.phase === 'expired') { refund(); return; }
     validate().then(function (r) {
       paintGate(r);
       if (!r.ok) {
@@ -1151,31 +1105,33 @@
         toast(r.msg);
         return;
       }
-      if (step === 1) (S.role === 'taker' ? issueInvoice() : lockBtc(r));
-      else if (step === 2) lockUsdt(r);
-      else if (step === 3) settle(r);
+      if (S.phase === 'open') {
+        if (S.role === 'maker') lockBtc(r); else lockUsdtLeg(r);
+      } else if (S.phase === 'btc') {
+        if (S.usdtState !== 'locked') lockUsdtLeg(r); else lockBtc(r);
+      } else if (S.phase === 'both') {
+        complete(r);
+      }
     });
   }
 
   /* ---------------------------------------------------------------- QR --- */
-  function showQr(boxId, payload, caption) {
-    var box = $(boxId);
-    if (!payload) { box.innerHTML = ''; toast('Nothing to encode yet'); return; }
+  function showQr(payload, caption) {
+    var box = $('qrBox');
+    if (!payload) { box.innerHTML = ''; toast('Nothing to show yet'); return; }
     var bytes = utf8(payload).length;
-    if (bytes > QR_MAX) {
-      box.innerHTML = '<p class="hint">Too long for a QR here: copy it, or use the lightning: link instead.</p>';
-      return;
-    }
     var svg = null;
-    ['M', 'L'].forEach(function (level) {
-      if (svg) return;
-      try { svg = window.QR.svg(payload, { level: level, quiet: 2 }); } catch (e) { svg = null; }
-    });
+    if (bytes <= QR_MAX) {
+      ['M', 'L'].forEach(function (level) {
+        if (svg) return;
+        try { svg = window.QR.svg(payload, { level: level, quiet: 2 }); } catch (e) { svg = null; }
+      });
+    }
     if (!svg) {
-      box.innerHTML = '<p class="hint">Too long for a QR here: copy it, or use the lightning: link instead.</p>';
+      box.innerHTML = '<p class="hint">Too long for a QR: use Copy instead.</p>';
       return;
     }
-    box.innerHTML = svg + (caption ? '<p class="hint" style="margin-top:8px">' + caption + '</p>' : '');
+    box.innerHTML = svg + (caption ? '<p class="hint">' + caption + '</p>' : '');
   }
 
   function payloadJson() {
@@ -1196,27 +1152,23 @@
       usdtProof: (S.usdtProof || '').slice(0, 400),
       calldata: nextCalldata() || null
     };
-    if (S.phase === 'settled') out.preimage = S.R || ('0x' + normHex($('preIn').value));
+    if (S.phase === 'settled') out.preimage = S.R || ('0x' + normHex(pasted()));
     return out;
   }
 
   /* ------------------------------------------------------------ events --- */
   var ACT = {
     mode: function (b) {
-      if (S.phase !== 'idle') { toast('Finish or reset the swap first'); return; }
-      if (S.role === 'taker' && S.direction !== 'u2b') { toast('A joined swap runs in practice mode'); return; }
+      if (S.phase !== 'idle') { toast('Finish this swap first'); return; }
       S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      S.role = S.direction === 'u2b' ? 'taker' : 'maker';
       render();
       refreshGate();
-      if (S.mode === 'wallet') toast('Wallet mode · offer or invoice + wallet receipt');
     },
     direction: function (b) {
-      if (S.phase !== 'idle') { toast('Finish or reset the swap first'); return; }
-      if (b.dataset.v === 'toggle') {
-        S.direction = S.direction === 'u2b' ? 'btc2u' : 'u2b';
-      } else {
-        S.direction = b.dataset.v === 'u2b' ? 'u2b' : 'btc2u';
-      }
+      if (S.phase !== 'idle') { toast('Finish this swap first'); return; }
+      if (b.dataset.v === 'toggle') S.direction = S.direction === 'u2b' ? 'btc2u' : 'u2b';
+      else S.direction = b.dataset.v === 'u2b' ? 'u2b' : 'btc2u';
       S.role = S.direction === 'u2b' ? 'taker' : 'maker';
       render();
       refreshGate();
@@ -1228,100 +1180,38 @@
       render();
       refreshGate();
     },
-    primary: function () { run(); },
-    advance: function () {
-      if (['open', 'btc', 'both'].indexOf(S.phase) < 0) return;
-      S.sim += T2_SPAN + 60;
-      log('CLOCK', 'test clock +' + Math.round((T2_SPAN + 60) / 60) + ' min', 'c-warn');
-      tick();
-      render();
-      refreshGate();
-    },
+    primary: function () { tap(); },
     reset: function () { reset(); },
-    fillOffer: function () {
-      if (!S.counterInv) return;
-      $('invIn').value = S.counterInv;
-      log('PASTE', 'offer pasted · checking the hashlock');
-      render();
-      refreshGate();
+    copyInvite: function () {
+      var p = invitePayload();
+      if (!p) { toast('Nothing to share yet'); return; }
+      copy(p, 'Link copied');
     },
-    wrongOffer: function () {
-      if (!S.altInv) return;
-      $('invIn').value = S.altInv;
-      log('PASTE', 'mismatched offer pasted · it must be refused');
-      render();
-      refreshGate();
+    qrInvite: function () {
+      var p = invitePayload();
+      if (!p) { toast('Nothing to share yet'); return; }
+      showQr(p, S.mode === 'wallet' && S.role === 'taker' ? 'Your partner scans this to pay you' : 'Your partner scans this to join');
     },
-    copyLink: function () { copy(swapLink(), 'Link copied'); },
-    qrLink: function () { showQr('qrLinkBox', swapLink(), 'Open on the USDT side'); },
-    fillProof: function () {
-      if (!S.H) return;
-      $('proofIn').value = escrowProof();
-      log('PROOF', 'escrow lock calldata generated · hashlock H, timelock T2');
-      render();
-      refreshGate();
-    },
-    wrongProof: function () {
-      if (!S.H) return;
-      var alt = '0x' + rndHex(32);
-      $('proofIn').value = lockCalldata({ hashlock: alt, timelock: S.t2, receiver: EVM.btcSide, token: EVM.token, amount: usdtUnits() });
-      log('PASTE', 'mismatched escrow lock pasted · it must be refused');
-      render();
-      refreshGate();
-    },
-    reveal: function () {
-      if (!S.R) { toast('R belongs to the bitcoin side'); return; }
-      S.sealOpen = true;
-      $('seal').hidden = false;
-      log('SEAL', 'R revealed on this device only');
-    },
-    fillPre: function () {
-      if (!S.R) { toast('R belongs to the bitcoin side'); return; }
-      $('preIn').value = S.R;
-      log('PASTE', 'own preimage pasted · checking SHA256(R) == H');
-      render();
-      refreshGate();
-    },
-    wrongPre: function () {
-      $('preIn').value = '0x' + rndHex(32);
-      log('PASTE', 'wrong preimage pasted · it must be refused');
-      render();
-      refreshGate();
-    },
-    qrOut: function () { showQr('qrOutBox', S.inv ? 'lightning:' + S.inv : '', 'Scan from the other side'); },
-    copyIssue: function () {
-      if (!S.inv) { toast('Nothing to copy yet'); return; }
-      copy(S.inv, 'Invoice copied');
-    },
-    copyInv: function () {
+    copyPay: function () {
       var inv = currentInvoice();
-      if (!inv) { toast('Paste the offer or invoice first'); return; }
+      if (!inv) { toast('Paste the invoice first'); return; }
       copy(inv, 'Invoice copied');
     },
-    qrIn: function () {
+    qrPay: function () {
       var inv = currentInvoice();
-      if (!inv) { toast('Paste the offer or invoice first'); return; }
-      showQr('qrInBox', 'lightning:' + inv, 'Scan from a Lightning wallet');
-    },
-    copyData: function () {
-      var d = nextCalldata();
-      if (!d) { toast('No call ready yet'); return; }
-      copy(d, 'calldata copied');
-    },
-    copyPayload: function () { copy(JSON.stringify(payloadJson(), null, 2), 'swap JSON copied'); }
+      if (!inv) { toast('Paste the invoice first'); return; }
+      showQr('lightning:' + inv, 'Scan from your wallet');
+    }
   };
 
   /* ---------------------------------------------------------------- tick -- */
   function tick() {
-    if (S.t2) {
-      if (['open', 'btc', 'both'].indexOf(S.phase) >= 0 && nowSec() >= S.t2) {
-        S.phase = 'expired';
-        log('TIMEOUT', 'T2 passed · claim closed, refund open', 'c-warn');
-        render();
-        refreshGate();
-        toast('Timelock expired');
-        return;
-      }
+    if (S.t2 && ['open', 'btc', 'both'].indexOf(S.phase) >= 0 && nowSec() >= S.t2) {
+      S.phase = 'expired';
+      log('TIMEOUT', 'T2 passed · claim closed, refund open', 'c-warn');
+      render();
+      refreshGate();
+      toast('Time is up');
     }
   }
 
@@ -1336,7 +1226,7 @@
         S.price = usd; S.pstate = 'live';
       })
       .catch(function () { S.price = FALLBACK_PRICE; S.pstate = 'offline'; })
-      .then(function () { clearTimeout(timer); render(); });
+      .then(function () { clearTimeout(timer); render(); refreshGate(); });
   }
 
   /* ---------------------------------------------------------------- boot -- */
@@ -1346,22 +1236,19 @@
     var fn = ACT[b.dataset.act];
     if (fn) { e.preventDefault(); fn(b); }
   });
-  // A blank lightning: link would open a wallet on nothing: say what is missing instead.
+  // A blank wallet link would open a wallet on nothing: say what is missing instead.
   $('walletLink').addEventListener('click', function (e) {
-    if (!currentInvoice()) { e.preventDefault(); toast('Paste the offer or invoice first'); }
+    if (!currentInvoice()) { e.preventDefault(); toast('Paste the invoice first'); }
   });
-  ['invIn', 'receiptIn', 'proofIn', 'preIn', 'swapIn'].forEach(function (id) {
-    $(id).addEventListener('input', function () {
-      if (id === 'invIn') $('walletLink').setAttribute('href', 'lightning:' + currentInvoice());
-      if (id === 'swapIn' && S.phase === 'idle' && S.role === 'taker' && S.mode === 'wallet') {
-        try {
-          var d = parseLightning($('swapIn').value);
-          if (d && d.sats && d.sats !== S.sats) { S.sats = d.sats; S.units = null; }
-        } catch (e) { /* validated on start */ }
-      }
-      render();
-      refreshGate();
-    });
+  $('pasteIn').addEventListener('input', function () {
+    if (S.phase === 'idle' && S.mode === 'wallet' && S.role === 'taker') {
+      try {
+        var d = parseLightning(pasted());
+        if (d && d.sats && d.sats !== S.sats) { S.sats = d.sats; S.units = null; }
+      } catch (e) { /* checked on start */ }
+    }
+    render();
+    refreshGate();
   });
 
   var joined = parseSwapLink(location.hash);
@@ -1378,12 +1265,17 @@
     decodeBolt11: decodeBolt11, decodeBolt12: decodeSwapOffer, decodeSwapOffer: decodeSwapOffer,
     mintInvoice: mintInvoice, mintOffer: mintOffer,
     lockCalldata: lockCalldata, decodeLockCalldata: decodeLockCalldata, readLockProof: readLockProof,
-    parseLightning: parseLightning,
+    parseLightning: parseLightning, readOffer: readOffer, readEscrow: readEscrow,
+    partnerOffer: partnerOffer, partnerEscrow: partnerEscrow, checkSecret: checkSecret,
     nextCalldata: nextCalldata, payload: payloadJson, render: render, renderStep: renderStep,
-    refreshGate: refreshGate, validate: validate, checkSwapRequest: checkSwapRequest, checkReceipt: checkReceipt,
-    checkProof: checkProof, checkPreimage: checkPreimage, swapLink: swapLink, parseSwapLink: parseSwapLink,
-    escrowProof: escrowProof, usdtUnits: usdtUnits, stepNo: stepNo,
-    join: join, reset: reset, createSwap: createSwap, createSwapUsdt: createSwapUsdt, run: run, tick: tick,
+    refreshGate: refreshGate, validate: validate, checkSwapRequest: function () { return partnerOffer(); },
+    checkReceipt: function () { return good('practice: the wallet step is simulated here', { code: 'skip' }); },
+    checkProof: function () { return partnerEscrow(); }, checkPreimage: checkSecret,
+    swapLink: swapLink, parseSwapLink: parseSwapLink, escrowProof: escrowProof, usdtUnits: usdtUnits,
+    stepNo: stepNo, stage: stage, locked: locked, presetsOn: presetsOn,
+    join: join, reset: reset, createSwap: createSwap, createSwapUsdt: createSwapUsdt,
+    tap: tap, run: tap, refund: refund, tick: tick,
+    advanceClock: function (sec) { S.sim += (sec || (T2_SPAN + 60)); tick(); render(); refreshGate(); },
     historyEntry: historyEntry
   };
 })();

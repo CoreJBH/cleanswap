@@ -1,74 +1,79 @@
-# CLEANSWAP
+<p align="center">
+  <img src="docs/icon.png" width="118" alt="CLEANSWAP">
+</p>
 
-A non-custodial **Lightning bitcoin ↔ USDT atomic swap** prototype — one HTML file, no framework,
-no browser extension, no wallet vendor. The screen is deliberately minimal (two asset cards, one
-input, one button); the protocol underneath is a Bitcoin-style SHA-256 hashlock that settles both
-legs with the same 32-byte secret.
+<h1 align="center">CLEANSWAP</h1>
 
-`v0.3` is about direction and calm. The home screen asks which side you are — **Send BTC** or
-**Send USDT**, one tap on the switch between the two asset cards — and everything technical moved
-out of sight. The gates did not: every step is still checked in the browser before the state
-machine moves.
+<p align="center"><b>Swap bitcoin for USDT — or USDT for bitcoin — with both sides locked before anything moves.</b></p>
 
-| Step | Gate | What has to be true |
+<p align="center">
+  <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
+  <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
+  <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-248%20passing-0f9d6e">
+  <img alt="android 0.4.0" src="https://img.shields.io/badge/android-0.4.0-0f9d6e">
+  <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
+</p>
+
+<p align="center">
+  <img src="docs/preview.png" alt="CLEANSWAP on a phone: ready, both sides locked, completed" width="100%">
+</p>
+
+CLEANSWAP is a non-custodial **Lightning bitcoin ↔ USDT atomic swap** prototype: one HTML file, no
+framework, no browser extension, no wallet vendor, no custodian. Two amount cards, one plain
+sentence and one big button per step — and underneath them a Bitcoin-style SHA-256 hashlock that
+settles both legs with the same 32-byte secret.
+
+`v0.4` is the version that stopped explaining itself. There are no symbol names, no hashes, no raw
+hex and no test buttons on the screen; the app says what to do next in one short sentence, and the
+sample and mismatch helpers of the practice sandbox are gone entirely. Everything the old screen
+showed for show — `Preimage R`, `H`, `Escrow proof`, `Wallet receipt · payment hash`, `T1 · block`,
+`T2 · unix`, `lno1… / lni1… / lnbc…` — is now checked in the background and never printed. What is
+left is a payment-app screen: **Practice | Wallet**, one rate line, two cards, a short state
+(`Ready` → `Bitcoin locked` → `Both locked` → `Completed`), and a single action.
+
+## The four taps
+
+Practice mode is the whole swap on one screen; nothing is pasted and nothing is typed.
+
+| Tap | Button | What the app verifies before it moves |
 | --- | --- | --- |
-| 1 · Lock bitcoin | BOLT12 offer/invoice or BOLT11 hold invoice | decodes, its payment hash is exactly `H`, amount equals the swap, still inside its expiry window |
-| 2 · Verify the USDT lock | escrow proof | `lock()` calldata, a lock JSON record or a Liquid lock URI decodes to the **same `H`**, **the same `T2`** and **the same USDT amount** (a bare tx hash is accepted only as an unverified reference) |
-| 3 · Settle | preimage | 32-byte `R` with `SHA256(R) === H`, computed with WebCrypto; a wrong `R` is refused with the hash it actually produced |
-| timeout | timelock | `T2` has passed, `R` was never revealed, both legs return to their owners |
+| 1 | `Start swap` | a fresh 32-byte secret `R`, `H = SHA256(R)`, a 40-block Lightning window and a one-hour token window |
+| 2 | `Lock my BTC` (or `Lock my USDT`) | the partner's invoice decodes, its payment hash is exactly `H`, its amount equals the swap, and it is still inside its expiry window |
+| 3 | `Partner locks` | the partner's escrow decodes from `lock()` calldata to the **same `H`**, the **same `T2`** and the **same USDT amount** |
+| 4 | `Complete swap` | `SHA256(R) === H`, computed with WebCrypto; the hashlock releases both legs at once |
 
-A click alone never advances. Empty, malformed, mismatched or expired input is refused inline, and
-the primary button stays marked not-ready until the gate is satisfied. Once a swap is open, the
-amount and the direction are frozen: presets and the switch disappear until the swap is reset.
+Then `Done` (or `New swap`) returns to the start. A tap alone never advances: if a check fails the
+button shakes, the button stays where it is, and the sentence says in plain English what is wrong
+("That invoice is for a different swap."). Practice swaps are **not** kept in the history — only a
+real swap is.
 
-**Live app:** open `ln-usdt-swap.html` (the single-file build) or `dist/cleanswap.html`.
+## Wallet mode — a real hand-off
 
----
+Practice replaces the counterparty with a simulator; **Wallet** replaces it with a real one. What
+stays on screen is only what a real swap needs: the invoice or lock code your partner sends (one
+single-line field, shown only when that step needs it), **Open in wallet** (the standard
+`lightning:` deep link into BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green),
+**Copy**, and **QR** for the other phone. The USDT side gets a `Copy link` / `QR` invite instead.
+There is no WebLN, no browser extension and no key request — the app never signs anything, and
+nothing is paid except in your own wallet.
 
-## Two directions, two modes
+<p align="center">
+  <img src="docs/wallet.png" width="360" alt="CLEANSWAP wallet mode with the invoice hand-off">
+</p>
 
-### Send BTC / Send USDT
+Completed real swaps land as one-line entries under **Recent** (`+32.15 USDT`, `+50,000 sats`).
 
-The two asset cards double as the direction control: the pill switch between them flips the home
-screen between *you send bitcoin* (the classic flow: create the swap, share the link, pay the
-hold invoice, claim the USDT) and *you send USDT* (verify the counterparty's offer, lock the USDT
-escrow, settle the Lightning leg with the revealed `R`).
+## Both directions
 
-### Practice escrow — both sides on one screen
+One tap on the switch between the two cards flips the home screen: *you send bitcoin* (create the
+swap, lock bitcoin, the partner locks USDT) or *you send USDT* (lock USDT first, the bitcoin side
+pays your invoice). The amount, the direction and the mode freeze once a swap is open, so the
+numbers on screen are the numbers in the hashlock.
 
-Starting a swap generates `R` and `H = SHA256(R)`, a 40-block `T1` for the Lightning leg and a
-one-hour `T2` for the token leg. From the Send-USDT side the app simulates the bitcoin
-counterparty locally, so the whole swap — offer, escrow lock, reveal, settlement — walks through
-the same gates with two or three taps and no invite link.
-
-The three steps, each gated:
-
-1. **Verify the offer.** The other side sends a BOLT12 offer (or invoice, or a BOLT11 hold
-   invoice — one input, auto-detected, a small badge says which). The app decodes it and refuses
-   anything whose payment hash is not `H` or whose amount does not match.
-2. **Lock the USDT.** The escrow proof is pasted back and decoded field by field; a lock to any
-   other hashlock, timelock or amount is refused.
-3. **Settle.** The preimage `R` is revealed; `SHA256(R)` is checked against `H`, and one hash
-   check settles both legs.
-
-The escrow board shows both legs at once: the BTC and USDT lock states on a single rail, plus
-`T1`/`T2` countdown bars that turn amber as the timelocks close. Settled swaps land as one-line
-entries in a short history list.
-
-A **share link** (`#s=1.<H>.<sats>.<units>.<T2>.<T1>`) still turns another tab or phone into the
-USDT side: same hashlock, no preimage, and its own three steps.
-
-### Wallet mode — a real offer and a real receipt
-
-The simulated counterparty is replaced by a real one: paste the offer or invoice you were sent,
-open it in BlueWallet / Wallet of Satoshi / Lexe / AQUA / Blockstream Green through the standard
-`lightning:` deep link, and confirm the lock with the `payment_hash` your wallet shows for that
-payment. A receipt for any other hash does not unlock the step.
-
-The wallet connection is only that hand-off: with the offer in place the row offers **Open in
-wallet** (the `lightning:` deep link to the installed wallet app), **Copy** (the same invoice as
-text) and **QR** (the same invoice for another phone to scan). There is no WebLN and no browser
-extension: the app never asks for a key, and nothing is paid without the wallet's own receipt.
+A **share link** (`#s=1.<H>.<sats>.<units>.<T2>.<T1>`) still opens the same swap on another phone
+as the USDT side: same hashlock, no preimage, its own steps, and it can only finish when the
+bitcoin side reveals the secret.
 
 ---
 
@@ -111,15 +116,15 @@ Arbitrum Sepolia or any EVM testnet.
 
 ### Lightning side: BOLT12 by default, BOLT11 fully accepted
 
-One input reads anything: `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice), `lnbc…`/`lntb…`
-(BOLT11), with or without the `lightning:` prefix. A small badge says which format was detected.
+One reader takes anything: `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice), `lnbc…`/`lntb…`
+(BOLT11), with or without the `lightning:` prefix.
 
 * **BOLT12 encode** (`lno1…`) — the app mints offers for a swap: TLVs over bech32 without a
   checksum, amount in the HRP (msat), `offer_description`, `offer_absolute_expiry`, a node id and a
   64-byte signature slot. An offer cannot carry a `payment_hash` by itself, so the swap hashlock
   rides in a **custom type-80 TLV**; a minted invoice (`lni1…` shape) carries the standard
-  `invoice_payment_hash` (type 168). The signature bytes are not verified by the app, and the log
-  says so.
+  `invoice_payment_hash` (type 168). The signature bytes are not verified by the app, and the
+  hidden log says so.
 * **BOLT11 encode** (`lnbc…`) — hold invoices: bech32 checksum, 35-bit timestamp, `p`/`d`/`x`
   tagged fields, a 65-byte signature slot, `payment_hash = H`.
 * **BOLT11 decode** — bech32 with checksum, tagged fields, `payment_hash` extraction; the gate
@@ -135,9 +140,15 @@ One input reads anything: `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice), 
 
 AQUA does not expose hashlock scripts, so the prototype keeps the token leg at the level a wallet
 can actually do: an amount-bearing `liquidnetwork:` request and the EVM HTLC above for anyone who
-wants the lock enforced on-chain with the identical `H`. The escrow proof the gate accepts is
-generated from that contract's ABI, so the calldata a person pastes is the calldata a wallet would
-send.
+wants the lock enforced on-chain with the identical `H`. The escrow the gate checks is generated
+from that contract's ABI, so the calldata a partner sends is the calldata a wallet would send.
+
+### What the screen deliberately hides
+
+The verification did not get weaker, it moved out of sight. The hidden event log (`#log`) still
+records every decoded field, hash comparison and refusal for a support question, and the practice
+sandbox still builds real bech32 offers, real ABI-encoded locks and a real SHA-256 preimage — the
+same decoders that check a wallet's invoice check the simulated one.
 
 ---
 
@@ -145,24 +156,28 @@ send.
 
 ```
 ln-usdt-swap.html            built single-file app (also dist/cleanswap.html)
-build.py                     src/ -> single file; refuses to emit Hangul
+build.py                     src/ -> single file (+ the APK asset); refuses to emit Hangul
 src/
-  index.template.html        screen markup (English UI, plain language)
-  app.css                    dark-emerald theme, mobile-first, dual escrow board
+  index.template.html        screen markup: two cards, one sentence, one button
+  app.css                    light payment-app theme, fixed action bar, mobile-first
   app.js                     state machine, gates, BOLT11/BOLT12 codecs, swap links, calldata
   qr.js                      dependency-free QR encoder (byte mode, 1-13, L/M/Q/H)
 contracts/
   LightningUsdtHTLC.sol      sha256 hashlock, ERC-20 escrow, timelock refund
   TestUSDT.sol               6-decimal faucet token
+docs/
+  icon.png                   app icon for this page and the launcher
+  preview.png                ready / both locked / completed, from the built app
+  wallet.png                 wallet mode hand-off
 tools/
   gen-invoice.py             builds the BOLT11 / BOLT12 samples embedded in the app
   mint-invoices.js           asks the built app to mint invoices for cross-checking
   make-icons.py              favicon + touch icon from icon-clean-1.png
   make-launcher-icons.py     Android launcher icons
   qr-check.js                dumps QR matrices for cross-checking
-  shots-extra.js             drawer / desktop inspection screenshots
+  shots-extra.js             desktop and wallet hand-off inspection screenshots
 test/
-  headless.js                Playwright end-to-end suite (160 checks)
+  headless.js                Playwright end-to-end suite (113 checks)
   contract-evm.py            contract behaviour on a real EVM + app calldata (26 checks)
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder (45 checks)
@@ -176,13 +191,13 @@ android/                     minimal WebView wrapper (com.jbitmstr.cleanswap)
 ## Build
 
 ```bash
-python3 build.py                     # -> ../ln-usdt-swap.html and dist/cleanswap.html
+python3 build.py     # -> ../ln-usdt-swap.html, dist/cleanswap.html and the APK asset
 ```
 
 The output is one self-contained file: inline CSS/JS, inline base64 icons, the Solidity source in a
 `<script type="text/plain">` block for integrity. The only network request is the optional BTC/USD
-quote from `mempool.space` (labelled "offline" with a static demo rate when it fails). The build
-also fails if any source file contains a Hangul character.
+quote from `mempool.space` (the rate line says "offline" and the shipped demo rate is used when it
+fails). The build also fails if any source file contains a Hangul character.
 
 ## Verification & test results
 
@@ -190,26 +205,27 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright, 390×844 / 360×780 / 1280×800) | Every gate refuses what it should and advances only on verified data: empty, malformed, mismatched-hash, wrong-amount, wrong-timelock, wrong-preimage and mismatched-receipt cases are all refused with the state unchanged; the real cases pass. Plus the Send BTC / Send USDT switch, the Send-USDT start with a locally simulated bitcoin side, frozen amount and direction after opening, real `crypto.subtle` SHA-256 against Node, `H = SHA256(R)`, `abi.encodePacked` swap ids, minted-offer round-trip, BIP-173 bech32 vectors, BOLT12 TLV decode, the refund path, wallet mode, the USDT side through a `#s=` link, no `window.ethereum`, no Hangul, zero horizontal overflow at three widths | **160/160 pass** |
+| `test/headless.js` (Playwright, 360×780 / 390×844 / 1280×800) | The screen holds one sentence and one action per step, the amount highlight follows the selected preset, practice runs on four taps with no field to paste into, each gate is broken on purpose and the tap is shown to be refused (wrong invoice, wrong lock amount, wrong secret), wallet mode needs exactly one paste per hand-off, a practice swap adds nothing to Recent while a real one does, the action bar never covers the last line when scrolled to the end, no technical word reaches the screen, no Hangul, zero horizontal overflow at three widths | **113/113 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: faucet/approve, `lock` escrows and debits, swap record and `computeSwapId` agree, wrong preimage reverts, correct preimage pays the receiver, `Claimed` carries `R`, double claim reverts, refund before/after the timelock, `Refunded` emitted — and the UI's `lock()` calldata decodes to the swap fields with the right keccak selector | **26/26 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads, including BOLT12 lengths at versions 12–13, matches `python-qrcode` exactly | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder: checksum, `payment_hash`, amount (including 1 sat and 250k sats), 35-bit timestamp, expiry tag, 65-byte signature slot, optional description, and a length that still fits a QR | **45/45 pass** |
 | `test/verify-english.py` | `[\uac00-\ud7af]` count is 0 across every tracked text file, file name and commit message | **0 characters** |
-| `solc` | `LightningUsdtHTLC` + `TestUSDT` compile with optimizer 200, no warnings | ✅ |
+| `solc` | `LightningUsdtHTLC` + `TestUSDT` compile with optimizer 200, no warnings | pass |
 
 ```bash
 bash test/run-all.sh      # build + English + headless + EVM + QR + invoices
 ```
 
-Screenshots of the idle, locked, settled, expired, USDT-side and desktop states are written to
-`shots/v2-*.png` by the headless suite.
+Screenshots of the ready, blocked, half-locked, both-locked, completed, expired, wallet and desktop
+states are written to `shots/v4-*.png` by the headless suite.
 
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `app_name =
-CLEANSWAP`, `android:screenOrientation="user"`, `#07130d` status/nav bars, launcher icons generated
-from `icon-clean-1.png`). Build it with `gradle assembleDebug` after staging `dist/cleanswap.html`
-into `app/src/main/assets/index.html`.
+CLEANSWAP`, `versionName 0.4.0`, `versionCode 3`, `android:screenOrientation="user"`, `#f2f4f7`
+status/nav bars, launcher icons generated from `icon-clean-1.png`). Build it with `gradle
+assembleDebug` after staging `dist/cleanswap.html` into `app/src/main/assets/index.html`
+(`build.py` writes that copy too).
 
 The shell owns the wallet hand-off: `lightning:` and `bitcoin:` links (any scheme the WebView
 cannot render) become an `ACTION_VIEW` intent, so **Open in wallet** opens the installed wallet
@@ -223,7 +239,7 @@ The APK is uploaded as a workflow artifact.
 
 ## Security notes and limitations
 
-* This is a **prototype**. The practice escrow is a local simulator — it never touches a chain.
+* This is a **prototype**. The practice sandbox is a local simulator — it never touches a chain.
 * Minted offers and invoices carry deterministic filler signatures; they parse, checksum and hash
   correctly, but no node will route them. They exist so the gate can be exercised honestly.
 * The contract is minimal by design and has **not been audited**. Do not escrow real value with it.

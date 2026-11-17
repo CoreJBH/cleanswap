@@ -20,6 +20,7 @@ CONTRACTS = os.path.join(HERE, 'contracts')
 ASSETS = os.path.join(HERE, 'assets')
 OUT = os.path.abspath(os.path.join(HERE, '..', '..', 'ln-usdt-swap.html'))
 DIST = os.path.join(HERE, 'dist', 'cleanswap.html')
+APK_ASSET = os.path.join(HERE, 'android', 'app', 'src', 'main', 'assets', 'index.html')
 HANGUL = re.compile(r'[\uac00-\ud7af]')
 
 
@@ -82,6 +83,13 @@ def main():
     with open(DIST, 'w', encoding='utf-8') as f:
         f.write(out)
     print('wrote %s (%d bytes)' % (DIST, len(out.encode('utf-8'))))
+
+    # The Android shell ships this exact file, so keep the staged copy in step
+    # with dist/ (CI does the same copy before gradle).
+    os.makedirs(os.path.dirname(APK_ASSET), exist_ok=True)
+    with open(APK_ASSET, 'w', encoding='utf-8') as f:
+        f.write(out)
+    print('wrote %s (%d bytes)' % (APK_ASSET, len(out.encode('utf-8'))))
     if HANGUL.search(out):
         sys.exit('ERROR: built page contains Hangul')
 

@@ -3,186 +3,103 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#07130d">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f2f4f7">
 <meta name="application-name" content="CLEANSWAP">
-<meta name="description" content="Non-custodial Lightning bitcoin to USDT atomic swap prototype with a real hashlock escrow simulator.">
+<meta name="description" content="Swap bitcoin and USDT both ways, with both sides locked before anything moves.">
 <meta name="apple-mobile-web-app-title" content="CLEANSWAP">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>CLEANSWAP — Lightning BTC / USDT atomic swap</title>
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>CLEANSWAP</title>
 <link rel="icon" type="image/png" sizes="64x64" href="data:image/png;base64,__ICON64__">
 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,__ICON180__">
 <style>/*__CSS__*/</style>
 </head>
-<body data-phase="idle" data-mode="practice" data-role="maker">
-<div class="wrap">
+<body data-phase="idle" data-mode="practice" data-role="maker" data-dir="btc2u">
+<div class="app">
 
   <header class="top">
-    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="30" height="30"><span>CLEANSWAP</span></div>
-    <div class="seg" role="group" aria-label="Escrow mode">
+    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="26" height="26"><span>CLEANSWAP</span></div>
+    <div class="seg" role="group" aria-label="Mode">
       <button id="modePractice" data-act="mode" data-v="practice" class="on" type="button">Practice</button>
       <button id="modeWallet" data-act="mode" data-v="wallet" type="button">Wallet</button>
     </div>
   </header>
 
-  <div class="meta">
-    <span class="badge"><span class="dot" id="rateDot"></span><span class="mono" id="rateTxt">1 BTC ≈ — USDT</span></span>
-    <span class="badge" id="roleBadge" hidden><span class="dot live"></span><span id="roleTxt">USDT side</span></span>
-  </div>
+  <p class="rate"><span class="dot" id="rateDot"></span><span id="rateTxt">1 BTC ≈ — USDT</span></p>
 
-  <h1 class="headline" id="statusTxt">Swap bitcoin for USDT</h1>
-  <p class="note" id="note">Practice escrow · no real funds move</p>
-
-  <main>
-    <section class="board" aria-label="Escrow board">
-
-      <article class="card" id="cardBtc">
-        <div class="head">
-          <span class="lbl">Lightning BTC</span>
-          <span class="chip" id="chipBtc"><i></i><em id="chipBtcTxt">Unlocked</em></span>
-        </div>
-        <div class="amt"><b id="btcAmt">50,000</b><span>sats</span></div>
-        <div class="sub" id="btcSub">≈ 47.52 USDT at the live rate</div>
-        <div class="tl" id="t1Row">
-          <div class="tl-row"><span>T1 · block <b class="mono" id="t1H">—</b></span><b class="mono" id="t1Left">—</b></div>
-          <div class="meter" id="t1Meter"><i id="t1Bar"></i></div>
-        </div>
-      </article>
-
-      <div class="rail" id="rail">
-        <div class="locks">
-          <span class="lk" id="lkBtc"><i></i>BTC</span>
-          <span class="rail-line"><i id="railFill"></i></span>
-          <span class="lk" id="lkUsdt"><i></i>USDT</span>
-        </div>
-        <button class="swapdir" id="swapDir" data-act="direction" data-v="toggle" type="button" aria-label="Switch direction">⇅</button>
-        <p class="rail-state" id="railState">Neither side locked</p>
+  <section class="cards" aria-label="Swap amounts">
+    <article class="card" id="cardSend">
+      <div class="cap">
+        <span id="sendCap">You send</span>
+        <span class="tag" id="sendTag" hidden><i></i><em id="sendTagTxt">Locked</em></span>
       </div>
+      <div class="amt"><b id="sendAmt">50,000</b><span id="sendUnit">sats</span></div>
+      <div class="sub" id="sendSub">≈ — USDT</div>
+    </article>
 
-      <article class="card" id="cardUsdt">
-        <div class="head">
-          <span class="lbl">USDT</span>
-          <span class="chip" id="chipUsdt"><i></i><em id="chipUsdtTxt">Unlocked</em></span>
-        </div>
-        <div class="amt"><b id="usdtAmt">—</b><span>USDT</span></div>
-        <div class="sub" id="usdtSub">≈ 50,000 sats</div>
-        <div class="tl" id="t2Row">
-          <div class="tl-row"><span>T2 · unix <b class="mono" id="t2U">—</b></span><b class="mono" id="t2Left">—</b></div>
-          <div class="meter" id="t2Meter"><i id="t2Bar"></i></div>
-        </div>
-      </article>
-    </section>
+    <button class="flip" id="swapDir" data-act="direction" data-v="toggle" type="button" aria-label="Switch direction">⇅</button>
 
-    <section class="step" id="step" aria-live="polite">
-      <div class="step-head">
-        <span class="kicker" id="stepKicker">START</span>
-        <span class="actor" id="stepActor">You · bitcoin side</span>
+    <article class="card" id="cardGet">
+      <div class="cap">
+        <span id="getCap">You get</span>
+        <span class="tag" id="getTag" hidden><i></i><em id="getTagTxt">Locked</em></span>
       </div>
-      <h2 class="step-title" id="stepTitle">Choose an amount</h2>
-      <p class="step-desc" id="stepDesc"></p>
+      <div class="amt"><b id="getAmt">—</b><span id="getUnit">USDT</span></div>
+      <div class="sub" id="getSub">≈ 50,000 sats</div>
+    </article>
+  </section>
 
-      <div class="panel" id="pCreate">
-        <div class="presets" id="presets">
-          <button data-act="sats" data-v="10000" type="button">10,000</button>
-          <button data-act="sats" data-v="50000" class="on" type="button">50,000</button>
-          <button data-act="sats" data-v="100000" type="button">100,000</button>
-          <button data-act="sats" data-v="250000" type="button">250,000</button>
-        </div>
-        <label class="fl" for="swapIn" id="swapRow" hidden>Offer or invoice from the other side</label>
-        <textarea class="input" id="swapIn" rows="3" hidden placeholder="lno1… / lni1… / lnbc… — the app reads both" autocomplete="off" spellcheck="false"></textarea>
-        <ol class="howto">
-          <li><b>1</b><span>Pick an amount and open the swap.</span></li>
-          <li><b>2</b><span>Lock both sides against the same secret.</span></li>
-          <li><b>3</b><span>Reveal the secret, both legs settle.</span></li>
-        </ol>
-      </div>
+  <p class="state" id="stateTxt">Ready</p>
 
-      <div class="panel" id="pInvoice" hidden>
-        <textarea class="input" id="invIn" rows="3" placeholder="lno1… / lni1… / lnbc… — the app reads both" autocomplete="off" spellcheck="false"></textarea>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="fillOffer" type="button">Use sample offer</button>
-          <button class="btn ghost sm" data-act="wrongOffer" type="button">Try a mismatched one</button>
-        </div>
+  <section class="act">
+    <h1 class="q" id="stepTitle">Swap bitcoin for USDT</h1>
+    <p class="say" id="stepSay">Pick an amount, then tap Start swap.</p>
 
-        <label class="fl" for="receiptIn" id="receiptLbl">Wallet receipt · payment hash</label>
-        <input class="input mono" id="receiptIn" placeholder="the hash your wallet shows after paying" autocomplete="off" spellcheck="false" hidden>
-
-        <div class="wrow" id="wRow" hidden>
-          <a class="btn ghost" id="walletLink" href="#">Open in wallet</a>
-          <button class="btn ghost" data-act="copyInv" type="button">Copy</button>
-          <button class="btn ghost" data-act="qrIn" type="button">QR</button>
-        </div>
-        <div class="qrbox" id="qrInBox"></div>
-
-        <div class="share" id="shareRow" hidden>
-          <span class="share-h">Invite the USDT side</span>
-          <code class="mono clamp" id="shareLink">—</code>
-          <div class="tools">
-            <button class="btn ghost sm" data-act="copyLink" type="button">Copy link</button>
-            <button class="btn ghost sm" data-act="qrLink" type="button">QR</button>
-          </div>
-          <div class="qrbox" id="qrLinkBox"></div>
-        </div>
-      </div>
-
-      <div class="panel" id="pIssue" hidden>
-        <code class="out mono" id="issueOut">—</code>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="copyIssue" type="button">Copy</button>
-          <button class="btn ghost sm" data-act="qrOut" type="button">QR</button>
-        </div>
-        <div class="qrbox" id="qrOutBox"></div>
-      </div>
-
-      <div class="panel" id="pProof" hidden>
-        <textarea class="input" id="proofIn" rows="3" placeholder="Escrow proof from the USDT side" autocomplete="off" spellcheck="false"></textarea>
-        <div class="tools">
-          <button class="btn ghost sm" data-act="fillProof" type="button">Generate escrow lock</button>
-          <button class="btn ghost sm" data-act="wrongProof" type="button">Try a mismatched lock</button>
-        </div>
-      </div>
-
-      <div class="panel" id="pClaim" hidden>
-        <label class="fl" for="preIn">Preimage R <span class="mini" id="preHint"></span></label>
-        <input class="input mono" id="preIn" placeholder="The secret behind H" autocomplete="off" spellcheck="false">
-        <div class="tools">
-          <button class="btn ghost sm" data-act="reveal" type="button">Reveal my secret</button>
-          <button class="btn ghost sm" data-act="fillPre" type="button">Use it</button>
-          <button class="btn ghost sm" data-act="wrongPre" type="button">Try a wrong R</button>
-        </div>
-        <div class="seal" id="seal" hidden><span>Sealed on this device</span><code class="mono" id="sealR">—</code></div>
-      </div>
-
-      <div class="gate" id="gate" data-state="idle" role="status">
-        <span class="gate-ico" aria-hidden="true"></span>
-        <span id="gateTxt">Press Create swap to generate the hashlock.</span>
-      </div>
-    </section>
-
-    <div class="history" id="history" hidden>
-      <p class="hist-h">Recent swaps</p>
-      <p class="hint" id="histEmpty">Nothing settled yet.</p>
-      <div id="histList"></div>
+    <div class="presets" id="presets">
+      <button data-act="sats" data-v="10000" type="button">10,000</button>
+      <button data-act="sats" data-v="50000" class="on" type="button">50,000</button>
+      <button data-act="sats" data-v="100000" type="button">100,000</button>
+      <button data-act="sats" data-v="250000" type="button">250,000</button>
     </div>
 
-    <p class="foot">No fees · non-custodial · nothing here is a bank</p>
-  </main>
+    <label class="field" id="pasteRow" hidden>
+      <span class="field-lbl" id="pasteLbl">From your partner</span>
+      <input id="pasteIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste it here">
+    </label>
+
+    <div class="row" id="inviteRow" hidden>
+      <button class="pill" data-act="copyInvite" type="button">Copy link</button>
+      <button class="pill" data-act="qrInvite" type="button">QR</button>
+    </div>
+
+    <div class="row" id="walletRow" hidden>
+      <a class="pill" id="walletLink" href="#">Open in wallet</a>
+      <button class="pill" data-act="copyPay" type="button">Copy</button>
+      <button class="pill" data-act="qrPay" type="button">QR</button>
+    </div>
+
+    <div class="qrbox" id="qrBox"></div>
+
+    <button class="ghost" id="ghost" data-act="reset" type="button" hidden>New swap</button>
+  </section>
+
+  <section class="recent" id="history" hidden>
+    <p class="recent-h">Recent</p>
+    <div id="histList"></div>
+  </section>
+
+  <p class="foot" id="foot">No fees · you keep your keys</p>
 </div>
 
 <div class="bar"><div class="bar-in">
-  <button class="btn" id="primary" data-act="primary" type="button">Create swap</button>
-  <div class="ghosts">
-    <button class="btn ghost" id="ghostA" data-act="advance" type="button" hidden>Advance clock (test)</button>
-    <button class="btn ghost" id="ghostB" data-act="reset" type="button" hidden>Reset</button>
-  </div>
+  <button class="cta" id="primary" data-act="primary" type="button" data-ready="1">Start swap</button>
 </div></div>
 
 <div class="toast" id="toast"></div>
 
-<!-- records kept out of the screen: the event log and the counterparty
-     string live in the DOM (the log is what a support question would ask
-     for) but nothing renders them -->
+<!-- records kept out of the screen: the event log tells a support question
+     what happened, and the counterparty string stays for the session -->
 <ol class="log" id="log" hidden></ol>
 <code id="counterInv" hidden></code>
 
