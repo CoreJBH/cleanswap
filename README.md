@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/icon.png" width="118" alt="CLEANSWAP">
+  <img src="docs/icon.png" width="118" alt="CleanSwap">
 </p>
 
-<h1 align="center">CLEANSWAP</h1>
+<h1 align="center">CleanSwap</h1>
 
 <p align="center"><b>Swap bitcoin for USDT — or USDT for bitcoin — with both sides locked before anything moves.</b></p>
 
@@ -10,17 +10,17 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-388%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-420%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.5.1" src="https://img.shields.io/badge/android-0.5.1-0f9d6e">
+  <img alt="android 0.6.0" src="https://img.shields.io/badge/android-0.6.0-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
 <p align="center">
-  <img src="docs/preview.png" alt="CLEANSWAP on a phone: ready, both sides locked, completed" width="100%">
+  <img src="docs/preview.png" alt="CleanSwap on a phone: ready, both sides locked, completed" width="100%">
 </p>
 
-CLEANSWAP is a non-custodial **Lightning bitcoin <-> USDT atomic swap**: one HTML file, no framework,
+CleanSwap is a non-custodial **Lightning bitcoin <-> USDT atomic swap**: one HTML file, no framework,
 no wallet vendor, no custodian. Three steps - **1 the Lightning invoice, 2 the USDT address,
 3 Approve** - and underneath them a Bitcoin-style SHA-256 hashlock that settles both legs with the
 same 32-byte secret.
@@ -36,23 +36,60 @@ rehearsal parks on the same **Waiting for payment** screen, with the same invoic
 two modes differ in exactly two things: `Sample` beside the two inputs, and a stand-in escrow on the
 phone instead of a deployed one (so a rehearsal is never written to Recent).
 
-## What `v0.5.1` does
+`v0.6.0` is the security pass, from a code review that found the protocol could be talked out of
+its own terms. Every item in that review is closed:
 
-* **The same three steps as ever.** `1 Partner's Lightning invoice` (an `lnbc...` invoice or an
-  `lno1...` offer the other side wants paid) -> `2 Your USDT address` (the `0x...` that receives the
+* **A code cannot change the setup.** A `cleanswap:` code is a stranger's text: it may state the
+  terms, the chain and the escrow it is meant for, but it never switches the network and never
+  writes an escrow address. A code naming an escrow this app does not publish, or one that differs
+  from the escrow already set here, is refused whole, with the reason on the screen and a
+  `SECURITY` line in the log.
+* **A Lightning offer is refused.** An `lno1...` offer has no payment hash, and the invoice a wallet
+  gets for it carries one of its own, so a swap bound to the offer's bytes would lock the USDT to a
+  hash no payment ever moves. Pasting an offer now says so and asks for a hold invoice.
+* **The swap id includes the address that funds the escrow.** `sha256(hashlock, sender, receiver,
+  token, amount, timelock)`: a third party who copies the terms cannot lock them first and burn the
+  id by refunding, because their own address gives the same terms a different id.
+* **The window has a floor, a ceiling and a margin.** A code may not leave less than 30 minutes or
+  more than 7 days; the contract refuses a timelock past `MAX_TIMELOCK_DELTA` (7 days) as well as
+  one inside `MIN_TIMELOCK_DELTA`; and the Lightning invoice has to stay payable at least an hour
+  past the window, so paying into the last minutes of the escrow cannot hand the sats over with
+  nothing left to claim. A record past its timelock reads as **window closed**, not as locked.
+* **The escrow is cross-checked.** Two or more endpoints are asked the same question and the
+  answer is believed only when two agree; a single lying node disagrees with the other and the
+  screen says the endpoints do not agree instead of showing a lock that is not there.
+* **Token movement is checked, not assumed.** `SafeERC20`-style calls that accept tokens returning
+  no bool, and a balance-delta check that refuses a transfer which moves less than the agreed
+  amount (`FeeUSDT` in the test suite proves it) - the escrow can never hold less than it promises.
+* **Paying bitcoin needs a wallet that hands back the payment secret.** The btc2u screen says it
+  before the button, because that secret is how the payer claims the USDT if the partner goes quiet.
+* **The Android shell is tighter.** `cleanswap:` intents are quoted with `JSONObject.quote` (newlines
+  and separators included), and the page is served from the app's own virtual `https` origin instead
+  of `file://`, so universal file access is off and the chain reads still work.
+* **A dark forest theme.** Obsidian green (`#08100E` to `#0D1C18`, with a soft mint glow at the top),
+  mint-emerald accents (`#50D2C1` / `#2DD4BF` / `#10B981`) on the one button that matters, hairline
+  borders in `#1A332D`, and text at `#F0FDF9` / `#9CAEA8`. The Android shell's status bar, navigation
+  bar and window background follow it, so nothing flashes white on launch.
+
+## What it does
+
+* **The same three steps as ever.** `1 Partner's Lightning invoice` (a hold invoice that states its
+  payment hash) -> `2 Your USDT address` (the `0x...` that receives the
   USDT on Arbitrum) -> `3 Approve`. Practice and Wallet build the same screen from the same markup;
   a rehearsal cannot teach a different flow than the real thing. The direction flip still reverses
   the steps, `Sample` still exists in Practice and nowhere else.
-* **The chain is the referee.** The escrow is read with `eth_call swaps(swapId)` against Arbitrum's
-  public endpoints (`https://sepolia-rollup.arbitrum.io/rpc` for Sepolia,
-  `https://arb1.arbitrum.io/rpc` and a publicnode fallback for One), with `eth_blockNumber` and
-  `eth_getCode` as the check that the endpoint and the contract are really there before anything is
-  approved, and `eth_getTransactionReceipt` for a transaction a wallet sent.
-* **The swap id is the terms, so both phones can read the escrow before either one transacts.**
-  `swapId = sha256(abi.encodePacked(hashlock, receiver, token, amount, timelock))` - the sender is
-  deliberately *not* in it. A phone that knows the terms knows the id, asks the chain, and sees the
-  escrow that the other side has already funded. The same id is what `lock` writes and what
-  `claim`/`refund` answer.
+* **The chain is the referee, and it is asked twice.** The escrow is read with
+  `eth_call swaps(swapId)` against Arbitrum's public endpoints (`sepolia-rollup.arbitrum.io/rpc`
+  and `arbitrum-sepolia-rpc.publicnode.com` for Sepolia, `arb1.arbitrum.io/rpc` and
+  `arbitrum-one-rpc.publicnode.com` for One), with `eth_blockNumber` and `eth_getCode` as the check
+  that the endpoint and the contract are really there before anything is approved, and
+  `eth_getTransactionReceipt` for a transaction a wallet sent. With two or more endpoints, a state
+  that money depends on is believed only when two of them answer the same thing.
+* **The swap id is the terms plus the funding address.** `swapId = sha256(abi.encodePacked(hashlock,
+  sender, receiver, token, amount, timelock))`. The side that funds the escrow knows the id from its
+  own wallet; the other side gets the address from the funding side's code, or from the lock
+  transaction itself (its sender is read from the chain). A record found under the id is compared
+  field by field - hashlock, sender, receiver, token, amount, timelock - before it is believed.
 * **The verdict comes in plain English.** `swaps(id)` returns the whole record; the app compares it
   against the terms on screen (hashlock, receiver, token, amount, timelock) and says one of: nothing
   locked yet / holds your X USDT until the swap closes or the window ends / paid out / sent back /
@@ -73,18 +110,20 @@ phone instead of a deployed one (so a rehearsal is never written to Recent).
   wallet app, or opened as an **EIP-681** `ethereum:...` link, and the transaction hash is pasted
   back - the app reads the receipt itself and still judges only what the escrow says.
 * **Setup is one panel, used once.** The chain line at the top (Arbitrum Sepolia / Arbitrum One)
-  opens it: the escrow contract address, the USDT token address, an optional private RPC endpoint.
-  With no contract set, the panel offers the deploy hand-off: **Copy bytecode** (solc 0.8.26
-  creation code, embedded in the page) and **Open Remix**. The setup survives in `localStorage`
-  under one key; a `cleanswap:` code from the other side carries the chain and the contract too.
-* **A BOLT12 offer is a payment target, not a rejection.** Pasting `lno1...` is accepted:
-  `Open in wallet` becomes `lightning:lno1...`, the QR carries it. An offer has no `payment_hash` of
-  its own, so the swap binds to the offer itself (see below). BOLT11 hold invoices stay fully
-  accepted.
+  opens it: the escrow contract address, the USDT token address, optional RPC endpoints
+  (comma-separated; more than one means a cross-check). With no contract set, the panel offers the
+  deploy hand-off: **Copy bytecode** (solc 0.8.26 creation code, embedded in the page) and **Open
+  Remix**. The setup survives in `localStorage` under one key, and nothing but this panel ever
+  writes it.
+* **Only an invoice with a payment hash is accepted.** A BOLT11 hold invoice (`lnbc...`) or a BOLT12
+  invoice (`lni1...`) that carries the standard `payment_hash` field; either one names the hash the
+  swap locks to. A BOLT12 offer (`lno1...`) is refused with a sentence and an explanation, because
+  the invoice it produces gets a hash of its own (see below).
 * **The terms leave as a code, not as a web address.** `Share code` copies `cleanswap:...`
-  (base64url JSON: both amounts, the window, the hashlock and the USDT address, plus the chain and
-  the escrow in Wallet mode - still under the 340-byte QR budget). No host, no path, no name,
-  nothing taken from `location.href`.
+  (base64url JSON: both amounts, the window, the hashlock, the USDT address, and in Wallet mode the
+  chain, the escrow and the address that funds it - still under the 340-byte QR budget, because the
+  hashes and addresses inside are packed as bytes). No host, no path, no name, nothing taken from
+  `location.href`.
 * **`<- Back` from a running or finished swap** returns to the filled-in form; a swap nobody paid
   is not quietly settled by leaving it.
 
@@ -92,9 +131,9 @@ phone instead of a deployed one (so a rehearsal is never written to Recent).
 
 | Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
-| 1 | the Lightning invoice or offer - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, `payment_hash` present (or a well-formed `lno1...` offer, which binds the swap to itself), amount equal to the swap, not expired, `bc` network, and - when a code arrived first - a hash equal to the one that code pinned |
+| 1 | the Lightning invoice - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, a `payment_hash` present (an offer is refused: it has none), amount equal to the swap, not expired, `bc` network, an expiry at least an hour past the escrow window, and - when a code arrived first - a hash equal to the one that code pinned |
 | 2 | the USDT address | an Arbitrum `0x` address with exactly 40 hex characters, not the zero address. In Wallet mode a TRON `T` address is decoded and checked, then refused with the reason: this swap pays on Arbitrum |
-| 3 | `Approve` | the two are bound to one `H`, and in Wallet mode the chain is asked before anything else happens: endpoint alive, contract deployed, escrow state for `swapId` |
+| 3 | `Approve` | the two are bound to one `H`, the window is neither too short nor too long, and in Wallet mode the chain is asked before anything else happens: endpoints alive and agreeing, contract deployed, escrow state for `swapId` |
 
 Anything refused is named in plain English and never in jargon, and the hidden log keeps the decoded
 fields for a support question.
@@ -102,7 +141,7 @@ fields for a support question.
 ## Wallet mode - the real escrow
 
 <p align="center">
-  <img src="docs/wallet.png" width="360" alt="CLEANSWAP wallet mode: invoice, address, approve">
+  <img src="docs/wallet.png" width="360" alt="CleanSwap wallet mode: invoice, address, approve">
 </p>
 
 A swap in Wallet mode runs on the chain, and every step that touches USDT has the contract behind it:
@@ -125,7 +164,7 @@ A swap in Wallet mode runs on the chain, and every step that touches USDT has th
    back.
 
 <p align="center">
-  <img src="docs/paying.png" width="360" alt="CLEANSWAP in Wallet mode: waiting for the payment, escrow state underneath">
+  <img src="docs/paying.png" width="360" alt="CleanSwap in Wallet mode: waiting for the payment, escrow state underneath">
 </p>
 
 Completed swaps land as one-line entries under **Recent**, and the receipt names the chain it
@@ -144,8 +183,8 @@ receipt says `Practice · simulated`. A rehearsal is never written to Recent.
 ```
    bitcoin leg (Lightning)                    USDT leg (Arbitrum)
    -------------------------                  -------------------------
-   invoice/offer, payment_hash H    <------>  CleanSwapHTLC.lock(H, T2, receiver, token, amount)
-   paid by the BTC payer                      swapId = sha256(H ‖ receiver ‖ token ‖ amount ‖ T2)
+   invoice, payment_hash H          <------>  CleanSwapHTLC.lock(H, T2, receiver, token, amount)
+   paid by the BTC payer                      swapId = sha256(H ‖ sender ‖ receiver ‖ token ‖ amount ‖ T2)
             |                                          |
             |  the same 32-byte secret R               |  claimed: swapId, R
             v                                          v
@@ -157,51 +196,62 @@ receipt says `Practice · simulated`. A rehearsal is never written to Recent.
                             token, sender, receiver, claimed, refunded
 ```
 
-* **The swap id is computed off the terms, not off the sender.** Both phones compute
-  `sha256(abi.encodePacked(hashlock, receiver, token, amount, timelock))` as soon as the terms are
-  on screen, so the app can watch an escrow the other side has not funded yet - and a record found
-  under that id is compared field by field against the terms before it is believed.
+* **The swap id is computed off the terms and the funding address.** Both phones compute
+  `sha256(abi.encodePacked(hashlock, sender, receiver, token, amount, timelock))`. The funding side
+  knows `sender` from its wallet and puts it in its code; the other side learns it from that code or
+  from the lock transaction. The `sender` is what stops a third party from locking the same terms
+  first and refunding them later: with a different sender they get a different id, and the real lock
+  is unaffected.
 * **Arbitrum parameters.** Sepolia test chain id `421614` (`0x66eee`), One mainnet chain id
   `42161` (`0xa4b1`). Both are offered in Setup, Sepolia by default; the mainnet token is the
   6-decimal USDT at `0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9` (the app also reads `decimals()`
   semantics at 6 and shows the USDT amount the way a wallet does).
-* **Public endpoints, in order.** Sepolia: `sepolia-rollup.arbitrum.io/rpc`. One:
-  `arb1.arbitrum.io/rpc`, then `arbitrum-one-rpc.publicnode.com`. A private endpoint typed in Setup
-  replaces them all - a person who runs their own node did not ask for a public one to be asked
-  instead. A failed request walks to the next endpoint; an on-chain revert (a call that does not
-  exist, an unknown swap) stops the walk, because a second node cannot change that answer.
+* **Public endpoints, cross-checked.** Sepolia: `sepolia-rollup.arbitrum.io/rpc` and
+  `arbitrum-sepolia-rpc.publicnode.com`. One: `arb1.arbitrum.io/rpc` and
+  `arbitrum-one-rpc.publicnode.com`. Endpoints typed in Setup replace them all - a person who runs
+  their own node did not ask for a public one to be asked instead, and one endpoint is its own
+  answer. With more than one, `swaps(id)`, `eth_blockNumber` and `eth_getCode` are asked of all of
+  them and believed only when two agree; otherwise the screen says the endpoints disagree and
+  nothing is approved. A failed request walks to the next endpoint for the calls that are not part
+  of that cross-check.
 * **No key ever enters the app.** EIP-1193 injection (`window.ethereum`) sends what the page cannot
   sign; everything else is a copy/link/paste hand-off. The app reads, computes and judges; the
   wallet signs.
 * **`contracts/CleanSwapHTLC.sol`** - `^0.8.26`, custom errors, packed struct, one slot of
-  booleans, checks-effects-interactions, no owner, no fees, no proxy. `lock` pulls the token via
-  `transferFrom`, `claim` reveals R and pays the receiver, `refund` returns to the sender after
-  `timelock`; `swaps(swapId)` is the public getter the app reads; `computeSwapId(...)` mirrors the
-  app's own packed SHA-256. Events: `Locked`, `Claimed` (with R in the clear), `Refunded`.
-  `contracts/TestUSDT.sol` is a throwaway 6-decimal ERC-20 with `faucet()` for Sepolia.
-* **Timelock asymmetry is the safety margin**: the Lightning leg must outlive the token leg
-  (`T1 > T2`); the contract refuses a timelock closer than `MIN_TIMELOCK_DELTA` (5 minutes) so a
-  refund cannot race a claim.
+  booleans, checks-effects-interactions, no owner, no fees, no proxy. `lock` pulls the token via a
+  checked `transferFrom`, `claim` reveals R and pays the receiver, `refund` returns to the sender
+  after `timelock`; `swaps(swapId)` is the public getter the app reads; `computeSwapId(...)` mirrors
+  the app's own packed SHA-256. Token movement goes through `_safeTransfer`/`_safeTransferFrom`:
+  a token that returns no bool is accepted, and any transfer whose actual balance movement is not
+  the agreed amount reverts (`TransferAmountMismatch`). Events: `Locked`, `Claimed` (with R in the
+  clear), `Refunded`. `contracts/TestUSDT.sol` is a throwaway 6-decimal ERC-20 with `faucet()` for
+  Sepolia, beside `FeeUSDT` (1% on every transfer) and `QuietUSDT` (returns no bool) for the tests.
+* **Timelock bounds are the safety margin**: the contract refuses a timelock closer than
+  `MIN_TIMELOCK_DELTA` (5 minutes) so a refund cannot race a claim, and one further than
+  `MAX_TIMELOCK_DELTA` (7 days) so the funding side's money cannot be parked for a season. The app
+  applies the same floor and ceiling before it lets anyone approve, and refuses an invoice that does
+  not stay payable at least an hour past the window.
 
-### Lightning side: BOLT12 by default, BOLT11 fully accepted
+### Lightning side: a payment hash or nothing
 
-One reader takes anything: `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice), `lnbc…`/`lntb…`
-(BOLT11), with or without the `lightning:` prefix.
+One reader parses everything - `lno1…` (BOLT12 offer), `lni1…` (BOLT12 invoice), `lnbc…`/`lntb…`
+(BOLT11), with or without the `lightning:` prefix - and the swap gate accepts only a string that
+states its own payment hash.
 
-* **BOLT12 encode** (`lno1…`) — the app mints offers for a swap: TLVs over bech32 without a
-  checksum, amount in the HRP (msat), `offer_description`, `offer_absolute_expiry`, a node id and a
-  64-byte signature slot. An offer cannot carry a `payment_hash` by itself, so the swap hashlock
-  rides in a **custom type-80 TLV**; a minted invoice (`lni1…` shape) carries the standard
-  `invoice_payment_hash` (type 168).
 * **BOLT11 encode** (`lnbc…`) — hold invoices: bech32 checksum, 35-bit timestamp, `p`/`d`/`x`
-  tagged fields, a 65-byte signature slot, `payment_hash = H`.
-* Wallet hand-off: `lightning:<offer|invoice>` deep link, one-tap copy, and a locally generated QR
+  tagged fields, a 65-byte signature slot, `payment_hash = H`, and an expiry that has to outlive the
+  escrow window.
+* **BOLT12 invoices** (`lni1…`) are read through the standard `invoice_payment_hash` (TLV 168).
+  The app's own type-80 tag is reported separately and is never mistaken for the payment hash.
+* **BOLT12 offers** (`lno1…`) are recognised and **refused**. An offer cannot carry a payment hash,
+  and the invoice a wallet gets for it is built by the payee's node with a fresh random hash, so
+  hashing the offer's own bytes would lock the USDT to a hash no Lightning payment ever moves. The
+  refusal says what to ask for instead: a hold invoice made for this swap.
+* Wallet hand-off: `lightning:<invoice>` deep link, one-tap copy, and a locally generated QR
   (own encoder, byte mode, EC level M — falling back to L for long requests — versions 1–13).
 
-> Honest limit: an offer from someone else's wallet (Lexe, say) has no `payment_hash` field, so the
-> swap binds to the offer string itself - `H = SHA-256` of the offer's TLV bytes - which is
-> deterministic, identical on both phones, and travels in the `cleanswap:` code. Garbage,
-> truncation and text that only resembles an offer are refused at the gate.
+> Honest limit: invoices the app mints carry deterministic filler signatures; they parse, checksum
+> and hash correctly, but no node will route them. They exist to exercise the gate and the screen.
 
 ### What the screen deliberately hides
 
@@ -220,13 +270,13 @@ build.py                     src/ -> single file (+ the APK asset); refuses to e
                              compiles the escrow and embeds its creation bytecode
 src/
   index.template.html        screen markup: two cards, three steps, one Approve bar, the setup panel
-  app.css                    light payment-app theme, fixed action bar, mobile-first
+  app.css                    dark forest theme (obsidian green, mint accents), fixed action bar, mobile-first
   app.js                     JSON-RPC client, escrow ABI + swap id, gates, BOLT11/12, wallet hand-off
   qr.js                      dependency-free QR encoder (byte mode, 1-13, L/M/Q/H)
 contracts/
   CleanSwapHTLC.sol          sha256 hashlock, ERC-20 escrow, timelock refund, swaps(id) getter
   CleanSwapHTLC.bin          creation bytecode, checked against the source by the build and the tests
-  TestUSDT.sol               6-decimal faucet token
+  TestUSDT.sol               6-decimal faucet token, plus FeeUSDT and QuietUSDT for the escrow tests
 docs/                        icon and screens, regenerated from the built app
 tools/                       invoice minting, icons, QR and doc-shot helpers
 test/
@@ -236,7 +286,7 @@ test/
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.5.1, versionCode 8)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.0, versionCode 9)
 ```
 
 ## Build
@@ -257,8 +307,8 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers, the `cleanswap:` code round trip (chain and escrow included, still QR-sized), Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry, and no request leaving the phone), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded | **247/247 pass** |
-| `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **32/32 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain or a 5-minute or 8-day window refused with the setup untouched, Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry, and no request leaving the phone), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded | **271/271 pass** |
+| `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **40/40 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder | **45/45 pass** |
 | `test/verify-english.py` | Hangul count is 0 across every tracked text file, file name and commit message | **0 characters** |
@@ -285,13 +335,16 @@ suite.
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.5.1`, `versionCode 8`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
-and now `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
+0.6.0`, `versionCode 9`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
 manifest declares a `<queries>` entry for all three schemes so Android 11+ package visibility does
-not hide them. The `cleanswap:` scheme intent filter is unchanged: a code handed over by another app
-opens CLEANSWAP on it.
+not hide them. The page is served to the WebView from the app's own virtual origin
+(`https://appassets.androidplatform.net`, answered by the shell from `assets/index.html`), not from
+`file://`, so file access and universal file access are both off while the chain reads and the quote
+work as ordinary CORS requests. `cleanswap:` intents are quoted with `JSONObject.quote`, and a code
+handed over by another app opens CleanSwap on it.
 
 GitHub Actions builds `cleanswap.apk` on every push to `main` and on `v*` tags
 (`.github/workflows/apk.yml`); the same file is kept under `android/ci/build-apk.yml` for reference.
@@ -303,12 +356,13 @@ The APK is uploaded as a workflow artifact.
   escrow real value with it. On Arbitrum One, real USDT is real money.
 * The app reads the chain and builds calls; it never signs. Anything it says is settled on-chain is
   read from the contract, and everything else it says is a sentence, not a receipt.
-* The read path is the page's own JSON-RPC client against public endpoints (or the one you set). A
-  hostile endpoint could lie about `swaps(id)`; the terms are re-checked against the record, but a
-  node that lies about the whole record is outside what a read-only client can detect. Run your own
-  endpoint for real value.
+* The read path is the page's own JSON-RPC client against public endpoints (or the ones you set).
+  With two or more endpoints the state is read by quorum, so one lying node is caught by the
+  disagreement; with a single endpoint that node is trusted by definition - run your own for real
+  value.
 * A `cleanswap:` code carries terms only. It is not a web address, has no host, and is never built
-  from the page's own URL.
+  from the page's own URL - and it never changes the setup: the chain and the escrow in a code are
+  requirements that must already match, not settings that get written.
 * A swap lives in the page: reloading it forgets it. The Setup panel is the only thing kept, in one
   `localStorage` key.
 * Minted offers and invoices carry deterministic filler signatures; they parse, checksum and hash
@@ -322,4 +376,4 @@ The APK is uploaded as a workflow artifact.
 
 ## License
 
-MIT for the code in this repository. The CLEANSWAP name and icon belong to the project owner.
+MIT for the code in this repository. The CleanSwap name and icon belong to the project owner.

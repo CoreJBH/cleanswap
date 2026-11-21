@@ -16,3 +16,7 @@ shots/
 # alternate logo explorations (the shipped icon is icon-clean-1.png)
 icon-boltswap-*.png
 icon-clean-2.png
+
+# android build state from a local build
+android/.gradle/
+android/local.properties

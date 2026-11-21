@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble the single-file CLEANSWAP app from src/ into ../../ln-usdt-swap.html
+"""Assemble the single-file CleanSwap app from src/ into ../../ln-usdt-swap.html
 
 Everything is inlined - CSS, the QR encoder, the BOLT11/BOLT12 codec, the app
 and the Solidity reference source - so the built page makes no requests except

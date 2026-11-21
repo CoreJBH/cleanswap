@@ -79,12 +79,15 @@ const server = http.createServer((req, res) => {
   await two.p.click('#modeWallet');
   await two.p.waitForTimeout(300);
   const inv = await two.p.evaluate(() => window.CLEANSWAP.mintInvoice({
-    paymentHash: '0x' + '5c'.repeat(32), sats: 50000, expiry: 3600
+    paymentHash: '0x' + '5c'.repeat(32), sats: 50000, expiry: 6 * 3600
   }));
   await two.p.fill('#invIn', inv);
   await two.p.waitForTimeout(250);
   await two.p.fill('#addrIn', '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71');
   await two.p.waitForTimeout(500);
+  /* the fixed Approve bar sits over the last line: bring step 3 up into view */
+  await two.p.evaluate(() => document.getElementById('stepGo').scrollIntoView({ block: 'center' }));
+  await two.p.waitForTimeout(300);
   await two.p.screenshot({ path: path.join(DOCS, 'wallet.png'), fullPage: false });
 
   // 3. the escrow answers, so the swap can wait on the payment
@@ -98,9 +101,10 @@ const server = http.createServer((req, res) => {
     const st = window.CLEANSWAP.state;
     const r = window.CLEANSWAP.readInvoice(document.getElementById('invIn').value);
     const a = window.CLEANSWAP.readAddress(document.getElementById('addrIn').value).address;
-    st.t2 = Math.floor(Date.now() / 1000) + 3600;
+    st.t2 = Math.floor(Date.now() / 1000) + 7200;
+    st.locker = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
     const units = window.CLEANSWAP.usdtUnits();
-    const id = await window.CLEANSWAP.computeSwapId(r.H, a, window.CLEANSWAP.tokenNow(), units, st.t2);
+    const id = await window.CLEANSWAP.computeSwapId(r.H, st.locker, a, window.CLEANSWAP.tokenNow(), units, st.t2);
     return { id: id, H: r.H, units: units, t2: st.t2, addr: a };
   });
   RECORDS[shotTerms.id.toLowerCase()] = {

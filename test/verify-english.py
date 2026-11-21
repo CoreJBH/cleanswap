@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail if any text file in the repository - or any commit message - contains Hangul.
 
-CLEANSWAP is an English-only repository: source, tests, README, Android resources,
+CleanSwap is an English-only repository: source, tests, README, Android resources,
 build scripts and the built page. This is the gate that keeps it that way.
 
     python3 test/verify-english.py            # tracked files + full commit history

@@ -1,4 +1,4 @@
-/* CLEANSWAP v0.5.1 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.0 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -6,8 +6,8 @@
    Underneath, every step is still gated on data a real swap would need, and
    the gate runs here, in the browser:
 
-     step 1  a BOLT12 offer or invoice (or a BOLT11 hold invoice): an offer is
-             paid straight from the wallet, an invoice's payment_hash is H
+     step 1  a Lightning invoice that states its payment hash (a BOLT11 hold
+             invoice, or a BOLT12 invoice with the same field): that hash is H
      step 2  the counterparty's escrow lock, decoded and matched against H, T2
              and the USDT amount (lock() calldata, JSON record, Liquid lock URI
              or a lock transaction hash)
@@ -20,12 +20,19 @@
    is locked for these terms and then claimed. `I paid` starts the watch; it
    never finishes the swap.
 
-   BOLT12 is the default format. A BOLT12 offer cannot carry a payment_hash by
-   itself, so every offer the app mints embeds the swap's hashlock in a custom
-   type-80 TLV, and an offer from someone else's wallet (Lexe, say) binds the
-   swap to its own string instead: H = SHA-256 of the offer's TLV bytes, which
-   the same offer gives on both phones. Invoices the app mints use the standard
-   invoice_payment_hash field. BOLT11 hold invoices stay fully accepted as input.
+   Only an invoice that states its own payment hash is accepted. A BOLT12 offer
+   (`lno1...`) carries no payment hash: the invoice it later produces gets a
+   fresh random hash from the payee's node, so no offer can pin the hash this
+   swap locks to. Pasting an offer is refused with a sentence that says so, and
+   the partner is asked for a hold invoice instead. The TLV bytes of an offer
+   are never hashed into H.
+
+   A swap id is the terms plus the address that funds the escrow, so a code
+   from the other side is checked before anything is adopted from it: the chain
+   is never switched and an escrow address is never written over by a code.
+   The escrow window has a floor and a ceiling, and the Lightning invoice has to
+   outlive the window by an hour, so a short or endless window cannot race the
+   payer.
 
    The USDT address is an Arbitrum one (`0x` + 40 hex). A TRON `T` address is
    still decoded so a pasted one gets a straight answer, but Wallet mode says
@@ -68,16 +75,18 @@
     testnet: {
       id: 'testnet', label: 'Arbitrum Sepolia', place: 'Sepolia test chain',
       chainId: 421614, chainHex: '0x66eee',
-      rpc: ['https://sepolia-rollup.arbitrum.io/rpc'],
+      rpc: ['https://sepolia-rollup.arbitrum.io/rpc', 'https://arbitrum-sepolia-rpc.publicnode.com'],
       explorer: 'https://sepolia.arbiscan.io',
-      token: ''                        /* put TestUSDT here after deploying it */
+      token: '',                       /* put TestUSDT here after deploying it */
+      escrows: []                      /* the escrows this app publishes for the chain */
     },
     mainnet: {
       id: 'mainnet', label: 'Arbitrum One', place: 'Arbitrum One',
       chainId: 42161, chainHex: '0xa4b1',
       rpc: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
       explorer: 'https://arbiscan.io',
-      token: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9'   /* USDT, 6 decimals */
+      token: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',  /* USDT, 6 decimals */
+      escrows: []                      /* none published yet: a code may not add one */
     }
   };
   var DECIMALS = 6;
@@ -100,7 +109,11 @@
   var NET = 'bc';                   /* invoice network prefix */
   /* A practice address, so the rehearsal has somewhere to send USDT. */
   var DEMO_ADDR = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
-  var T2_SPAN = 3600;               /* USDT escrow window, seconds */
+  var T2_SPAN = 7200;               /* USDT escrow window a new code asks for, seconds */
+  var T2_MIN = 1800;                /* the shortest window a code may leave, seconds */
+  var T2_MAX = 7 * 24 * 3600;       /* mirrors MAX_TIMELOCK_DELTA in the contract */
+  var T1_MARGIN = 3600;             /* the invoice has to outlive the window by this much */
+  var PAY_MARGIN = 600;             /* stop paying once this little of the window is left */
   var T1_BLOCKS = 40;               /* ~6h40m of bitcoin blocks */
   var BLOCK_SECS = 600;
 
@@ -111,7 +124,8 @@
     net: 'testnet',                 /* testnet (Arbitrum Sepolia) | mainnet (Arbitrum One) */
     contract: '',                   /* the escrow contract on that chain */
     token: '',                      /* the USDT token on that chain */
-    rpc: '',                        /* a private endpoint, when one is set */
+    rpc: '',                        /* private endpoint(s), comma-separated, when set */
+    quorum: 'idle',                 /* idle | ok | single | disagree */
     block: null,                    /* latest block read from the chain */
     rpcState: 'idle',               /* idle | ok | bad */
     chain: null,                    /* the last reading: {state, why, rec} */
@@ -130,9 +144,12 @@
     t1: null, t2: null,
     sim: 0, h0: 923452,             /* the practice clock and its block height */
     inv: '', invDec: null,          /* the Lightning invoice on the screen */
-    basis: null,                    /* how the bitcoin leg is paid: invoice | offer */
+    basis: null,                    /* how the bitcoin leg is paid: a hold invoice */
     addr: '',                       /* the USDT address on the screen */
+    me: '',                         /* the wallet account this side signs with */
+    locker: '',                     /* the address that funds the escrow (from a code) */
     expectH: null,                  /* hashlock pinned by a code from the other side */
+    codeWarn: '',                   /* what a refused code said, kept on screen */
     log: [],
     qrInv: '',                      /* the payload whose QR is on screen */
     gate: null
@@ -345,18 +362,44 @@
     for (i = 0; i < 32; i++) buf[off + 31 - i] = Number((b >> BigInt(8 * i)) & 255n);
   }
   /* mirrors computeSwapId() in the contract:
-     sha256(abi.encodePacked(hashlock, receiver, token, amount, timelock)).
-     The sender is not in it: the receiver, the amount, the hashlock and the
-     timelock already fix the deal, so both phones compute the same id off-line
-     and can read the escrow before either one has sent a transaction. */
-  function computeSwapId(hashlock, receiver, token, amount, timelock) {
-    var buf = new Uint8Array(136);
+     sha256(abi.encodePacked(hashlock, sender, receiver, token, amount, timelock)).
+     The sender — the address that funds the escrow — is in it, so a third party
+     who copies the terms cannot lock them first and burn the id by refunding:
+     their own address gives the same terms a different id. The side that does
+     not fund the escrow learns that address from the other side's code (or
+     from its lock transaction) and then computes the same id off-line. */
+  function computeSwapId(hashlock, sender, receiver, token, amount, timelock) {
+    var buf = new Uint8Array(156);
     buf.set(fromHex(hashlock), 0);
-    buf.set(addr20(receiver), 32);
-    buf.set(fromHex(token), 52);
-    writeU256(buf, 72, amount);
-    writeU256(buf, 104, timelock);
+    buf.set(addr20(sender), 32);
+    buf.set(addr20(receiver), 52);
+    buf.set(fromHex(token), 72);
+    writeU256(buf, 92, amount);
+    writeU256(buf, 124, timelock);
     return crypto.subtle.digest('SHA-256', buf).then(function (d) { return '0x' + hexOf(new Uint8Array(d)); });
+  }
+
+  /* Who funds the USDT escrow: this side when it sends USDT, the other side
+     when it receives it. A rehearsal funds it from its stand-in address. */
+  function lockerNow() {
+    if (S.mode === 'practice') return EVM.usdtSide;
+    return S.direction === 'u2b' ? String(S.me || '') : String(S.locker || '');
+  }
+
+  /* The wallet account this side signs with, asked for once. Wallets answer
+     `eth_accounts` silently after a connection and prompt only when there is
+     none; a refusal leaves the address unknown and the swap unreadable. */
+  function ensureMe() {
+    if (S.me) return Promise.resolve(true);
+    var p = provider();
+    if (S.mode !== 'wallet' || !p) return Promise.resolve(false);
+    return p.request({ method: 'eth_accounts' }).then(function (a) {
+      if (a && a[0]) { S.me = String(a[0]); return true; }
+      return p.request({ method: 'eth_requestAccounts' }).then(function (b) {
+        if (b && b[0]) { S.me = String(b[0]); return true; }
+        return false;
+      }, function () { return false; });
+    }, function () { return false; });
   }
 
   /* ------------------------------------------------------------ the chain --
@@ -371,6 +414,27 @@
     var t = String(u || '');
     return /^https:\/\/[^\s]+$/i.test(t) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/.*)?$/i.test(t);
   }
+  /* Setup takes one endpoint or several, separated by commas or spaces. More
+     than one is a cross-check: the escrow is only believed when two of them
+     answer the same thing. */
+  function endpointList(raw) {
+    var parts = String(raw == null ? '' : raw).split(/[\s,]+/), out = [], i;
+    for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+    return out;
+  }
+  function endpointsOk(raw) {
+    var list = endpointList(raw);
+    for (var i = 0; i < list.length; i++) if (!isEndpoint(list[i])) return false;
+    return true;
+  }
+  /* An escrow the app publishes for this chain. A code may point at one of
+     these on its own; any other address has to be typed in Setup by the person
+     who deploys it. */
+  function isOfficialEscrow(net, addr) {
+    var list = (CHAINS[net] && CHAINS[net].escrows) || [], a = String(addr || '').toLowerCase();
+    for (var i = 0; i < list.length; i++) if (String(list[i]).toLowerCase() === a) return true;
+    return false;
+  }
   function tokenNow() { return S.mode === 'practice' ? EVM.token : (S.token || curChain().token); }
   function escrowNow() { return S.mode === 'practice' ? EVM.htlc : S.contract; }
 
@@ -384,7 +448,7 @@
       if (j.net === 'testnet' || j.net === 'mainnet') S.net = j.net;
       S.contract = isAddr(j.contract) ? String(j.contract).toLowerCase() : '';
       S.token = isAddr(j.token) ? String(j.token).toLowerCase() : '';
-      S.rpc = isEndpoint(j.rpc) ? String(j.rpc) : '';
+      S.rpc = endpointsOk(j.rpc) ? String(j.rpc) : '';
     } catch (e) { /* a browser without storage simply forgets the setup */ }
   }
   function saveSetup() {
@@ -397,11 +461,12 @@
 
   /* ------------------------------------------------------------ json-rpc -- */
   var rpcId = 0;
-  /* An endpoint typed in Setup is the only one used: a person who runs their own
-     node did not ask for a public one to be asked instead. With nothing typed,
-     the chain's own endpoints answer in turn. */
+  /* Endpoints typed in Setup are the only ones used: a person who runs their
+     own node did not ask for a public one to be asked instead. With nothing
+     typed, the chain's own endpoints answer. */
   function endpoints() {
-    if (isEndpoint(S.rpc)) return [S.rpc];
+    var custom = endpointList(S.rpc);
+    if (custom.length) return custom;
     return curChain().rpc.slice();
   }
   function rpcOne(url, method, params) {
@@ -437,6 +502,32 @@
       });
     }
     return step();
+  }
+  /* A state the money depends on is asked of every configured endpoint at once
+     and believed only when two of them answer the same thing. One lying node
+     cannot then show a lock that is not there: it disagrees with the other, and
+     the page says so instead of trusting either. A single endpoint is its own
+     answer — that is what a private node is for. */
+  function rpcQuorum(method, params) {
+    var list = endpoints();
+    if (list.length < 2) return rpc(method, params);
+    return Promise.all(list.map(function (url) {
+      return rpcOne(url, method, params).then(
+        function (v) { return { ok: true, key: JSON.stringify(v), v: v }; },
+        function (e) { return { ok: false, e: e }; });
+    })).then(function (all) {
+      var seen = {}, best = null;
+      all.forEach(function (r) {
+        if (!r.ok) return;
+        seen[r.key] = (seen[r.key] || 0) + 1;
+        if (!best || seen[r.key] > seen[best.key]) best = r;
+      });
+      if (best && seen[best.key] >= 2) { S.quorum = 'ok'; return best.v; }
+      S.quorum = (best ? 'disagree' : 'down');
+      var e = new Error('the endpoints do not agree');
+      e.disagree = true;
+      throw e;
+    });
   }
 
   /* ------------------------------------------------------- escrow ABI ----- */
@@ -498,13 +589,16 @@
   }
 
   function swapIdNow() {
-    return computeSwapId(S.H, S.addr, tokenNow(), S.units != null ? S.units : usdtUnits(), S.t2);
+    var who = lockerNow();
+    if (!isAddr(who)) return Promise.reject(new Error('the escrow side is not known yet'));
+    return computeSwapId(S.H, who, S.addr, tokenNow(), S.units != null ? S.units : usdtUnits(), S.t2);
   }
 
   /* ------------------------------------------------------ reading it ------ */
   function termsNow() {
     return {
       hashlock: String(S.H || ''),
+      sender: String(lockerNow() || ''),
       receiver: String(S.addr || ''),
       token: String(tokenNow() || ''),
       amount: String(S.units != null ? S.units : usdtUnits()),
@@ -524,9 +618,13 @@
     else if (String(rec.token).toLowerCase() !== t.token.toLowerCase()) why = 'token';
     else if (String(rec.amount) !== t.amount) why = 'amount';
     else if (String(rec.timelock) !== t.timelock) why = 'tl';
+    else if (t.sender && String(rec.sender).toLowerCase() !== t.sender.toLowerCase()) why = 'sender';
     if (why) return { state: 'mismatch', why: why, rec: rec };
     if (rec.claimed) return { state: 'claimed', rec: rec };
     if (rec.refunded) return { state: 'refunded', rec: rec };
+    /* A record past its timelock can no longer be claimed: paying now would
+       hand the sats over with nothing left to claim. */
+    if (Number(rec.timelock) <= nowSec()) return { state: 'closed', rec: rec };
     return { state: 'locked', rec: rec };
   }
 
@@ -535,14 +633,18 @@
     var x = usdtTxt() + ' USDT';
     switch (c && c.state) {
       case 'locked': return 'The escrow holds your ' + x + ' until the swap closes or the window ends.';
+      case 'closed': return 'The escrow window has closed, so the ' + x + ' can only go back to the side that locked it.';
       case 'claimed': return 'The escrow paid out the ' + x + '.';
       case 'refunded': return 'The escrow sent the ' + x + ' back to the side that locked it.';
       case 'mismatch':
         if (c.why === 'amount') return 'The escrow holds a different amount, so this is not the agreed swap.';
         if (c.why === 'receiver') return 'The escrow pays a different address, so it is not this swap.';
         if (c.why === 'tl') return 'The escrow ends at a different time, so it is not the agreed swap.';
+        if (c.why === 'sender') return 'The escrow was funded from a different address, so it is not this swap.';
         return 'The escrow record does not match these terms.';
-      case 'error': return 'The chain could not be reached just now.';
+      case 'error': return c.disagree
+        ? 'The endpoints do not agree on what the escrow holds, so nothing is trusted.'
+        : 'The chain could not be reached just now.';
       default: return 'The ' + x + ' is not in the escrow yet.';
     }
   }
@@ -563,7 +665,11 @@
   function chainRead() {
     if (S.mode === 'practice') return Promise.resolve(simRead());
     if (!isAddr(S.contract)) return Promise.reject(new Error('no escrow contract set'));
-    return swapIdNow().then(function (id) { return rpc('eth_call', [{ to: S.contract, data: swapsCalldata(id) }, 'latest']); })
+    /* The side that funds the escrow has not told the app its address yet: by
+       definition nothing of this side's is in the escrow, and the address is
+       learned when the wallet signs or the lock transaction comes back. */
+    if (!isAddr(lockerNow())) return Promise.resolve(null);
+    return swapIdNow().then(function (id) { return rpcQuorum('eth_call', [{ to: S.contract, data: swapsCalldata(id) }, 'latest']); })
       .then(decodeSwap);
   }
 
@@ -588,7 +694,7 @@
     }, function (e) {
       S.busy = false;
       S.rpcState = 'bad';
-      S.chain = { state: 'error', why: String((e && e.message) || e) };
+      S.chain = { state: 'error', why: String((e && e.message) || e), disagree: !!(e && e.disagree) };
       renderChain();
       return S.chain;
     });
@@ -610,9 +716,9 @@
     if (!isAddr(S.contract)) { S.rpcState = 'idle'; S.block = null; renderChain(); return Promise.resolve(null); }
     S.busy = true;
     renderChain();
-    return rpc('eth_blockNumber', []).then(function (bn) {
+    return rpcQuorum('eth_blockNumber', []).then(function (bn) {
       S.block = parseInt(bn, 16);
-      return rpc('eth_getCode', [S.contract, 'latest']);
+      return rpcQuorum('eth_getCode', [S.contract, 'latest']);
     }).then(function (code) {
       S.busy = false;
       var empty = !code || /^0x0*$/.test(String(code));
@@ -755,7 +861,7 @@
         blockChain(c);                 /* 'none' or 'mismatch': the USDT is not there yet */
         return;
       }
-      if (st === 'locked') { lockedMine(c); return; }   /* already locked: pick it up from here */
+      if (st === 'locked' || st === 'closed') { lockedMine(c); return; }   /* already locked: pick it up from here */
       if (st === 'mismatch') { blockChain(c); return; }
       beginLocking();
     });
@@ -833,9 +939,9 @@
   function lockedMine(c) {
     if (c && c.state === 'claimed') { settleByChain(c); return; }
     if (c && c.state === 'refunded') { wentBack(c); return; }
-    if (!c || c.state !== 'locked') { blockChain(c); return; }
+    if (!c || (c.state !== 'locked' && c.state !== 'closed')) { blockChain(c); return; }
     S.phase = 'paid';
-    S.note = '';
+    S.note = c.state === 'closed' ? 'The escrow window has closed. The USDT can be taken back.' : '';
     log('LOCK', 'the escrow holds ' + usdtTxt() + ' USDT until ' + clock(S.t2) + ' local');
     render();
     refreshGate();
@@ -959,6 +1065,20 @@
     var waited = S.mode === 'practice' ? simReceipt() : waitReceipt(h);
     waited.then(function () {
       busy(false);
+      /* The id names the address that funded the escrow. The side that does
+         not fund it reads that address from the lock transaction itself, after
+         checking the call went to this escrow and is a lock. */
+      if (S.mode !== 'wallet' || isAddr(lockerNow())) return null;
+      return rpc('eth_getTransactionByHash', [h]).then(function (tx) {
+        var to = tx && tx.to ? String(tx.to).toLowerCase() : '';
+        var input = tx && tx.input ? String(tx.input).toLowerCase() : '';
+        if (!tx || !isAddr(tx.from) || to !== String(S.contract || '').toLowerCase() || input.slice(0, 10) !== '0x' + SEL.lock) return null;
+        if (S.direction === 'u2b') S.me = String(tx.from).toLowerCase();
+        else S.locker = String(tx.from).toLowerCase();
+        log('LOCK', 'the escrow was funded from ' + short(tx.from, 6) + ', read from the transaction');
+        return null;
+      }, function () { return null; });
+    }).then(function () {
       return refreshChain();
     }).then(function (c) {
       if (!c) return;
@@ -1153,10 +1273,11 @@
   }
 
   /* ------------------------------------------------- BOLT12 offers/invoices --
-     The swap format, and the default one: TLVs over bech32 without a checksum.
-     An offer cannot carry a payment_hash, so offers minted here embed the swap
-     hashlock in a custom type-80 TLV; a real invoice carries the standard
-     invoice_payment_hash (168). Both decode through the same reader. */
+     TLVs over bech32 without a checksum. An invoice carries the standard
+     invoice_payment_hash (168); an offer cannot carry one at all. Offers are
+     still decoded so one can be recognised and explained, but a swap never
+     binds to an offer. The type-80 TLV is this app's own tag and is reported
+     separately - it is never mistaken for the payment hash. */
   function readBigSize(u8, i) {
     if (i >= u8.length) return null;
     var b = u8[i], v, j;
@@ -1180,8 +1301,7 @@
     16: 'offer_paths', 18: 'offer_issuer', 20: 'offer_quantity_max',
     22: 'node_id', 80: 'signature'
   };
-  /* type 80 carries the swap's payment_hash in every string the app mints: an
-     offer cannot hold one by itself, so the hashlock travels with it. */
+  /* type 80 is this app's own tag for a hashlock carried on an offer string. */
   var SWAP_HASH_TYPE = 80;
   function decodeSwapOffer(raw) {
     var o = String(raw).trim().replace(/^lightning:/i, '');
@@ -1224,8 +1344,10 @@
       form: form,
       hrp: r.hrp,
       network: r.hrp.length > 3 ? r.hrp.slice(3) : 'bitcoin',
-      paymentHash: hash && hash.length === 32 ? '0x' + hexOf(hash)
-        : (fields[168] && fields[168].length === 32 ? '0x' + hexOf(fields[168]) : null),
+      /* only the standard invoice field counts as a payment hash; an invoice
+         that also carries type 80 does not get to choose a different one */
+      paymentHash: form === 'invoice' && fields[168] && fields[168].length === 32 ? '0x' + hexOf(fields[168]) : null,
+      hashlockTag: hash && hash.length === 32 ? '0x' + hexOf(hash) : null,
       sats: fields[170] ? Math.round(beUint(fields[170]) / 1000)
         : (fields[8] && !fields[6] ? Math.round(beUint(fields[8]) / 1000) : null),
       amount: num(8),
@@ -1295,6 +1417,23 @@
   var CODE_PREFIX = 'cleanswap:';
   var B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
+  /* Binary fields inside the JSON code are base64url with a leading `~` (a
+     character neither hex, base58 nor base64url uses), so the wallet code - a
+     hash, three addresses and the terms - still fits a version-13 QR. A field
+     without the marker is read exactly as earlier versions wrote it. */
+  function b64field(hex) {
+    var h = normHex(hex), bytes = [], i;
+    for (i = 0; i + 1 < h.length; i += 2) bytes.push(parseInt(h.slice(i, i + 2), 16));
+    return '~' + b64urlEncode(String.fromCharCode.apply(null, bytes));
+  }
+  function unB64field(v) {
+    var s = String(v || '');
+    if (s.charAt(0) !== '~') return '';
+    var raw = b64urlDecode(s.slice(1)), hex = '';
+    for (var i = 0; i < raw.length; i++) hex += ('0' + raw.charCodeAt(i).toString(16)).slice(-2);
+    return hex;
+  }
+
   function b64urlEncode(str) {
     var s = String(str), out = '', i, a, b, c;
     for (i = 0; i < s.length; i += 3) {
@@ -1335,16 +1474,22 @@
        field nobody reads on the other side. */
     if (!(S.mode === 'wallet' && isAddr(S.contract))) body.t1 = S.t1;
     var inv = readInvoice(pasted());
-    if (inv.ok) body.h = normHex(inv.H);
+    if (inv.ok) body.h = b64field(normHex(inv.H));
     var ad = readAddress(addrIn());
-    if (ad.ok) body.a = ad.address;
+    if (ad.ok) body.a = ad.chain === 'evm' ? b64field(ad.address) : ad.address;
     /* A wallet swap is only the same swap on the same chain and in the same
        escrow, so the code carries both - one letter for the chain, the
        contract address as it is. */
     if (S.mode === 'wallet' && isAddr(S.contract)) {
       body.n = S.net === 'mainnet' ? 'm' : 't';
-      body.c = String(S.contract).toLowerCase();
+      body.c = b64field(S.contract);
     }
+    /* The swap id includes the address that funds the escrow. When this side
+       funds it, the code says which address that will be (once the wallet has
+       told the app); a code that leaves it out only means the other side has to
+       learn it from the lock transaction instead. */
+    var who = lockerNow();
+    if (isAddr(who)) body.l = b64field(who);
     return CODE_PREFIX + b64urlEncode(JSON.stringify(body));
   }
 
@@ -1353,14 +1498,20 @@
     var sats = Number(json.s), units = Number(json.u), t2 = Number(json.t2), t1 = Number(json.t1 || 0);
     if (!isFinite(sats) || !isFinite(units) || !isFinite(t2) || !isFinite(t1)) return null;
     if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
-    var h = normHex(json.h || ''), a = String(json.a || ''), c = String(json.c || '');
+    var hRaw = String(json.h || ''), aRaw = String(json.a || '');
+    var cRaw = String(json.c || ''), lRaw = String(json.l || '');
+    var h = hRaw.charAt(0) === '~' ? unB64field(hRaw) : normHex(hRaw);
+    var a = aRaw.charAt(0) === '~' ? '0x' + unB64field(aRaw) : aRaw;
+    var c = cRaw.charAt(0) === '~' ? '0x' + unB64field(cRaw) : cRaw;
+    var l = lRaw.charAt(0) === '~' ? '0x' + unB64field(lRaw) : lRaw;
     return {
       direction: json.d === 'u2b' ? 'u2b' : 'btc2u',
       sats: Math.round(sats), units: Math.round(units), t2: Math.round(t2), t1: Math.round(t1),
       H: /^([0-9a-f]{2}){32}$/.test(h) ? '0x' + h : null,
       address: chainOf(a) ? a : null,
       net: json.n === 'm' ? 'mainnet' : (json.n === 't' ? 'testnet' : null),
-      contract: isAddr(c) ? c.toLowerCase() : null
+      contract: isAddr(c) ? c.toLowerCase() : null,
+      locker: isAddr(l) ? String(l).toLowerCase() : null
     };
   }
 
@@ -1415,36 +1566,61 @@
   /* The Lightning half of the swap. Its payment hash IS the swap: the same H
      locks the USDT escrow, so whoever settles one leg settles both.
 
-     A BOLT12 offer (`lno1...`, what Lexe and other BOLT12 wallets hand out) is
-     a payment target a wallet can pay straight from `lightning:lno1...`: the
-     wallet comes back with the invoice. It carries no payment_hash of its own
-     (the type-80 TLV below is this app's own), so an offer binds the swap to
-     itself: H is the SHA-256 of the offer, which the same string gives on both
-     phones. An offer this app minted kept its hashlock, so that one wins. */
+     Only an invoice that states its own payment hash is accepted. A BOLT12
+     offer (`lno1...`) does not: the invoice a wallet gets for it is built by
+     the payee's node with a fresh random hash, so hashing the offer's own bytes
+     would tie the escrow to a hash no Lightning payment ever moves. Offers are
+     refused with a sentence rather than bound to something that only looks like
+     a hash. */
   function readInvoice(raw) {
     var t = String(raw || '').trim();
     if (!t) return bad('empty', 'Paste the invoice for this swap.');
     var d;
     try { d = parseLightning(t); } catch (e) { return bad('format', 'That invoice cannot be read. Paste the whole thing.'); }
     if (!d) return bad('format', 'That invoice cannot be read. Paste the whole thing.');
-    var offer = d.kind === 'bolt12' && d.form === 'offer';
-    var H = d.paymentHash ? '0x' + normHex(d.paymentHash) : null;
-    if (!H && offer) {
-      if (!d.payload || !d.payload.length) return bad('format', 'That offer cannot be read. Paste the whole thing.');
-      H = '0x' + hexOf(sha256Bytes(d.payload));
+    if (d.kind === 'bolt12' && d.form === 'offer') {
+      return bad('offer', 'An offer cannot hold a swap: the invoice your wallet gets for it carries its own payment hash. Ask your partner for a hold invoice made for this swap.');
     }
-    if (!H) return bad('format', 'That invoice carries no payment hash to lock on.');
+    var H = d.paymentHash ? '0x' + normHex(d.paymentHash) : null;
+    if (!H) return bad('hash', 'That invoice carries no payment hash to lock on.');
     if (S.expectH && normHex(H) !== normHex(S.expectH)) {
       return bad('mismatch', 'That invoice is for a different swap. Ask for the one made from this code.');
     }
     if (d.sats != null && Number(d.sats) !== Number(S.sats)) {
       return bad('amount', 'That invoice is for ' + fmt(d.sats) + ' sats, not ' + fmt(S.sats) + '.');
     }
-    var exp = d.absoluteExpiry != null ? d.absoluteExpiry : (d.expiresAt != null ? d.expiresAt : null);
+    var exp = invoiceExpiry(d);
     if (exp != null && nowSec() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
     if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
-    return good(offer ? 'Offer ready. Your wallet pays it and gets the invoice.' : 'Invoice ready.',
-      { dec: d, H: H, basis: offer ? 'offer' : 'invoice' });
+    var w = windowProblem(d, S.t2);
+    if (w) return bad('window', w);
+    return good('Invoice ready.', { dec: d, H: H, basis: 'invoice' });
+  }
+
+  /* When the Lightning invoice stops being payable, in unix seconds; null when
+     the invoice never expires (a BOLT11 with no expiry tag). */
+  function invoiceExpiry(d) {
+    if (!d) return null;
+    if (d.absoluteExpiry != null) return Number(d.absoluteExpiry);
+    if (d.expiresAt != null) return Number(d.expiresAt);
+    return null;
+  }
+
+  /* The escrow window has a floor, a ceiling, and has to close before the
+     invoice does. A partner who names a window five minutes out is betting that
+     the sats land after it; a window years out leaves the funding side's money
+     stuck. Both are refused before anything can be approved. */
+  function windowProblem(dec, t2) {
+    if (!t2) return '';
+    var left = Number(t2) - nowSec();
+    if (!(left > 0)) return 'Those terms have run out. Ask for a new code.';
+    if (left < T2_MIN) return 'Those terms close too soon to pay and claim. Ask for a new code.';
+    if (left > T2_MAX) return 'Those terms would lock the money for too long. Ask for a new code.';
+    var exp = invoiceExpiry(dec);
+    if (exp != null && exp < Number(t2) + T1_MARGIN) {
+      return 'That invoice ends before the escrow window closes. Ask for one that stays payable at least an hour longer.';
+    }
+    return '';
   }
 
   /* The USDT half: where the USDT lands. Two forms of USDT are what people
@@ -1588,6 +1764,22 @@
           fields: { invoice: inv, address: ad }
         });
       }
+      /* The escrow window has to leave room to pay and claim, and the invoice
+         has to outlive it. A code that names five minutes, or years, stops
+         here - before any button can approve it. */
+      var wp = windowProblem(inv.dec, S.t2);
+      if (wp) {
+        return Promise.resolve({ ok: false, code: 'window', field: 'invoice', msg: wp,
+          fields: { invoice: inv, address: ad } });
+      }
+      /* The swap id names the address that funds the escrow. On the side that
+         receives the USDT that address is the partner's, and this side can only
+         check the lock once the partner has said it. */
+      if (S.mode === 'wallet' && sendBtc && !isAddr(lockerNow())) {
+        return Promise.resolve({ ok: false, code: 'locker', field: 'go',
+          msg: 'Ask your partner for the code they made after their wallet was connected, or paste the transaction that locked the USDT.',
+          fields: { invoice: inv, address: ad } });
+      }
       return Promise.resolve(good(sendBtc
         ? 'Both sides are ready. Approve ties both legs to one secret.'
         : 'Both sides are ready. Approve puts your USDT in the escrow.',
@@ -1661,8 +1853,23 @@
     $('walletLink').setAttribute('href', inv.ok ? 'lightning:' + String(pasted()).replace(/^lightning:/i, '') : '#');
     $('walletLink').dataset.empty = inv.ok ? '0' : '1';
 
+    /* Bitcoin paid from a wallet that keeps the payment secret cannot be
+       claimed back here, so the sentence is on screen before the button. */
+    var ih = $('invHint');
+    if (ih) {
+      ih.hidden = !sendBtc || done || waiting;
+      ih.textContent = sendBtc
+        ? 'Pay from a wallet that shows the payment secret: it is how you claim the USDT if your partner stops answering.'
+        : '';
+    }
+
     $('sampleInv').hidden = S.mode === 'wallet';
     $('sampleAddr').hidden = S.mode === 'wallet';
+
+    /* When the partner's funding address is not known yet, their lock
+       transaction is the one thing that supplies it. */
+    var needTx = S.mode === 'wallet' && !done && !waiting && S.direction === 'btc2u' && !isAddr(lockerNow()) && !S.lockTx;
+    $('lockTxRow').hidden = !needTx;
     $('addrIn').placeholder = S.mode === 'wallet' ? '0x\u2026 on ' + curChain().label : '0x\u2026 or T\u2026';
 
     $('headRow').hidden = !(done || waiting);
@@ -1733,8 +1940,9 @@
     } else if (!practice && S.rpcState === 'nocon') {
       txt += ' \u00b7 no contract at that address';
     } else if (S.chain) {
-      if (S.chain.state === 'error') { txt += ' \u00b7 no answer from the chain'; }
+      if (S.chain.state === 'error') { txt += S.chain.disagree ? ' \u00b7 endpoints disagree' : ' \u00b7 no answer from the chain'; }
       else if (S.chain.state === 'locked') { txt += ' \u00b7 USDT locked'; dot = 'live'; }
+      else if (S.chain.state === 'closed') { txt += ' \u00b7 window closed'; }
       else if (S.chain.state === 'claimed') { txt += ' \u00b7 USDT paid out'; dot = 'live'; }
       else if (S.chain.state === 'refunded') { txt += ' \u00b7 USDT returned'; }
       else if (S.chain.state === 'mismatch') { txt += ' \u00b7 not this swap'; }
@@ -1791,12 +1999,24 @@
       'uint256=' + String(usdtUnits())
     ]) : '#');
     // the secret opens the escrow; whoever holds it can claim, and the app
-    // checks that it hashes to this swap before offering it to a wallet
-    var open = c && c.state === 'locked' && S.phase === 'paid';
+    // checks that it hashes to this swap before offering it to a wallet. A
+    // window that has closed can no longer be claimed, only refunded.
+    var open = c && (c.state === 'locked' || c.state === 'closed') && S.phase === 'paid';
+    var claimable = c && c.state === 'locked' && S.phase === 'paid';
     $('payRowClaim').hidden = !open;
-    $('claimBtn').hidden = !open;
-    $('refundBtn').hidden = !(open && S.direction === 'u2b' && S.t2 && nowSec() >= S.t2);
+    $('claimBtn').hidden = !claimable;
+    $('refundBtn').hidden = !(open && S.direction === 'u2b' && (!claimable || (S.t2 && nowSec() >= S.t2)));
     $('secretRow').hidden = !$('secretRow').dataset.open || $('secretRow').dataset.open === '0';
+
+    // The payer has to be able to claim if the partner goes quiet: that takes
+    // the payment secret, and only some wallets show it.
+    var warn = $('payWarn');
+    if (warn) {
+      warn.hidden = !sendBtc;
+      warn.textContent = sendBtc
+        ? 'Pay from a wallet that shows the payment secret: it is how you claim the USDT if your partner stops answering.'
+        : '';
+    }
   }
 
   /* The setup panel is the only place a hash or an address is on screen: it is
@@ -1810,12 +2030,14 @@
     $('tokenIn').value = S.token || '';
     $('rpcIn').value = S.rpc || '';
     var c = curChain();
-    $('setupHint').textContent = !isAddr(S.contract)
+    var eps = endpoints().length;
+    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
+    $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow has code: block ' + fmt(S.block || 0) + '.'
         : (S.rpcState === 'nocon' ? 'Nothing answers at that address on ' + c.label + '.'
           : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
-            : 'Tap Check to read the chain.')));
+            : 'Tap Check to read the chain.')))) + cross;
   }
 
   function presetsOn() {
@@ -1895,14 +2117,18 @@
   function logSwap(r) {
     log('INVOICE', 'payment hash ' + short(r.H, 8) + ' \u00b7 ' + fmt(S.sats) + ' sats');
     log('USDT', 'escrow pays ' + usdtTxt() + ' USDT to ' + short(r.address, 6));
-    log('TIMELOCK', 'T2 unix ' + S.t2 + ' \u00b7 T1 block ' + fmt(S.t1));
+    log('TIMELOCK', 'T2 unix ' + S.t2 + ' \u00b7 funds from ' + short(lockerNow() || '\u2014', 6) +
+      ' \u00b7 invoice ends ' + (invoiceExpiry(r.dec) == null ? 'never' : clock(invoiceExpiry(r.dec))));
   }
 
   function approve() {
     if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
     if (S.phase === 'paying') { paid(); return; }
     if (S.phase === 'locking' || S.phase === 'paid') { checkChain(); return; }
-    validate().then(function (r) {
+    /* The id names the address that funds the escrow. When this side funds it,
+       the wallet is asked who it is before anything is computed. */
+    var whoFirst = S.mode === 'wallet' && S.direction === 'u2b' ? ensureMe() : Promise.resolve(true);
+    whoFirst.then(function () { return validate(); }).then(function (r) {
       if (!r.ok) {
         paintGate(r);
         if (r.code === 'setup') openSetup();
@@ -1912,19 +2138,23 @@
         toast(r.msg);
         return;
       }
-      if (S.t2 && S.t2 - nowSec() <= 60) {
-        toast('Those terms have run out. Ask for a new code.');
+      if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
+      /* Last look at the clock: nothing is approved on a window that has
+         already closed or is about to. */
+      var wp = windowProblem(r.dec, S.t2);
+      if (wp) {
+        log('BLOCK', wp, 'c-err');
+        render();
+        toast(wp);
         return;
       }
-      if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
       S.units = usdtUnits();
       S.inv = String(pasted()).replace(/^lightning:/i, '');
       S.invDec = r.dec;
       S.addr = r.address;
       S.H = r.H;
-      S.basis = r.basis || 'invoice';
+      S.basis = 'invoice';
       logSwap(r);
-      if (S.basis === 'offer') log('OFFER', 'the wallet pays the offer; H is the hash of that offer');
       /* Practice rehearses the same gates against a stand-in escrow. Wallet
          mode moves real USDT and the chain has the last word. */
       startSwap();
@@ -2004,8 +2234,14 @@
      decides whether the swap is over. */
   function paid() {
     if (S.phase !== 'paying') return;
-    if (S.t2 && S.t2 - nowSec() <= 0) {
-      toast('Those terms have run out. Ask for a new code.');
+    /* Paying into the last minutes of the window is how a payer loses: the
+       escrow can be refunded before the claim lands. */
+    if (S.t2 && S.t2 - nowSec() <= PAY_MARGIN) {
+      var m = 'The escrow window is closing. Do not pay; ask for a new code.';
+      S.note = m;
+      log('BLOCK', m, 'c-err');
+      render();
+      toast(m);
       return;
     }
     log('PAID', S.direction === 'btc2u'
@@ -2060,6 +2296,7 @@
     S.t1 = null; S.t2 = null;
     S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null; S.basis = null;
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
+    S.locker = ''; S.codeWarn = '';
     S.lockTx = ''; S.claimTx = ''; S.secret = '';
     S.busy = false;
     var s = $('secretIn'); if (s) { s.value = ''; }
@@ -2068,6 +2305,8 @@
     var a = invIn(); if (a) { a.value = ''; a.dataset.state = ''; }
     var b = addrEl(); if (b) { b.value = ''; b.dataset.state = ''; }
     var c = $('codeIn'); if (c) c.value = '';
+    var lt = $('lockTxIn'); if (lt) lt.value = '';
+    renderCodeWarn();
     var box = $('qrBox'); if (box) box.innerHTML = '';
     var cx = $('codeRow'); if (cx) cx.hidden = true;
     log('RESET', 'state cleared');
@@ -2087,37 +2326,99 @@
     refreshGate();
   }
 
+  /* A code is a stranger's text. It carries terms, never the app's setup:
+     the chain is not switched and the escrow address is not written over. A
+     code that names an escrow this app does not publish, or one that differs
+     from the escrow already set here, is refused whole and nothing on this
+     phone changes. That is what stops a code from pointing a swap at a
+     contract that only imitates the real one. */
+  function refuseCode(msg, detail) {
+    S.codeWarn = msg;
+    log('SECURITY', detail || msg, 'c-err');
+    toast(msg);
+    renderCodeWarn();
+    return false;
+  }
+
+  function renderCodeWarn() {
+    var el = $('codeWarn');
+    if (!el) return;
+    el.textContent = S.codeWarn || '';
+    el.hidden = !S.codeWarn;
+  }
+
   function applyCode(text) {
     var c = parseSwapLink(text);
     if (!c) { toast('That is not a swap code'); return false; }
-    if (c.t2 <= nowSec()) { toast('Those terms have run out. Ask for a new code.'); return false; }
+    var now = nowSec();
     if (S.phase === 'settled' || S.phase === 'refunded') { toast('Tap Done first, then use the code.'); return false; }
+    if (c.t2 <= now) return refuseCode('Those terms have run out. Ask for a new code.');
+    if (c.t2 - now < T2_MIN) {
+      return refuseCode('Those terms close too soon to pay and claim. Ask for a new code.',
+        'a code with a ' + Math.round((c.t2 - now) / 60) + ' minute window was refused');
+    }
+    if (c.t2 - now > T2_MAX) return refuseCode('Those terms would lock the money for too long. Ask for a new code.');
+
+    /* The chain and the escrow a wallet code names are requirements, not
+       settings. Neither is adopted here. */
+    var practice = S.mode === 'practice';
+    if (!practice && c.net && c.net !== S.net) {
+      return refuseCode('That code is for ' + (CHAINS[c.net] ? CHAINS[c.net].label : c.net) +
+        ', and this app is set to ' + curChain().label + '. Switch the network in Setup, then load it again.');
+    }
+    if (!practice && c.contract) {
+      var want = String(c.contract).toLowerCase(), mine = String(S.contract || '').toLowerCase();
+      if (mine && mine !== want) {
+        return refuseCode('That code names a different escrow contract than the one set here. Nothing was changed.',
+          'a code naming escrow ' + want + ' was refused; this phone uses ' + mine);
+      }
+      if (!mine) {
+        if (!isOfficialEscrow(S.net, want)) {
+          return refuseCode('That code points at an escrow this app does not publish. Nothing was changed: check it with your partner and set it in Setup yourself.',
+            'an unpublished escrow ' + want + ' was refused');
+        }
+        S.contract = want;
+        saveSetup();
+        log('SETUP', 'the published escrow for ' + curChain().label + ' came from the code');
+      }
+    }
+
     S.direction = opposite(c.direction);
     S.sats = c.sats;
     S.units = c.units;
     S.t2 = c.t2;
     S.t1 = c.t1;
     S.expectH = c.H || null;
+    /* The id is the terms plus the funding address: when the other side funds
+       the escrow, their code is where that address comes from. */
+    S.locker = S.direction === 'btc2u' ? (c.locker || '') : '';
     if (c.address) addrEl().value = c.address;
-    /* A wallet code names the chain and the escrow it is meant for; taking the
-       other side of it on another chain would be a different swap. */
-    if (c.net) S.net = c.net;
-    if (c.contract) S.contract = c.contract;
-    if (c.net || c.contract) saveSetup();
+    S.codeWarn = '';
     $('codeRow').hidden = true;
     presetsOn();
     log('CODE', 'terms from the other side \u00b7 ' + fmt(S.sats) + ' sats \u00b7 ' + usdtTxt() + ' USDT');
+    if (!practice && S.direction === 'btc2u' && !isAddr(S.locker)) {
+      log('CODE', 'the code does not name the address that funds the escrow; paste its lock transaction instead');
+    }
     render();
     refreshGate();
     toast('Terms loaded');
     return true;
   }
 
+  /* A sample invoice lasts as long as the escrow window plus the margin the
+     gate asks for, so a rehearsal exercises the same rule a real invoice has
+     to pass. */
+  function sampleExpiry() {
+    var left = S.t2 ? Math.max(S.t2 - nowSec(), T2_MIN) : T2_SPAN;
+    return left + T1_MARGIN + 900;
+  }
+
   function sampleInvoice() {
     if (S.mode === 'wallet') return;
     var R = rndHex(32);
     sha256Hex(R).then(function (H) {
-      invIn().value = mintInvoice({ paymentHash: '0x' + H, sats: S.sats, expiry: T2_SPAN });
+      invIn().value = mintInvoice({ paymentHash: '0x' + H, sats: S.sats, expiry: sampleExpiry() });
       invIn().dataset.state = '';
       render();
       refreshGate();
@@ -2197,11 +2498,12 @@
     var r = String($('rpcIn').value || '').trim();
     if (c && !isAddr(c)) { toast('That contract address is not a 0x one'); return false; }
     if (t && !isAddr(t)) { toast('That token address is not a 0x one'); return false; }
-    if (r && !isEndpoint(r)) { toast('That endpoint is not an https one'); return false; }
+    if (r && !endpointsOk(r)) { toast('Every endpoint has to be an https one'); return false; }
     S.contract = c.toLowerCase();
     S.token = t.toLowerCase();
     S.rpc = r;
     S.rpcState = 'idle';
+    S.quorum = 'idle';
     S.chain = null;
     saveSetup();
     paintSetup();
@@ -2259,6 +2561,7 @@
       if (!row.hidden) $('txIn').focus();
     },
     loadTx: function () { loadTx($('txIn').value); },
+    useLockTx: function () { loadTx($('lockTxIn').value); },
     claimOpen: function () {
       var row = $('secretRow');
       if (!row) return;
@@ -2288,15 +2591,21 @@
     },
     primary: function () { approve(); },
     back: function () { backToForm(); },
+    /* Sharing a code on the side that funds the escrow asks the wallet who it
+       is first: the id is the terms plus that address, so the partner cannot
+       check the escrow without it. */
     copyCode: function () {
-      copy(swapCode(), 'Code copied');
+      ensureMe().then(function () { copy(swapCode(), 'Code copied'); render(); });
     },
     qrCode: function () {
       var box = $('qrBox');
       if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
-      var code = swapCode();
-      S.qrInv = code;
-      showQr(code, 'Your partner scans this for the same terms', true);
+      ensureMe().then(function () {
+        var code = swapCode();
+        S.qrInv = code;
+        showQr(code, 'Your partner scans this for the same terms', true);
+        render();
+      });
     },
     pasteCode: function () {
       var row = $('codeRow');
@@ -2415,7 +2724,10 @@
 
   window.CLEANSWAP = {
     state: S, SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
-    BYTECODE: BYTECODE,
+    T2_MIN: T2_MIN, T2_MAX: T2_MAX, T1_MARGIN: T1_MARGIN, PAY_MARGIN: PAY_MARGIN,
+    b64field: b64field, unB64field: unB64field,
+    BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
+    invoiceExpiry: invoiceExpiry, windowProblem: windowProblem, rpcQuorum: rpcQuorum, endpoints: endpoints,
     sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
     base58Bytes: base58Bytes, tronAddressBytes: tronAddressBytes, chainOf: chainOf,
     decodeBolt11: decodeBolt11, decodeBolt12: decodeSwapOffer, decodeSwapOffer: decodeSwapOffer,
@@ -2425,7 +2737,7 @@
     approveCalldata: approveCalldata, decodeSwap: decodeSwap, classify: classify, chainSay: chainSay,
     swapIdNow: swapIdNow, readSwap: function (id) { return rpc('eth_call', [{ to: S.contract, data: swapsCalldata(id) }, 'latest']).then(decodeSwap); },
     chainRead: chainRead, refreshChain: refreshChain, chainProbe: chainProbe,
-    loadSetup: loadSetup, saveSetup: saveSetup, curChain: curChain, endpoints: endpoints,
+    loadSetup: loadSetup, saveSetup: saveSetup, curChain: curChain,
     readEscrow: readEscrow, readInvoice: readInvoice, readAddress: readAddress,
     parseLightning: parseLightning, nextCalldata: nextCalldata, escrowProof: escrowProof,
     escrowUnits: escrowUnits, usdtUnits: usdtUnits, usdtTxt: usdtTxt, tokenNow: tokenNow,

@@ -11,11 +11,16 @@ import android.view.View;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Locale;
 
 /**
@@ -30,12 +35,16 @@ import java.util.Locale;
  */
 public class MainActivity extends Activity {
 
-    /* The page itself lives in the APK. It is never served from a host and its
-       address never leaves the phone: the only thing that travels between two
-       people is a cleanswap:... code. */
-    private static final String APP_URL = "file:///android_asset/index.html";
+    /* The page itself lives in the APK, served to the WebView from a made-up
+       https origin that only this class answers. Nothing is ever fetched from a
+       real host for it, and the page is not a file:// document: an https origin
+       means ordinary CORS and no universal file access (the setting that lets
+       a local page reach every site is off). The only thing that travels
+       between two people is a cleanswap:... code. */
+    private static final String APP_HOST = "appassets.androidplatform.net";
+    private static final String APP_URL = "https://" + APP_HOST + "/index.html";
     private static final String CODE_SCHEME = "cleanswap";
-    private static final int BG = 0xFFF2F4F7;
+    private static final int BG = 0xFF08100E;
 
     private WebView web;
     private boolean pageReady;
@@ -66,12 +75,12 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
-        s.setAllowFileAccess(true);
+        // The page is served from the app's own https origin, so it needs no file access at
+        // all; a page that cannot read files cannot be tricked into reading one.
+        s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
-        // The page is a local file that talks to an https quote API: universal access from
-        // file URLs lets fetch reach mempool.space without a local proxy.
-        s.setAllowFileAccessFromFileURLs(true);
-        s.setAllowUniversalAccessFromFileURLs(true);
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
         s.setUseWideViewPort(true);
         s.setLoadWithOverviewMode(true);
         s.setSupportZoom(false);
@@ -131,9 +140,10 @@ public class MainActivity extends Activity {
         return raw;
     }
 
-    /** The code is [A-Za-z0-9_-] after cleanswap:, so quoting it is all it needs. */
+    /** A JavaScript string literal, quoted by the platform rather than by hand: it escapes
+        newlines, quotes, backslashes and the line separators an intent can carry. */
     private static String jsString(String s) {
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        return JSONObject.quote(s);
     }
 
     @Override
@@ -191,6 +201,25 @@ public class MainActivity extends Activity {
             deliverCode();
         }
 
+        /**
+         * The app's origin is this class, not the network: the one asset in the APK is
+         * handed to the WebView here. Every other request (the quote, the chain) is a
+         * normal same-origin https request and goes out untouched.
+         */
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            Uri uri = request == null ? null : request.getUrl();
+            if (uri == null || !APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))) {
+                return null;
+            }
+            try {
+                InputStream in = getAssets().open("index.html");
+                return new WebResourceResponse("text/html", "utf-8", in);
+            } catch (IOException missing) {
+                return null;
+            }
+        }
+
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             return handleNavigation(request.getUrl());
@@ -211,29 +240,17 @@ public class MainActivity extends Activity {
         if (uri == null) {
             return false;
         }
-        if (isAppScheme(uri.getScheme())) {
+        // A page of this app stays here; every other host and scheme belongs to another app.
+        if (APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost())) || isLocalScheme(uri.getScheme())) {
             return false;
         }
         return openInOtherApp(uri);
     }
 
-    /** Schemes the WebView itself can render. Everything else belongs to another app. */
-    private static boolean isAppScheme(String rawScheme) {
+    /** Schemes that never leave the phone's own app surface. */
+    private static boolean isLocalScheme(String rawScheme) {
         String scheme = rawScheme == null ? "" : rawScheme.toLowerCase(Locale.ROOT);
-        switch (scheme) {
-            case "":
-            case "http":
-            case "https":
-            case "file":
-            case "data":
-            case "about":
-            case "javascript":
-            case "blob":
-            case "content":
-                return true;
-            default:
-                return false;
-        }
+        return scheme.isEmpty() || scheme.equals("data") || scheme.equals("about") || scheme.equals("blob");
     }
 
     private boolean openInOtherApp(Uri uri) {

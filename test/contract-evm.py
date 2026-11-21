@@ -112,7 +112,7 @@ arts = compile_contracts()
 accounts = t.get_accounts()
 taker, maker = accounts[1], accounts[2]
 concrete = {k: v for k, v in arts.items() if v['bin']}
-check('solc: both contracts compiled to bytecode', len(concrete) == 2 and 'CleanSwapHTLC' in concrete,
+check('solc: every contract compiled to bytecode', len(concrete) == 4 and 'CleanSwapHTLC' in concrete,
       ', '.join('%s %dB' % (k, len(v['bin']) // 2) for k, v in concrete.items()))
 
 usdt = deploy(arts['TestUSDT'], accounts[0])
@@ -140,6 +140,14 @@ too_soon = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
                          [H, now() + 60, maker, usdt, amount], taker)
 check('lock: rejects a timelock inside MIN_TIMELOCK_DELTA', 'revert' in too_soon.lower(), too_soon[:60])
 
+too_far = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                        ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                        [H, now() + 8 * 24 * 3600, maker, usdt, amount], taker)
+check('lock: rejects a timelock past MAX_TIMELOCK_DELTA (7 days)', 'revert' in too_far.lower(), too_far[:60])
+check('lock: MAX_TIMELOCK_DELTA is exposed for the app to mirror',
+      view(htlc, 'MAX_TIMELOCK_DELTA()', [], [], ['uint256'])[0] == 7 * 24 * 3600,
+      str(view(htlc, 'MAX_TIMELOCK_DELTA()', [], [], ['uint256'])[0]))
+
 lock_rc = send(htlc, 'lock(bytes32,uint256,address,address,uint256)',
                ['bytes32', 'uint256', 'address', 'address', 'uint256'],
                [H, timelock, maker, usdt, amount], taker)
@@ -150,10 +158,14 @@ check('lock: taker debited', view(usdt, 'balanceOf(address)', ['address'], [take
 stored = view(htlc, 'getSwap(bytes32)', ['bytes32'], [swap_id],
               ['bytes32', 'uint256', 'uint256', 'address', 'address', 'address', 'bool', 'bool'])
 check('lock: swap record matches (hashlock, amount, timelock)', stored[0] == H and stored[1] == amount and stored[2] == timelock)
-check('lock: swapId equals computeSwapId() - the terms, not the sender',
-      view(htlc, 'computeSwapId(bytes32,address,address,uint256,uint256)',
-           ['bytes32', 'address', 'address', 'uint256', 'uint256'],
-           [H, maker, usdt, amount, timelock], ['bytes32'])[0] == swap_id)
+check('lock: swapId equals computeSwapId() - the terms and the funding address',
+      view(htlc, 'computeSwapId(bytes32,address,address,address,uint256,uint256)',
+           ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
+           [H, taker, maker, usdt, amount, timelock], ['bytes32'])[0] == swap_id)
+check('lock: the same terms from another address give another id',
+      view(htlc, 'computeSwapId(bytes32,address,address,address,uint256,uint256)',
+           ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
+           [H, accounts[7], maker, usdt, amount, timelock], ['bytes32'])[0] != swap_id)
 
 # ---- the getter the app reads over eth_call --------------------------------
 # `swaps(id)` is the app's only source of truth for the USDT leg: eight static
@@ -224,6 +236,37 @@ check('refund: emits Refunded(swapId)', to_bytes(hexstr=event(refund_rc, 'Refund
 
 again2 = revert_reason(htlc, 'refund(bytes32)', ['bytes32'], [swap2], accounts[5])
 check('refund: second refund reverts (AlreadySettled)', 'revert' in again2.lower(), again2[:60])
+
+# ---- tokens that do not behave ---------------------------------------------
+# The escrow refuses a token whose balance movement is not the agreed amount,
+# and accepts one that returns nothing, because the balance is what it checks.
+fee = deploy(arts['FeeUSDT'], accounts[0])
+sender_fee = accounts[6]
+send(fee, 'faucet()', [], [], sender_fee)
+check('FeeUSDT.faucet(): a fee-on-transfer token is funded',
+      view(fee, 'balanceOf(address)', ['address'], [sender_fee], ['uint256'])[0] == 10_000 * 10 ** 6)
+send(fee, 'approve(address,uint256)', ['address', 'uint256'], [htlc, amount], sender_fee)
+fee_lock = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                         ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                         [H, now() + 3600, maker, fee, amount], sender_fee)
+check('lock: a fee-on-transfer token is refused (TransferAmountMismatch)',
+      'revert' in fee_lock.lower(), fee_lock[:60])
+check('lock: the refused lock left nothing in escrow',
+      view(fee, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == 0,
+      str(view(fee, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0]))
+
+quiet = deploy(arts['QuietUSDT'], accounts[0])
+sender_quiet = accounts[7]
+send(quiet, 'faucet()', [], [], sender_quiet)
+send(quiet, 'approve(address,uint256)', ['address', 'uint256'], [htlc, amount], sender_quiet)
+quiet_rc = send(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                [H, now() + 3600, maker, quiet, amount], sender_quiet)
+quiet_id = to_bytes(hexstr=event(quiet_rc, 'Locked(bytes32,address,address,address,uint256,bytes32,uint256)')['topics'][1])
+check('lock: a token that returns no bool is accepted', view(quiet, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == amount)
+send(htlc, 'claim(bytes32,bytes32)', ['bytes32', 'bytes32'], [quiet_id, R], accounts[8])
+check('claim: the quiet token pays the receiver in full',
+      view(quiet, 'balanceOf(address)', ['address'], [maker], ['uint256'])[0] == amount)
 
 # ---- the app's own encoding ------------------------------------------------
 # The UI builds lock() calldata in the browser. These two checks tie that

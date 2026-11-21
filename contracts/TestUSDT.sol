@@ -78,3 +78,90 @@ contract TestUSDT {
         emit Transfer(address(0), to, value);
     }
 }
+
+/// @title  FeeUSDT
+/// @notice A token that keeps 1% of every transfer. It exists only to prove the
+///         escrow refuses a token whose balance movement is not the agreed
+///         amount: a swap must never escrow less than it promises.
+contract FeeUSDT {
+    string public constant name = "Fee Tether USD";
+    string public constant symbol = "FEEUSDT";
+    uint8 public constant decimals = 6;
+
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function faucet() external returns (uint256) {
+        balanceOf[msg.sender] += 10_000 * 1e6;
+        return 10_000 * 1e6;
+    }
+
+    function approve(address spender, uint256 value) external returns (bool) {
+        allowance[msg.sender][spender] = value;
+        return true;
+    }
+
+    function transfer(address to, uint256 value) external returns (bool) {
+        _transfer(msg.sender, to, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed < value) revert("allowance");
+        allowance[from][msg.sender] = allowed - value;
+        _transfer(from, to, value);
+        return true;
+    }
+
+    function _transfer(address from, address to, uint256 value) private {
+        uint256 fee = value / 100;                       // 1%, kept by the token
+        require(balanceOf[from] >= value, "balance");
+        balanceOf[from] -= value;
+        balanceOf[to] += value - fee;
+        emit Transfer(from, to, value - fee);
+    }
+}
+
+/// @title  QuietUSDT
+/// @notice An ERC-20 that returns nothing from transfer/transferFrom, the way
+///         some older tokens do. The escrow accepts it: what it checks is the
+///         balance movement, not a return value.
+contract QuietUSDT {
+    string public constant name = "Quiet Tether USD";
+    string public constant symbol = "QUSDT";
+    uint8 public constant decimals = 6;
+
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function faucet() external {
+        balanceOf[msg.sender] += 10_000 * 1e6;
+    }
+
+    function approve(address spender, uint256 value) external {
+        allowance[msg.sender][spender] = value;
+    }
+
+    function transfer(address to, uint256 value) external {
+        _move(msg.sender, to, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) external {
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= value, "allowance");
+        allowance[from][msg.sender] = allowed - value;
+        _move(from, to, value);
+    }
+
+    function _move(address from, address to, uint256 value) private {
+        require(balanceOf[from] >= value, "balance");
+        balanceOf[from] -= value;
+        balanceOf[to] += value;
+        emit Transfer(from, to, value);
+    }
+}

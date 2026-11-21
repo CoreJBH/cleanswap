@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light">
-<meta name="theme-color" content="#f2f4f7">
-<meta name="application-name" content="CLEANSWAP">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#08100E">
+<meta name="application-name" content="CleanSwap">
 <meta name="description" content="Swap bitcoin and USDT both ways, with both sides locked before anything moves.">
-<meta name="apple-mobile-web-app-title" content="CLEANSWAP">
+<meta name="apple-mobile-web-app-title" content="CleanSwap">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>CLEANSWAP</title>
+<title>CleanSwap</title>
 <link rel="icon" type="image/png" sizes="64x64" href="data:image/png;base64,__ICON64__">
 <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,__ICON180__">
 <style>/*__CSS__*/</style>
@@ -19,7 +19,7 @@
 <div class="app">
 
   <header class="top">
-    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="26" height="26"><span>CLEANSWAP</span></div>
+    <div class="brand"><img class="mark" src="data:image/png;base64,__ICON64__" alt="" width="26" height="26"><span>CleanSwap</span></div>
     <div class="seg" role="group" aria-label="Mode">
       <button id="modePractice" data-act="mode" data-v="practice" class="on" type="button">Practice</button>
       <button id="modeWallet" data-act="mode" data-v="wallet" type="button">Wallet</button>
@@ -56,9 +56,9 @@
     <div class="field"><div class="field-in">
       <input id="tokenIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="USDT token address" placeholder="0x…">
     </div></div>
-    <label class="cap2" for="rpcIn">RPC endpoint (optional)</label>
+    <label class="cap2" for="rpcIn">RPC endpoints (optional)</label>
     <div class="field"><div class="field-in">
-      <input id="rpcIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="RPC endpoint" placeholder="https://…">
+      <input id="rpcIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="RPC endpoints" placeholder="https://… , https://…">
     </div></div>
     <div class="row">
       <button class="pill" data-act="saveSetup" type="button">Save</button>
@@ -115,6 +115,9 @@
       <button class="sample" data-act="useCode" type="button">Load</button>
     </div>
   </div>
+  <!-- A refused code says so here and stays said: the setup is never changed by
+       a code, so a warning is the whole result of one -->
+  <p class="say err" id="codeWarn" hidden></p>
 
   <!-- one path for both modes; the numbers swap with the direction -->
   <section class="steps" id="steps">
@@ -122,7 +125,7 @@
       <p class="step-h"><b class="n" id="nInv">1</b><span id="invTitle">Partner's Lightning invoice</span></p>
       <div class="field">
         <div class="field-in">
-          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice or offer" placeholder="lnbc… or lno1…">
+          <input id="invIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lightning invoice or offer" placeholder="lnbc… hold invoice">
           <button class="sample" id="sampleInv" data-act="sampleInv" type="button" hidden>Sample</button>
         </div>
       </div>
@@ -131,6 +134,9 @@
         <button class="pill" id="copyInv" data-act="copyInvoice" type="button" hidden>Copy</button>
         <button class="pill" data-act="qrInvoice" type="button">QR</button>
       </div>
+      <!-- paying bitcoin is only safe from a wallet that hands back the
+           payment secret: without it the USDT cannot be claimed here -->
+      <p class="hint" id="invHint" hidden></p>
     </div>
 
     <div class="step" id="stepAddr">
@@ -146,6 +152,14 @@
     <div class="step" id="stepGo">
       <p class="step-h"><b class="n">3</b><span>Approve</span></p>
       <p class="say" id="say">Fill in the two steps, then tap Approve.</p>
+      <!-- The escrow is read by an id that names the address funding it. When
+           the partner has not said theirs, their lock transaction says it. -->
+      <div class="field code" id="lockTxRow" hidden>
+        <div class="field-in">
+          <input id="lockTxIn" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Lock transaction" placeholder="0x… the lock transaction">
+          <button class="sample" data-act="useLockTx" type="button">Load</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -154,6 +168,7 @@
        when the swap is over. -->
   <section class="pay" id="payBox" hidden>
     <p class="pay-line" id="payLine">Send the sats from your wallet, then tap I paid.</p>
+    <p class="hint" id="payWarn" hidden></p>
     <p class="pay-esc" id="payEsc">—</p>
     <p class="pay-addr mono" id="payAddr" hidden>—</p>
     <div class="row" id="payRowInv">

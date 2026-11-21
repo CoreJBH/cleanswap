@@ -10,13 +10,15 @@ pragma solidity ^0.8.26;
 ///         Lightning HTLC. A keccak256 hashlock would be dead weight here: no
 ///         Lightning node can pay against it.
 ///
-///         The swap id is derived from the terms alone —
-///         `sha256(hashlock, receiver, token, amount, timelock)` — so both
-///         phones compute the same id off-line, before either one has sent a
-///         transaction, and the app can read the escrow state with `swaps(id)`
-///         without knowing who locked it. The sender is recorded at lock time;
-///         it is not part of the id because the receiver, the amount, the
-///         hashlock and the timelock already fix the whole deal.
+///         The swap id is derived from the terms and the address that funds the
+///         escrow —
+///         `sha256(hashlock, sender, receiver, token, amount, timelock)` — so
+///         the sender is part of the id. Both phones compute the same id
+///         off-line once the funding address is known, and a third party who
+///         copies the terms cannot pre-occupy the id: their own address gives
+///         them a different id. (Without the sender, anyone could lock the same
+///         terms first, let the timelock pass, refund, and leave the real swap
+///         permanently unusable under that id.)
 ///
 ///         Reveal R on this side (claim) and the Lightning HTLC becomes
 ///         claimable by whoever holds the invoice; if nobody claims here before
@@ -24,10 +26,15 @@ pragma solidity ^0.8.26;
 ///
 ///         Deliberately minimal: no fees, no owner, no upgrade path, no
 ///         reentrancy guard (checks-effects-interactions plus a one-shot
-///         `claimed` flag is enough for an idempotent swap record).
+///         `claimed` flag is enough for an idempotent swap record). Token
+///         movement goes through `_safeTransfer`/`_safeTransferFrom`, which
+///         accept tokens that return no bool but refuse any transfer whose
+///         actual balance movement differs from the agreed amount, so a
+///         fee-on-transfer token cannot quietly short the other side.
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 contract CleanSwapHTLC {
@@ -49,6 +56,10 @@ contract CleanSwapHTLC {
 
     /// @notice Refuse timelocks so short a refund could race the claim.
     uint256 public constant MIN_TIMELOCK_DELTA = 5 minutes;
+    /// @notice Refuse timelocks so long the funding side's money is stuck for
+    ///         a season if the other side goes quiet. 7 days is the ceiling the
+    ///         app also enforces before it lets anyone approve a swap.
+    uint256 public constant MAX_TIMELOCK_DELTA = 7 days;
 
     event Locked(
         bytes32 indexed swapId,
@@ -69,6 +80,7 @@ contract CleanSwapHTLC {
     error ZeroAmount();
     error ZeroAddress();
     error TimelockTooSoon(uint256 timelock, uint256 minimum);
+    error TimelockTooFar(uint256 timelock, uint256 maximum);
     error SwapExists(bytes32 swapId);
     error SwapUnknown(bytes32 swapId);
     error AlreadySettled(bytes32 swapId);
@@ -76,6 +88,7 @@ contract CleanSwapHTLC {
     error TimelockExpired(uint256 timelock, uint256 timestamp);
     error TimelockNotExpired(uint256 timelock, uint256 timestamp);
     error TransferFailed();
+    error TransferAmountMismatch(uint256 wanted, uint256 moved);
 
     // ---------------------------------------------------------------- lock ---
 
@@ -96,8 +109,10 @@ contract CleanSwapHTLC {
         if (receiver == address(0) || token == address(0)) revert ZeroAddress();
         uint256 minimum = block.timestamp + MIN_TIMELOCK_DELTA;
         if (timelock < minimum) revert TimelockTooSoon(timelock, minimum);
+        uint256 maximum = block.timestamp + MAX_TIMELOCK_DELTA;
+        if (timelock > maximum) revert TimelockTooFar(timelock, maximum);
 
-        swapId = computeSwapId(hashlock, receiver, token, amount, timelock);
+        swapId = computeSwapId(hashlock, msg.sender, receiver, token, amount, timelock);
         if (swaps[swapId].sender != address(0)) revert SwapExists(swapId);
 
         Swap storage s = swaps[swapId];
@@ -108,9 +123,7 @@ contract CleanSwapHTLC {
         s.sender = msg.sender;
         s.receiver = receiver;
 
-        if (!IERC20(token).transferFrom(msg.sender, address(this), amount)) {
-            revert TransferFailed();
-        }
+        _safeTransferFrom(token, msg.sender, amount);
         emit Locked(swapId, msg.sender, receiver, token, amount, hashlock, timelock);
     }
 
@@ -129,7 +142,7 @@ contract CleanSwapHTLC {
         if (computed != s.hashlock) revert HashlockMismatch(s.hashlock, computed);
 
         s.claimed = true; // effects before the external call
-        if (!IERC20(s.token).transfer(s.receiver, s.amount)) revert TransferFailed();
+        _safeTransfer(s.token, s.receiver, s.amount);
         emit Claimed(swapId, preimage);
     }
 
@@ -144,7 +157,7 @@ contract CleanSwapHTLC {
         if (block.timestamp < s.timelock) revert TimelockNotExpired(s.timelock, block.timestamp);
 
         s.refunded = true;
-        if (!IERC20(s.token).transfer(s.sender, s.amount)) revert TransferFailed();
+        _safeTransfer(s.token, s.sender, s.amount);
         emit Refunded(swapId);
     }
 
@@ -172,14 +185,49 @@ contract CleanSwapHTLC {
         return sha256(abi.encodePacked(preimage));
     }
 
-    /// @notice Deterministic swap id from the terms; mirrors the id `lock` uses.
+    /// @notice Deterministic swap id from the terms and the funding address;
+    ///         mirrors the id `lock` uses.
     function computeSwapId(
         bytes32 hashlock,
+        address sender,
         address receiver,
         address token,
         uint256 amount,
         uint256 timelock
     ) public pure returns (bytes32) {
-        return sha256(abi.encodePacked(hashlock, receiver, token, amount, timelock));
+        return sha256(abi.encodePacked(hashlock, sender, receiver, token, amount, timelock));
+    }
+
+    // ------------------------------------------------------------- transfers --
+
+    /// @dev A transfer that refuses to move less than `amount`: the escrow's
+    ///      own balance has to grow by exactly the agreed number of units.
+    function _safeTransferFrom(address token, address from, uint256 amount) private {
+        uint256 before = IERC20(token).balanceOf(address(this));
+        _callToken(token, abi.encodeWithSelector(IERC20.transferFrom.selector, from, address(this), amount));
+        uint256 moved = IERC20(token).balanceOf(address(this)) - before;
+        if (moved != amount) revert TransferAmountMismatch(amount, moved);
+    }
+
+    /// @dev A transfer that refuses to deliver less than `amount`: the
+    ///      destination's balance has to grow by exactly the agreed units.
+    function _safeTransfer(address token, address to, uint256 amount) private {
+        uint256 before = IERC20(token).balanceOf(to);
+        _callToken(token, abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
+        uint256 moved = IERC20(token).balanceOf(to) - before;
+        if (moved != amount) revert TransferAmountMismatch(amount, moved);
+    }
+
+    /// @dev ERC-20 tokens that return nothing (USDT on some chains) are
+    ///      accepted; a `false` return or a failed call is not.
+    function _callToken(address token, bytes memory data) private {
+        (bool ok, bytes memory ret) = token.call(data);
+        if (!ok || !_returnedTrue(ret)) revert TransferFailed();
+    }
+
+    function _returnedTrue(bytes memory ret) private pure returns (bool) {
+        if (ret.length == 0) return true;                       // no return value at all
+        if (ret.length != 32) return false;
+        return abi.decode(ret, (bool));
     }
 }
