@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-571%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-602%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.3" src="https://img.shields.io/badge/android-0.6.3-0f9d6e">
+  <img alt="android 0.6.4" src="https://img.shields.io/badge/android-0.6.4-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -187,6 +187,39 @@ present:
   collected the debug APK; it now writes the keystore from `CLEANSWAP_KEYSTORE_BASE64`, assembles
   `release`, collects the signed file and checks its certificate before uploading it.
 
+`v0.6.4` is the pass that asks what arrives in another shape:
+
+* **Two route hints are not two invoices.** BOLT11 lets `r` (route hint) and `f` (fallback address)
+  repeat - Phoenix, Breez and Zeus all send several - so the decoder accumulates those two and reads
+  every hint hop by hop, while a field that states one term (`p`, `h`, `n`, `x`, `d`, `c`) still may
+  appear only once, and two of them are still refused by name.
+* **The quorum compares what the money depends on.** Two honest nodes return the same receipt with
+  its keys in another order, with Arbitrum's own fields (`l1BlockNumber`, `gasUsedForL1`) and with
+  `0x01` where the other node wrote `0x1`; comparing raw JSON called that a disagreement, and a swap
+  stopped on a chain that was working. A receipt is now compared by its status, its block, its
+  sender and receiver and its logs' address/topics/data, a transaction by its hash, from, to, value
+  and input, and a call's answer as the bytes it is. A shape the page does not recognise is still
+  compared whole, so nothing becomes a match merely by being unexpected.
+* **The `Locked` event names the address that funded the escrow.** With a smart contract wallet (a
+  Safe, an account-abstraction wallet) `msg.sender` is the contract, while `tx.from` is only the key
+  or bundler that relayed the transaction - so the swap id was built from an address that never
+  funded anything and the escrow was never found. The sender is now read from the escrow's own
+  `Locked` event (`topics[2]`), and only an event that carries this swap's terms, token, amount and
+  window is accepted; a receipt that carries no log at all falls back to the transaction's sender.
+* **An address is checked against its own spelling.** A `0x` address written in mixed case has to
+  match EIP-55 - keccak-256 over its lower-case hex, with the capitals where the digest says so - so
+  one replaced or mistyped character is refused with a plain sentence instead of being locked money
+  against. All-lower and all-upper addresses are still accepted, as the standard allows, and the
+  same check covers the USDT address, the escrow and the token in Setup.
+* **USDT from another wallet is two calls, and the screen offers both.** The token has to allow the
+  escrow the amount before the lock can pull it, so a wallet outside the page now gets an `approve`
+  call (copyable, and as an EIP-681 `ethereum:` link) beside the lock call, in the order the token
+  needs them. EIP-681 `bytes32` parameters carry their `0x` prefix like the address and `uint256`
+  ones do.
+* **No code is made before the rate is known.** `Share code` and `QR` refuse while the BTC/USD
+  quote has not arrived, instead of writing `u:"0"` into a code the other phone would have to
+  refuse.
+
 ## What it does
 
 * **The same three steps as ever.** `1 Partner's Lightning invoice` (a hold invoice that states its
@@ -204,7 +237,8 @@ present:
 * **The swap id is the terms plus the funding address.** `swapId = sha256(abi.encodePacked(hashlock,
   sender, receiver, token, amount, timelock))`. The side that funds the escrow knows the id from its
   own wallet; the other side gets the address from the funding side's code, or from the lock
-  transaction itself (its sender is read from the chain). A record found under the id is compared
+  transaction itself (its `Locked` event names the sender, so a smart contract wallet is read as
+  the address that funded it). A record found under the id is compared
   field by field - hashlock, sender, receiver, token, amount, timelock - before it is believed.
 * **The verdict comes in plain English.** `swaps(id)` returns the whole record; the app compares it
   against the terms on screen (hashlock, receiver, token, amount, timelock) and says one of: nothing
@@ -250,7 +284,7 @@ present:
 | Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
 | 1 | the Lightning invoice - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, a `payment_hash` present and stated once (an offer is refused: it has none), the payee's signature verified, an amount stated and equal to the swap, not expired, `bc` network, an expiry at least an hour past the escrow window, and - when a code arrived first - a hash equal to the one that code pinned |
-| 2 | the USDT address | an Arbitrum `0x` address with exactly 40 hex characters, not the zero address. In Wallet mode a TRON `T` address is decoded and checked, then refused with the reason: this swap pays on Arbitrum |
+| 2 | the USDT address | an Arbitrum `0x` address with exactly 40 hex characters, not the zero address, and a mixed-case one has to match its EIP-55 spelling (all-lower and all-upper pass). In Wallet mode a TRON `T` address is decoded and checked, then refused with the reason: this swap pays on Arbitrum |
 | 3 | `Approve` | the two are bound to one `H`, the window is neither too short nor too long, and in Wallet mode the chain is asked before anything else happens: endpoints alive and agreeing, contract deployed, escrow state for `swapId` |
 
 Anything refused is named in plain English and never in jargon, and the hidden log keeps the decoded
@@ -409,7 +443,7 @@ test/
                              one https document, mixed content off, release signing fail-closed
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.3, versionCode 12)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.4, versionCode 13)
 ```
 
 ## Build
@@ -462,7 +496,7 @@ that network's set, and nothing typed for one is read while the other is selecte
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.3`, `versionCode 12`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.4`, `versionCode 13`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the

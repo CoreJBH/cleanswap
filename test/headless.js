@@ -236,7 +236,10 @@ function chainJson(j) {
     case 'eth_getTransactionReceipt': {
       const r = CHAIN.receipts[String(p[0] || '').toLowerCase()];
       if (!r) return null;
-      return { transactionHash: p[0], status: r.status || '0x1', blockNumber: r.blockNumber || '0x' + CHAIN.block.toString(16), logs: [] };
+      return Object.assign({
+        transactionHash: p[0], status: r.status || '0x1',
+        blockNumber: r.blockNumber || '0x' + CHAIN.block.toString(16), logs: r.logs || []
+      }, r.extra || {});
     }
     case 'eth_getTransactionByHash': return CHAIN.txs[String(p[0] || '').toLowerCase()] || null;
     default: return null;
@@ -300,6 +303,49 @@ const lieServer = http.createServer((req, res) => {
     else if (j.method === 'eth_call') result = recordHex(LIE.record);
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
     res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: result }));
+  });
+});
+
+/* A second honest endpoint. It answers the same chain in a different shape:
+   the same keys in reverse order, Arbitrum's own extra fields on every receipt,
+   and quantities written 0x01 instead of 0x1. Two nodes really do this, and a
+   quorum that compares raw JSON calls it a disagreement - so this is the
+   endpoint that proves the comparison looks at what the money depends on. */
+function twist(v) {
+  if (Array.isArray(v)) return v.map(twist);
+  if (!v || typeof v !== 'object') return v;
+  const out = {};
+  for (const k of Object.keys(v).reverse()) out[k] = twist(v[k]);
+  if ('logs' in v) {
+    out.l1BlockNumber = '0x1234567';
+    out.gasUsedForL1 = '0x00';
+    out.depositNonce = '0x0';
+  }
+  if ('status' in v && /^0x[0-9a-f]{1,2}$/.test(String(v.status))) {
+    out.status = '0x' + String(v.status).slice(2).padStart(2, '0');
+  }
+  if ('blockNumber' in v && /^0x[0-9a-f]{1,10}$/.test(String(v.blockNumber))) {
+    out.blockNumber = '0x' + String(v.blockNumber).slice(2).padStart(8, '0');
+  }
+  return out;
+}
+const TWIN = { calls: 0 };
+const twinServer = http.createServer((req, res) => {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type'
+  };
+  if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    let j = null;
+    try { j = JSON.parse(body); } catch (e) { j = null; }
+    if (!j) { res.writeHead(400, cors); res.end('{}'); return; }
+    TWIN.calls++;
+    res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: twist(chainJson(j)) }));
   });
 });
 
@@ -393,7 +439,12 @@ const view = (pg) => pg.evaluate(() => {
   const RPC = 'http://127.0.0.1:' + chainServer.address().port;
   await new Promise((r) => lieServer.listen(0, '127.0.0.1', r));
   const RPC_LIE = 'http://127.0.0.1:' + lieServer.address().port;
-  const browser = await chromium.launch();
+  await new Promise((r) => twinServer.listen(0, '127.0.0.1', r));
+  const RPC_TWIN = 'http://127.0.0.1:' + twinServer.address().port;
+  /* /dev/shm is 64 MB in a container, and a renderer that runs out of it dies
+     with "Target crashed" on the next context. Chromium is told to use its own
+     shared memory files instead. */
+  const browser = await chromium.launch({ args: ['--disable-dev-shm-usage'] });
 
   async function freshPage(width, height) {
     const c = await browser.newContext({ viewport: { width: width || 390, height: height || 844 }, deviceScaleFactor: 1 });
@@ -931,7 +982,8 @@ const view = (pg) => pg.evaluate(() => {
   w = await view(p5);
   check('u2b: Approve asks for the lock, it does not finish anything',
     w.phase === 'locking' && w.title === 'Lock your USDT' && !w.receipt, w.phase + ' / ' + w.title);
-  check('u2b: the screen says one call locks the USDT', /One call from your wallet/.test(w.payLine), w.payLine);
+  check('u2b: the screen says two calls, approve then lock, from another wallet',
+    /approve the USDT first, then send the lock call/.test(w.payLine), w.payLine);
   check('u2b: the call can be copied to a wallet', w.payCopyCall, String(w.payCopyCall));
   check('u2b: no wallet in the page means no one-tap send', !w.paySend, String(w.paySend));
   const deep = await p5.getAttribute('#payLink', 'href');
@@ -941,6 +993,25 @@ const view = (pg) => pg.evaluate(() => {
   check('u2b: the link carries the receiver, the token and the amount',
     String(deep).includes('&address=' + PARTNER) && String(deep).includes('&address=' + TOKEN) && /&uint256=\d+$/.test(deep),
     String(deep).slice(-60));
+  /* EIP-681 writes a bytes32 parameter as a 32-byte hex value, so it carries
+     its 0x prefix exactly like the address and uint256 ones do. */
+  const lockHashParam = String(deep).split('?')[1].split('&')[0];
+  check('u2b: the bytes32 parameter is 0x-prefixed and 32 bytes wide',
+    /^bytes32=0x[0-9a-f]{64}$/.test(lockHashParam) &&
+    lockHashParam.slice(10) === await p5.evaluate(() => String(window.CLEANSWAP.state.H).replace(/^0x/, '').toLowerCase()),
+    lockHashParam.slice(0, 20) + '…');
+  /* USDT from a wallet outside this page takes two calls: the token allows the
+     escrow the amount, and only then can the lock pull it. */
+  const arow = await p5.evaluate(() => !document.getElementById('payRowApprove').hidden);
+  const alink = await p5.getAttribute('#payApproveLink', 'href');
+  const approveCopy = await p5.evaluate(() => window.CLEANSWAP.state.units);
+  check('u2b: another wallet gets its approve call as well as the lock',
+    arow === true && String(alink).startsWith('ethereum:' + TOKEN + '@421614/approve?address=' + CONTRACT + '&uint256='),
+    String(alink).slice(0, 80) + '…');
+  check('u2b: the approve link allows exactly the swap amount',
+    String(alink).endsWith('&uint256=' + approveCopy), String(alink).slice(-40));
+  check('u2b: the approve call can be copied too',
+    await p5.evaluate(() => !document.getElementById('payCopyApprove').hidden));
   const calldata = await p5.evaluate(() => window.CLEANSWAP.lockCalldata({
     hashlock: window.CLEANSWAP.state.H, timelock: window.CLEANSWAP.state.t2,
     receiver: window.CLEANSWAP.state.addr, token: window.CLEANSWAP.tokenNow(),
@@ -969,9 +1040,9 @@ const view = (pg) => pg.evaluate(() => {
   w = await view(p5);
   check('u2b: a pasted transaction hash is read, not trusted', w.phase === 'paid' && w.chainState === 'locked',
     w.phase + ' / ' + w.chainState);
-  check('u2b: the funding address comes from the transaction itself',
-    await p5.evaluate(() => window.CLEANSWAP.state.me) === LOCKER5,
-    await p5.evaluate(() => String(window.CLEANSWAP.state.me)));
+  check('u2b: the funding address comes from the lock transaction',
+    await p5.evaluate(() => window.CLEANSWAP.state.funder) === LOCKER5,
+    await p5.evaluate(() => String(window.CLEANSWAP.state.funder)));
   check('u2b: the receipt check really happened', CHAIN.calls.some(c => c.method === 'eth_getTransactionReceipt'),
     String(CHAIN.calls.length) + ' calls');
   check('u2b: the screen says the side is locked and what happens next',
@@ -2086,6 +2157,283 @@ const view = (pg) => pg.evaluate(() => {
   check('contract: the same terms from another sender give another id',
     otherSender !== vectorId, String(otherSender).slice(0, 14) + '…');
 
+  /* --------------- 8x. the fourth review: shapes, senders, spellings --- */
+
+  /* keccak-256, which both EIP-55 and the escrow's Locked event are made of.
+     Measured against the digest of the empty string and the four addresses the
+     standard prints, so the page's hash is not its own only witness. */
+  const LOCKED_TOPIC = '0x14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf';
+  const EIP55 = ['0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed',
+    '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359',
+    '0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB',
+    '0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb'];
+  /* the vector page has done its work; its context goes before another opens */
+  await E.c.close();
+  const KX = await freshPage(390, 844);
+  const kx = await KX.p.evaluate((vec) => {
+    const CS = window.CLEANSWAP;
+    return {
+      empty: CS.KECCAK.hex(new Uint8Array()),
+      locked: CS.LOCKED_TOPIC,
+      canon: vec.map(v => CS.eip55(v)),
+      ok: vec.map(v => CS.isAddr(v)),
+      badMixed: CS.isAddr('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD'),
+      lower: CS.isAddr('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'),
+      upper: CS.isAddr('0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED')
+    };
+  }, EIP55);
+  check('keccak: the digest of the empty string is the known one',
+    kx.empty === 'c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470', kx.empty);
+  check('keccak: the Locked event topic is keccak of its signature',
+    kx.locked === LOCKED_TOPIC, kx.locked);
+  check('address: the four addresses EIP-55 prints come back spelled that way',
+    kx.canon.every((v, i) => v === EIP55[i]), kx.canon.join(' '));
+  check('address: correct spellings pass, all-lower and all-upper pass, a wrong capital does not',
+    kx.ok.every(Boolean) && kx.lower && kx.upper && !kx.badMixed,
+    JSON.stringify({ ok: kx.ok, lower: kx.lower, upper: kx.upper, bad: kx.badMixed }));
+  const spell = await KX.p.evaluate(() => {
+    const CS = window.CLEANSWAP;
+    return {
+      bad: CS.readAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD'),
+      good: CS.readAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed')
+    };
+  });
+  check('address: a mistyped capital is refused with its own sentence',
+    spell.bad.ok === false && spell.bad.code === 'checksum' && /mistyped/.test(spell.bad.msg),
+    spell.bad.code + ' / ' + spell.bad.msg);
+  check('address: the right spelling is accepted, and stored lower-case',
+    spell.good.ok === true && spell.good.address === '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed', spell.good.address);
+  check('address: that sentence is plain English', !JARGON.test(spell.bad.msg), spell.bad.msg);
+
+  /* A BOLT11 invoice of the shape Phoenix, Breez and Zeus send: more than one
+     route hint and more than one fallback address. BOLT 11 lets both repeat,
+     and refusing the second one refused a partner's real invoice. Signed here
+     with the page's own signer, so the only thing under test is the tags. */
+  const MULTI = await KX.p.evaluate(async () => {
+    const CS = window.CLEANSWAP;
+    const B32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    const polymod = (vals) => {
+      let chk = 1;
+      for (const v of vals) {
+        const b = chk >>> 25;
+        chk = ((chk & 0x1ffffff) << 5) ^ v;
+        for (let j = 0; j < 5; j++) if ((b >>> j) & 1) chk ^= GEN[j];
+      }
+      return chk >>> 0;
+    };
+    const hrpWords = (hrp) => {
+      const o = [];
+      for (const c of hrp) o.push(c.charCodeAt(0) >>> 5);
+      o.push(0);
+      for (const c of hrp) o.push(c.charCodeAt(0) & 31);
+      return o;
+    };
+    const toWords = (bytes) => {
+      let acc = 0, bits = 0; const out = [];
+      for (const b of bytes) {
+        acc = (acc << 8) | b; bits += 8;
+        while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); }
+      }
+      if (bits) out.push((acc << (5 - bits)) & 31);
+      return out;
+    };
+    const toBytes = (ws) => {
+      let acc = 0, bits = 0; const out = [];
+      for (const w of ws) {
+        acc = (acc << 5) | w; bits += 5;
+        while (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+      }
+      if (bits) out.push((acc << (8 - bits)) & 255);
+      return new Uint8Array(out);
+    };
+    const hex = (u8) => Array.from(u8).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hrp = 'lnbc500u';
+    const ts = Math.floor(Date.now() / 1000);
+    const words = [];
+    for (let i = 6; i >= 0; i--) words.push(Math.floor(ts / Math.pow(32, i)) % 32);
+    const tag = (ch, w) => { words.push(B32.indexOf(ch), w.length >> 5, w.length & 31, ...w); };
+    const iv = (n) => {
+      const o = []; let v = n;
+      while (v > 0) { o.unshift(v & 31); v = Math.floor(v / 32); }
+      return o.length ? o : [0];
+    };
+    tag('p', toWords(new Uint8Array(32).fill(0x21)));
+    tag('d', toWords(new TextEncoder().encode('two routes')));
+    const hint = (fill) => { const b = new Uint8Array(51); b.fill(fill); return b; };
+    tag('r', toWords(hint(0x41)));
+    tag('r', toWords(hint(0x42)));
+    tag('f', [17, ...toWords(new Uint8Array(20).fill(0x51))]);
+    tag('f', [17, ...toWords(new Uint8Array(20).fill(0x52))]);
+    tag('x', iv(7200));
+    const data = words.slice();
+    const pre = new Uint8Array([...new TextEncoder().encode(hrp), ...toBytes(data)]);
+    const msg = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', pre)));
+    const sigHex = CS.SECP.sign(msg, '11'.repeat(32));
+    const sigWords = toWords(new Uint8Array(sigHex.match(/../g).map(h => parseInt(h, 16))));
+    const all = data.concat(sigWords);
+    const p = polymod(hrpWords(hrp).concat(all).concat([0, 0, 0, 0, 0, 0])) ^ 1;
+    const tail = [];
+    for (let i = 0; i < 6; i++) tail.push((p >>> (5 * (5 - i))) & 31);
+    const inv = hrp + '1' + all.concat(tail).map(v => B32[v]).join('');
+    let dec = null, err = '';
+    try { dec = CS.decodeBolt11(inv); } catch (e) { err = e.message; }
+    const read = CS.readInvoice(inv);
+    return {
+      inv, err, tags: dec && dec.tags, hints: dec && dec.routeHints,
+      fallbacks: dec && dec.fallbacks, sats: dec && dec.sats,
+      readOk: read.ok, readCode: read.code, readMsg: read.msg
+    };
+  });
+  check('invoice: two route hints are read, not refused',
+    !MULTI.err && !!MULTI.hints && MULTI.hints.length === 2, MULTI.err || JSON.stringify(MULTI.hints));
+  check('invoice: each hint names its node, its channel and its fees',
+    !!MULTI.hints && MULTI.hints[0].nodeId === '41'.repeat(33) &&
+    MULTI.hints[0].shortChannelId === '41'.repeat(8) &&
+    MULTI.hints[0].baseMsat === 0x41414141 && MULTI.hints[0].cltv === 0x4141,
+    MULTI.hints ? JSON.stringify(MULTI.hints[0]) : 'none');
+  check('invoice: both fallback addresses are kept',
+    !!MULTI.fallbacks && MULTI.fallbacks.length === 2 && MULTI.fallbacks[1].version === 17 &&
+    MULTI.fallbacks[1].program === '52'.repeat(20), JSON.stringify(MULTI.fallbacks));
+  check('invoice: the amount and the signature still read the same',
+    MULTI.sats === 50000 && MULTI.readOk === true, MULTI.sats + ' / ' + MULTI.readCode + ' ' + MULTI.readMsg);
+  check('invoice: each tag is listed once, however often it repeats',
+    MULTI.tags === 'dfprx', MULTI.tags);
+  await KX.p.fill('#invIn', MULTI.inv);
+  await KX.p.fill('#addrIn', USER_ADDR);
+  await KX.p.waitForTimeout(450);
+  const multiW = await view(KX.p);
+  check('invoice: a two-hint invoice makes Approve ready, as any other does',
+    multiW.ready === '1' && multiW.gate === 'ok', multiW.gate + ' / ' + multiW.say);
+
+  /* Two honest nodes, one of them writing the same receipt in another shape:
+     keys in reverse order, Arbitrum's own fields, 0x01 for 0x1. The quorum
+     compares what the money depends on, so these are one answer - while a
+     different status or a different log is still a disagreement. */
+  const qk = await KX.p.evaluate(() => {
+    const CS = window.CLEANSWAP;
+    const A = { transactionHash: '0xAB', status: '0x01', blockNumber: '0x2f0000', from: '0xAA', to: '0xBB', logs: [{ address: '0xCC', topics: ['0xDD'], data: '0xEE', logIndex: '0x0' }] };
+    const B = { logs: [{ data: '0xee', topics: ['0xdd'], address: '0xcc' }], l1BlockNumber: '0x1', gasUsedForL1: '0x0', to: '0xbb', from: '0xaa', blockNumber: '0x002f0000', status: '0x1', transactionHash: '0xab', contractAddress: null };
+    const C = Object.assign({}, A, { status: '0x0' });
+    const D = Object.assign({}, A, { logs: [{ address: '0xCC', topics: ['0xDD'], data: '0xEF' }] });
+    const t1 = { hash: '0xAB', from: '0xAA', to: '0xBB', value: '0x00', input: '0x91644b2b', nonce: '0x1' };
+    const t2 = { nonce: '0x01', input: '0x91644b2b', value: '0x0', to: '0xbb', from: '0xaa', hash: '0xab', blockHash: '0x12' };
+    return {
+      same: CS.quorumKey(A) === CS.quorumKey(B),
+      statusDiff: CS.quorumKey(A) !== CS.quorumKey(C),
+      logDiff: CS.quorumKey(A) !== CS.quorumKey(D),
+      txSame: CS.quorumKey(t1) === CS.quorumKey(t2),
+      callSame: CS.quorumKey('0x' + 'AB'.repeat(32)) === CS.quorumKey('0x' + 'ab'.repeat(32)),
+      unknownDiff: CS.quorumKey({ a: 1 }) !== CS.quorumKey({ a: 2 })
+    };
+  });
+  check('quorum: the same receipt in another shape is the same answer', qk.same, String(qk.same));
+  check('quorum: the same transaction in another shape is the same answer', qk.txSame, String(qk.txSame));
+  check('quorum: a call answer compares by its bytes, not its spelling', qk.callSame, String(qk.callSame));
+  check('quorum: a different status, a different log, or an unknown shape is still a disagreement',
+    qk.statusDiff && qk.logDiff && qk.unknownDiff,
+    JSON.stringify({ status: qk.statusDiff, log: qk.logDiff, unknown: qk.unknownDiff }));
+  await KX.c.close();
+
+  /* A lock funded by a smart contract wallet. The transaction is sent by a key
+     that relays it and goes to the wallet, not to the escrow, so `tx.from` is
+     not the address that funded anything; the escrow's own Locked event names
+     it (topics[2]), and the swap id is built with that address. The two
+     endpoints here are one node and one that writes the same receipt in the
+     other shape, so the same run also proves the quorum's comparison. */
+  const TW = await freshPage(390, 844);
+  const twp = TW.p;
+  await twp.click('#modeWallet');
+  await twp.waitForTimeout(300);
+  await twp.click('#chainRow');
+  await twp.fill('#contractIn', CONTRACT);
+  await twp.fill('#tokenIn', TOKEN);
+  await twp.fill('#rpcIn', RPC + ',' + RPC_TWIN);
+  await twp.click('[data-act="saveSetup"]');
+  await twp.waitForTimeout(1500);
+  await twp.click('#chainRow');
+  const SAFE = '0x1f2e3d4c5b6a7988071625344a3b2c1d0e9f8a7b';
+  const RELAYER = '0x9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6c5';
+  const H8 = '0x' + crypto.createHash('sha256').update(Buffer.from('61'.repeat(32), 'hex')).digest('hex');
+  const t2_8 = Math.floor(Date.now() / 1000) + 7200;
+  const inv8 = await twp.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), H8);
+  await twp.fill('#invIn', inv8);
+  await twp.fill('#addrIn', USER_ADDR);
+  await twp.waitForTimeout(300);
+  const units8 = await twp.evaluate((t) => { window.CLEANSWAP.state.t2 = t; return window.CLEANSWAP.usdtUnits(); }, t2_8);
+  const lockEvent = (o) => ({
+    address: CONTRACT,
+    topics: [LOCKED_TOPIC,
+      swapIdOf({ hashlock: o.H, sender: o.sender, receiver: USER_ADDR, token: TOKEN, amount: o.units, timelock: o.t2 }),
+      '0x' + '0'.repeat(24) + o.sender.slice(2), '0x' + '0'.repeat(24) + USER_ADDR.slice(2)],
+    data: '0x' + [hexAddr(TOKEN), hexWord(o.units), hexB32(o.H), hexWord(o.t2)].join('')
+  });
+  const wrongTx = '0x' + 'ce'.repeat(32);
+  CHAIN.receipts[wrongTx] = { logs: [lockEvent({ H: H8, sender: SAFE, units: units8 + 1, t2: t2_8 })] };
+  await twp.fill('#lockTxIn', wrongTx);
+  await twp.click('[data-act="useLockTx"]');
+  await twp.waitForTimeout(1800);
+  const wrongW = await view(twp);
+  check('smart wallet: a lock with other terms is refused and names no address',
+    wrongW.toast === 'That transaction is not the lock for this swap' &&
+    (await twp.evaluate(() => window.CLEANSWAP.state.funder)) === '', wrongW.toast);
+  const lockTx8 = '0x' + 'cf'.repeat(32);
+  CHAIN.receipts[lockTx8] = { logs: [lockEvent({ H: H8, sender: SAFE, units: units8, t2: t2_8 })] };
+  /* the transaction itself went to the wallet, sent by a relaying key */
+  CHAIN.txs[lockTx8] = { from: RELAYER, to: SAFE, input: '0x' };
+  const id8 = swapIdOf({ hashlock: H8, sender: SAFE, receiver: USER_ADDR, token: TOKEN, amount: units8, timelock: t2_8 });
+  CHAIN.records[id8.toLowerCase()] = {
+    hashlock: H8, amount: units8, timelock: t2_8, token: TOKEN,
+    sender: SAFE, receiver: USER_ADDR, claimed: false, refunded: false
+  };
+  await twp.fill('#lockTxIn', lockTx8);
+  await twp.click('[data-act="useLockTx"]');
+  await twp.waitForTimeout(1800);
+  check('smart wallet: the Locked event says who funded the escrow',
+    (await twp.evaluate(() => window.CLEANSWAP.state.funder)) === SAFE,
+    await twp.evaluate(() => String(window.CLEANSWAP.state.funder || window.CLEANSWAP.state.me)));
+  await twp.click('#primary');
+  await twp.waitForTimeout(2200);
+  const twW8 = await view(twp);
+  check('smart wallet: the swap reads as locked under the id that address makes',
+    twW8.chainState === 'locked' && twW8.phase === 'paying',
+    twW8.phase + ' / ' + twW8.chainState);
+  check('smart wallet: the log says where the address came from',
+    await twp.evaluate(() => window.CLEANSWAP.state.log.some(e => /Locked event/.test(e.text))));
+  check('smart wallet: both endpoints answered the receipt', TWIN.calls > 0, String(TWIN.calls) + ' calls');
+  check('smart wallet: the refusal is plain English', !JARGON.test(wrongW.toast), wrongW.toast);
+  check('smart wallet: no page errors', TW.errs.length === 0, TW.errs.join(' | '));
+  await twp.screenshot({ path: path.join(SHOTS, 'v64-smart-wallet.png') });
+  await TW.c.close();
+
+  /* A code states terms, and zero is not a term: a rate that has not loaded
+     cannot become "0 USDT" in a code the other phone would refuse. */
+  const ZR = await freshPage(390, 844);
+  const zero = await ZR.p.evaluate(() => {
+    const CS = window.CLEANSWAP;
+    const saved = { price: CS.state.price, pstate: CS.state.pstate, units: CS.state.units };
+    CS.state.price = null; CS.state.pstate = 'loading'; CS.state.units = null;
+    let threw = '';
+    try { CS.swapCode(); } catch (e) { threw = e.message; }
+    CS.state.price = saved.price; CS.state.pstate = saved.pstate; CS.state.units = saved.units;
+    return { threw };
+  });
+  check('code: no code is made while the rate is unknown',
+    /rate has not loaded/.test(zero.threw), zero.threw);
+  const zeroBtn = await ZR.p.evaluate(async () => {
+    const CS = window.CLEANSWAP;
+    CS.state.price = null; CS.state.pstate = 'loading'; CS.state.units = null;
+    document.querySelector('[data-act="copyCode"]').click();
+    await new Promise(r => setTimeout(r, 80));
+    const t = document.getElementById('toast').textContent;
+    CS.state.price = 90000; CS.state.pstate = 'offline';
+    return t;
+  });
+  check('code: the Share code button says so instead of copying one',
+    /rate has not loaded/.test(zeroBtn), zeroBtn);
+  check('code: that sentence is plain English', !JARGON.test(zeroBtn), zeroBtn);
+  await ZR.c.close();
+
   /* ------------------------------------------------------ 9. layout --- */
   async function layout(width, height, label) {
     const f = await freshPage(width, height);
@@ -2250,7 +2598,6 @@ const view = (pg) => pg.evaluate(() => {
     JSON.stringify(legacy));
   await legacyCtx.c.close();
 
-  await E.c.close();
   await browser.close();
 
   console.log('\n' + (results.length - failures) + '/' + results.length + ' checks passed');

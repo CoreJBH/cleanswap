@@ -1,4 +1,4 @@
-/* CleanSwap v0.6.3 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.4 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -34,6 +34,18 @@
    the way out - an ordinary Lightning invoice, which the page does check. An
    invoice that states no creation time (164) or no expiry (166) is refused at
    the decoder, so no path can read one as an invoice that never ends.
+
+   A BOLT11 invoice may carry several route hints (`r`) and fallback addresses
+   (`f`): a wallet with private channels sends one per channel, and Phoenix,
+   Breez and Zeus all do, so those two repeat and every one of them is read,
+   while a field that states a single term (the hash, the amount, the expiry,
+   the payee) still may appear only once. An EVM address written in mixed case
+   has to spell itself the way EIP-55 says, or it is not the address it was
+   copied from. And a lock funded by a smart contract wallet is read from the
+   escrow's own Locked event - the address the escrow saw as its sender - not
+   from the key that relayed the transaction. Two nodes that write the same
+   receipt in different shapes are one answer: the quorum compares the fields
+   the money depends on, not their JSON spelling.
 
    A swap id is the terms plus the address that funds the escrow, so a code
    from the other side is checked before anything is adopted from it: the chain
@@ -165,6 +177,7 @@
     addr: '',                       /* the USDT address on the screen */
     me: '',                         /* the wallet account this side signs with */
     locker: '',                     /* the address that funds the escrow (from a code) */
+    funder: '',                     /* the address the escrow itself says funded it (from its Locked event) */
     expectH: null,                  /* hashlock pinned by a code from the other side */
     codeWarn: '',                   /* what a refused code said, kept on screen */
     codeAddr: '',                   /* a USDT address a code named, offered not taken */
@@ -271,6 +284,100 @@
     return out;
   }
 
+  /* ------------------------------------------------ keccak-256, for EVM ---
+     An EVM address carries its own spelling: EIP-55 capitalises the letters
+     whose nibble in keccak-256 of the lower-case hex is 8 or more, so one
+     mistyped character shows up as a wrong capital. The page also needs
+     keccak for the escrow's `Locked` event, whose topic is the hash of its
+     signature. Both have to work with no dependency and no network, so the
+     permutation is here: Keccak-f[1600], rate 136 bytes, and Ethereum's
+     original 0x01 padding (not SHA-3's 0x06). Checked against the known
+     digest of the empty string and against eth_utils.keccak in the tests. */
+  var KECCAK = (function () {
+    var MASK = (1n << 64n) - 1n;
+    var RC = [
+      '0x0000000000000001', '0x0000000000008082', '0x800000000000808a', '0x8000000080008000',
+      '0x000000000000808b', '0x0000000080000001', '0x8000000080008081', '0x8000000000008009',
+      '0x000000000000008a', '0x0000000000000088', '0x0000000080008009', '0x000000008000000a',
+      '0x000000008000808b', '0x800000000000008b', '0x8000000000008089', '0x8000000000008003',
+      '0x8000000000008002', '0x8000000000000080', '0x000000000000800a', '0x800000008000000a',
+      '0x8000000080008081', '0x8000000000008080', '0x0000000080000001', '0x8000000080008008'
+    ].map(function (x) { return BigInt(x); });
+    /* rotations, by lane x + 5y */
+    var ROT = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39,
+      41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+    function rotl(x, n) {
+      var k = BigInt(n % 64);
+      return k === 0n ? x : (((x << k) | (x >> (64n - k))) & MASK);
+    }
+    function permute(s) {
+      var C = new Array(5), B = new Array(25), round, x, y, d;
+      for (round = 0; round < 24; round++) {
+        for (x = 0; x < 5; x++) C[x] = s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20];
+        for (x = 0; x < 5; x++) {
+          d = C[(x + 4) % 5] ^ rotl(C[(x + 1) % 5], 1);
+          for (y = 0; y < 25; y += 5) s[x + y] = (s[x + y] ^ d) & MASK;
+        }
+        for (x = 0; x < 5; x++) {
+          for (y = 0; y < 5; y++) B[y + 5 * ((2 * x + 3 * y) % 5)] = rotl(s[x + 5 * y], ROT[x + 5 * y]);
+        }
+        for (x = 0; x < 5; x++) {
+          for (y = 0; y < 5; y++) {
+            s[x + 5 * y] = (B[x + 5 * y] ^ ((~B[(x + 1) % 5 + 5 * y] & MASK) & B[(x + 2) % 5 + 5 * y])) & MASK;
+          }
+        }
+        s[0] = (s[0] ^ RC[round]) & MASK;
+      }
+    }
+    function digest(bytes) {
+      var rate = 136, s = new Array(25), i, j, off, lane, pad;
+      for (i = 0; i < 25; i++) s[i] = 0n;
+      pad = rate - (bytes.length % rate);
+      var msg = new Uint8Array(bytes.length + pad);
+      msg.set(bytes, 0);
+      msg[bytes.length] ^= 0x01;
+      msg[msg.length - 1] ^= 0x80;
+      for (off = 0; off < msg.length; off += rate) {
+        for (i = 0; i < rate / 8; i++) {
+          lane = 0n;
+          for (j = 0; j < 8; j++) lane |= BigInt(msg[off + i * 8 + j]) << BigInt(8 * j);
+          s[i] ^= lane;
+        }
+        permute(s);
+      }
+      var out = new Uint8Array(32);
+      for (i = 0; i < 4; i++) {
+        for (j = 0; j < 8; j++) out[i * 8 + j] = Number((s[i] >> BigInt(8 * j)) & 255n);
+      }
+      return out;
+    }
+    return { digest: digest, hex: function (bytes) { return hexOf(digest(bytes)); } };
+  })();
+
+  /* EIP-55: the canonical spelling of an address. All-lower and all-upper are
+     accepted as written - that is the standard's own allowance, and how most
+     nodes and tools print one - while a mixed-case address has to be this
+     spelling exactly, so a replaced or mistyped character is refused instead
+     of being locked money against. */
+  function eip55(a) {
+    var body = String(a == null ? '' : a).replace(/^0x/i, '').toLowerCase(), i, nib, out = '';
+    if (!/^[0-9a-f]{40}$/.test(body)) return null;
+    var h = KECCAK.hex(utf8(body));
+    for (i = 0; i < 40; i++) {
+      nib = parseInt(h.charAt(i), 16);
+      out += nib >= 8 ? body.charAt(i).toUpperCase() : body.charAt(i);
+    }
+    return '0x' + out;
+  }
+  function checksumOk(a) {
+    var s = String(a == null ? '' : a), body, canon;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(s)) return false;
+    body = s.slice(2);
+    if (body === body.toLowerCase() || body === body.toUpperCase()) return true;
+    canon = eip55(body);
+    return canon != null && canon.slice(2) === body;
+  }
+
   /* ------------------------------------------------------------ base58 --- */
   var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   function base58Bytes(s) {
@@ -350,7 +457,12 @@
     if (!S.t2) return '—';
     return spanTxt(S.t2 - effNow());
   }
-  function isAddr(a) { return /^0x[0-9a-fA-F]{40}$/.test(String(a || '')); }
+  /* A 0x address is 40 hex characters, and when it is written in mixed case
+     its capitals are checked against EIP-55: an all-lower or all-upper address
+     is accepted as written, a mixed-case one has to spell itself the way the
+     standard says, so a replaced character cannot pass for the address it was
+     copied from. */
+  function isAddr(a) { return checksumOk(a); }
   /* The 20 bytes an address stands for, whichever chain it came from, so the
      packed swap id reads the same for an EVM and a TRON address. */
   function addr20(a) {
@@ -432,9 +544,13 @@
   }
 
   /* Who funds the USDT escrow: this side when it sends USDT, the other side
-     when it receives it. A rehearsal funds it from its stand-in address. */
+     when it receives it. A rehearsal funds it from its stand-in address. The
+     escrow's own Locked event wins over anything this side worked out: with a
+     smart contract wallet the funding address is the contract the escrow saw,
+     not the key that sent the transaction. */
   function lockerNow() {
     if (S.mode === 'practice') return EVM.usdtSide;
+    if (isAddr(S.funder)) return String(S.funder).toLowerCase();
     return S.direction === 'u2b' ? String(S.me || '') : String(S.locker || '');
   }
 
@@ -589,6 +705,87 @@
     }
     return step();
   }
+  /* What two nodes have to agree on, written one way.
+
+     Two honest nodes answer the same question in different shapes: the same
+     receipt comes back with its keys in another order, with Arbitrum's own
+     extra fields (l1BlockNumber, gasUsedForL1), or with a quantity as 0x01
+     where the other wrote 0x1. Comparing raw JSON called that a disagreement,
+     and a swap stopped on a chain that was working. So a receipt is compared
+     by the parts the money depends on - its status, its block, who it came
+     from and went to, and its logs' address, topics and data - and a
+     transaction by its hash, from, to, value and input. A call's answer is
+     compared as the bytes it is. Anything the page does not recognise is
+     compared whole and normalized, never reduced to "agrees": an unknown
+     shape must not pass as a match. */
+  var QUORUM_QTY = {
+    blocknumber: 1, status: 1, value: 1, nonce: 1, gas: 1, gasused: 1,
+    cumulativegasused: 1, effectivegasprice: 1, gasprice: 1, transactionindex: 1,
+    type: 1, chainid: 1, timestamp: 1, l1blocknumber: 1
+  };
+  function canonHex(x) { return String(x == null ? '' : x).trim().toLowerCase(); }
+  function canonQty(x) {
+    var s = canonHex(x);
+    if (/^0x[0-9a-f]+$/.test(s)) {
+      try { return '0x' + BigInt(s).toString(16); } catch (e) { return s; }
+    }
+    if (/^\d+$/.test(s)) {
+      try { return '0x' + BigInt(s).toString(16); } catch (e) { return s; }
+    }
+    return s;
+  }
+  function canonValue(v) {
+    var out, keys, i, k;
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string') return /^0x/i.test(v) ? canonHex(v) : v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) {
+      out = [];
+      for (i = 0; i < v.length; i++) out.push(canonValue(v[i]));
+      return out;
+    }
+    if (typeof v !== 'object') return String(v);
+    keys = Object.keys(v).sort(); out = {};
+    for (i = 0; i < keys.length; i++) {
+      k = keys[i].toLowerCase();
+      out[k] = QUORUM_QTY[k] ? canonQty(v[keys[i]]) : canonValue(v[keys[i]]);
+    }
+    return out;
+  }
+  function canonLog(l) {
+    if (!l || typeof l !== 'object') return canonValue(l);
+    return {
+      address: canonHex(l.address),
+      topics: (Array.isArray(l.topics) ? l.topics : []).map(canonHex),
+      data: canonHex(l.data)
+    };
+  }
+  function quorumKey(v) {
+    var o, keys, i, out;
+    if (v && typeof v === 'object' && !Array.isArray(v) && Array.isArray(v.logs)) {
+      out = {
+        status: canonQty(v.status), blockNumber: canonQty(v.blockNumber),
+        from: canonHex(v.from), to: canonHex(v.to),
+        contractAddress: canonHex(v.contractAddress),
+        hash: canonHex(v.transactionHash || v.hash),
+        logs: v.logs.map(canonLog)
+      };
+      return 'receipt:' + JSON.stringify(out);
+    }
+    if (v && typeof v === 'object' && !Array.isArray(v) &&
+      (v.hash != null || v.transactionHash != null) &&
+      ('from' in v || 'to' in v)) {
+      out = {
+        hash: canonHex(v.hash || v.transactionHash), from: canonHex(v.from),
+        to: canonHex(v.to), value: canonQty(v.value),
+        input: canonHex(v.input != null ? v.input : v.data),
+        blockNumber: canonQty(v.blockNumber)
+      };
+      return 'tx:' + JSON.stringify(out);
+    }
+    return 'raw:' + JSON.stringify(canonValue(v));
+  }
+
   /* A state the money depends on is asked of every configured endpoint at once
      and believed only when two of them answer the same thing. One lying node
      cannot then show a lock that is not there: it disagrees with the other, and
@@ -605,7 +802,7 @@
     }
     return Promise.all(list.map(function (url) {
       return rpcOne(url, method, params).then(
-        function (v) { return { ok: true, key: JSON.stringify(v), v: v }; },
+        function (v) { return { ok: true, key: quorumKey(v), v: v }; },
         function (e) { return { ok: false, e: e }; });
     })).then(function (all) {
       var seen = {}, best = null;
@@ -683,6 +880,75 @@
   function wordAddr(w) { return '0x' + String(w || '').slice(24); }
   function wordBool(w) { return !/^0+$/.test(String(w || '')); }
   function wordB32(w) { return '0x' + String(w || ''); }
+
+  /* The escrow's Locked event, as the chain writes it: topics[0] is the hash of
+     the signature, topics[1] the swap id, topics[2] the address that funded the
+     escrow and topics[3] the receiver; the token, the amount, the hashlock and
+     the timelock follow in the data. */
+  var LOCKED_TOPIC = '0x' + KECCAK.hex(utf8('Locked(bytes32,address,address,address,uint256,bytes32,uint256)'));
+  function lockedSender(t) {
+    var w = String(t == null ? '' : t).replace(/^0x/i, '');
+    if (w.length !== 64) return '';
+    var a = '0x' + w.slice(24).toLowerCase();
+    return isAddr(a) ? a : '';
+  }
+  /* The Locked event of this swap, out of a receipt. A smart contract wallet
+     (a Safe, an account-abstraction wallet) is the msg.sender of the lock, so
+     the address the escrow recorded is the one the swap id is built with - not
+     `tx.from`, which is whatever key or bundler relayed the transaction. */
+  function readLockedLog(rc) {
+    var logs = rc && rc.logs, esc = String(S.contract || '').toLowerCase(), i, l, t, w, sender;
+    if (!logs || !logs.length || !isAddr(S.contract)) return null;
+    for (i = logs.length - 1; i >= 0; i--) {
+      l = logs[i];
+      if (!l || String(l.address || '').toLowerCase() !== esc) continue;
+      t = l.topics || [];
+      if (String(t[0] || '').toLowerCase() !== LOCKED_TOPIC) continue;
+      w = abiWords(l.data);
+      if (w.length < 4) continue;
+      sender = lockedSender(t[2]);
+      if (!sender) continue;
+      return {
+        swapId: String(t[1] || '').toLowerCase(),
+        sender: sender,
+        receiver: lockedSender(t[3]),
+        token: wordAddr(w[0]).toLowerCase(),
+        amount: wordNum(w[1]),
+        hashlock: wordB32(w[2]).toLowerCase(),
+        timelock: wordNum(w[3])
+      };
+    }
+    return null;
+  }
+  /* A Locked event is about this swap only when the escrow wrote this swap's
+     terms in it. Without that check, a transaction that locked something else
+     would hand the page an address to build the wrong swap id from. A term the
+     screen does not know yet (a form not filled in) is not compared; a term it
+     does know has to match, and the escrow read after this decides the rest. */
+  function termsOnScreen() {
+    var inv = { ok: false }, ad, H = S.H;
+    if (!H) {
+      try { inv = readInvoice(pasted()); } catch (e) { inv = { ok: false }; }
+      if (inv.ok) H = inv.H;
+    }
+    ad = S.addr ? { ok: true, address: S.addr } : readAddress(addrIn());
+    return {
+      H: H || null,
+      addr: ad && ad.ok ? String(ad.address) : '',
+      units: usdtUnits(),
+      t2: S.t2
+    };
+  }
+  function lockedLogFits(ev) {
+    if (!ev) return false;
+    var t = termsOnScreen(), token = String(tokenNow()).toLowerCase();
+    if (t.H && normHex(ev.hashlock) !== normHex(t.H)) return false;
+    if (isAddr(t.addr) && String(ev.receiver).toLowerCase() !== t.addr.toLowerCase()) return false;
+    if (isAddr(token) && ev.token !== token) return false;
+    if (Number(t.units) > 0 && !sameAmount(ev.amount, t.units)) return false;
+    if (t.t2 && !sameAmount(ev.timelock, t.t2)) return false;
+    return true;
+  }
 
   /* The calls, in the shapes the contract declares them. */
   function lockCalldata(o) {
@@ -1248,19 +1514,44 @@
     if (!/^0x[0-9a-f]{64}$/.test(h)) { toast('Paste the transaction hash'); return; }
     busy(true);
     var waited = S.mode === 'practice' ? simReceipt() : waitReceipt(h);
-    waited.then(function () {
+    waited.then(function (rc) {
       busy(false);
       /* The id names the address that funded the escrow. The side that does
-         not fund it reads that address from the lock transaction itself, after
-         checking the call went to this escrow and is a lock. */
+         not fund it learns that address from the lock transaction itself,
+         after checking that the escrow recorded this swap's terms. */
       if (S.mode !== 'wallet' || isAddr(lockerNow())) return null;
+      /* The escrow's own Locked event is the address it saw as msg.sender. A
+         smart contract wallet (a Safe, an account-abstraction wallet) is that
+         sender, while the transaction's `from` is only the key or bundler that
+         relayed it - so the event is read first, and only a receipt with no
+         log at all falls back to the transaction's sender. */
+      var ev = readLockedLog(rc);
+      if (ev) {
+        if (!lockedLogFits(ev)) {
+          log('BLOCK', 'that transaction locked different terms, so its address is not this swap\u2019s', 'c-err');
+          render();
+          toast('That transaction is not the lock for this swap');
+          return null;
+        }
+        S.funder = ev.sender;
+        log('LOCK', 'the escrow was funded from ' + short(ev.sender, 6) + ', read from its Locked event');
+        return null;
+      }
+      if (rc && rc.logs && rc.logs.length) {
+        log('BLOCK', 'that transaction carries no lock for this swap', 'c-err');
+        render();
+        toast('That transaction is not the lock for this swap');
+        return null;
+      }
+      /* A receipt that carries no logs cannot say who sent the lock. For a
+         wallet that signs for itself the transaction's own sender is the
+         funding address, and the escrow read after this decides either way. */
       return rpcQuorum('eth_getTransactionByHash', [h]).then(function (tx) {
         var to = tx && tx.to ? String(tx.to).toLowerCase() : '';
         var input = tx && tx.input ? String(tx.input).toLowerCase() : '';
         if (!tx || !isAddr(tx.from) || to !== String(S.contract || '').toLowerCase() ||
           input.slice(0, 10) !== ('0x' + SEL.lock).toLowerCase()) return null;
-        if (S.direction === 'u2b') S.me = String(tx.from).toLowerCase();
-        else S.locker = String(tx.from).toLowerCase();
+        S.funder = String(tx.from).toLowerCase();
         log('LOCK', 'the escrow was funded from ' + short(tx.from, 6) + ', read from the transaction');
         return null;
       }, function () { return null; });
@@ -1543,6 +1834,12 @@
     if (bits > 0) out.push((acc << (8 - bits)) & 255);
     return new Uint8Array(out);
   }
+  /* A big-endian integer held in bytes, as a BOLT11 field carries its fees. */
+  function beNum(u8) {
+    var v = 0n, i;
+    for (i = 0; i < u8.length; i++) v = (v << 8n) | BigInt(u8[i]);
+    return toNum(v, 'field');
+  }
   function bytesToWords(bytes) {
     var acc = 0, bits = 0, out = [], i;
     for (i = 0; i < bytes.length; i++) {
@@ -1595,8 +1892,13 @@
     }
     var ts = toNum(wordsToInt(words.slice(0, 7)), 'timestamp');
     var body = words.slice(7, words.length - 104), fields = {}, i = 0, type, len, ch;
-    /* A tag may appear once. Two payment hashes, or two expiries, would let a
-       reader and a writer disagree about which one the signature covers. */
+    /* A tag that states one term may appear once. Two payment hashes, or two
+       expiries, would let a reader and a writer disagree about which one the
+       signature covers. Route hints (`r`) and fallback addresses (`f`) are
+       lists by nature: a wallet with several private channels sends a hint per
+       channel, and Phoenix, Breez and Zeus all do - so those two accumulate,
+       and every hint is read rather than the whole invoice refused. */
+    var LIST_TAGS = { r: 1, f: 1 };
     while (i + 3 <= body.length) {
       type = body[i];
       len = (body[i + 1] << 5) | body[i + 2];
@@ -1606,11 +1908,37 @@
          in the alphabet. */
       ch = B32.charAt(type);
       if (type >= 1 && type <= 26 && ch) {
-        if (fields[ch]) throw new Error('the invoice carries two "' + ch + '" fields');
-        fields[ch] = [body.slice(i + 3, i + 3 + len)];
+        if (fields[ch]) {
+          if (!LIST_TAGS[ch]) throw new Error('the invoice carries two "' + ch + '" fields');
+          fields[ch].push(body.slice(i + 3, i + 3 + len));
+        } else {
+          fields[ch] = [body.slice(i + 3, i + 3 + len)];
+        }
       }
       i += 3 + len;
     }
+    /* Every route hint, hop by hop: a node id, the short channel id, the base
+       fee, the proportional fee and the delta. Nothing is decided from them
+       here; an invoice that carries them is simply not refused for it. */
+    var routeHints = [], fallbacks = [];
+    (fields.r || []).forEach(function (f) {
+      var b = wordsToBytes(f), j;
+      for (j = 0; j + 51 <= b.length; j += 51) {
+        routeHints.push({
+          nodeId: hexOf(b.subarray(j, j + 33)),
+          shortChannelId: hexOf(b.subarray(j + 33, j + 41)),
+          baseMsat: beNum(b.subarray(j + 41, j + 45)),
+          ppm: beNum(b.subarray(j + 45, j + 49)),
+          cltv: beNum(b.subarray(j + 49, j + 51))
+        });
+      }
+    });
+    /* A fallback address is a 5-bit version and the address itself; more than
+       one is allowed, and each is kept as it was written. */
+    (fields.f || []).forEach(function (f) {
+      if (!f.length) return;
+      fallbacks.push({ version: f[0], program: hexOf(wordsToBytes(f.slice(1))) });
+    });
     var ph = fields.p && fields.p[0];
     /* BOLT 11: an invoice with no `x` field expires 3600 seconds after its
        timestamp. Reading a missing tag as "never expires" would hand the
@@ -1658,6 +1986,8 @@
       description: desc,
       nodeId: node,
       signed: true,
+      routeHints: routeHints,
+      fallbacks: fallbacks,
       tags: Object.keys(fields).sort().join('')
     };
   }
@@ -1932,8 +2262,15 @@
   function opposite(dir) { return dir === 'btc2u' ? 'u2b' : 'btc2u'; }
 
   /* A code states what the sender of the code does; the phone that reads it
-     takes the other side, so the same code reads correctly from both ends. */
+     takes the other side, so the same code reads correctly from both ends. A
+     code is only made when it carries real terms: a rate that has not loaded
+     yet would write `u:"0"`, which the other phone must then refuse, and a
+     refusal is a worse answer than a moment's wait. */
   function swapCode() {
+    if (!(Number(usdtUnits()) > 0)) {
+      throw new Error('The rate has not loaded yet, so a code now would say zero USDT. Try again in a moment.');
+    }
+    if (!(Number(S.sats) > 0)) throw new Error('A code needs an amount to swap.');
     if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
     /* Amounts and times travel as decimal text: JSON numbers are doubles, and a
        token amount above 2^53 would be rounded by the encoder before the other
@@ -2158,6 +2495,9 @@
     var a = String(raw || '').trim();
     if (!a) return bad('empty', 'Add the USDT address for this swap.');
     if (/^0x[0-9a-fA-F]{40}$/.test(a)) {
+      if (!checksumOk(a)) {
+        return bad('checksum', 'That 0x address has a mistyped character: its capitals do not spell it the way an address spells itself. Copy it again from your wallet.');
+      }
       if (/^0x0{40}$/i.test(a)) return bad('format', 'That address cannot receive anything. Use your own wallet address.');
       return good('Address ready.', { address: a.toLowerCase(), chain: 'evm' });
     }
@@ -2517,7 +2857,11 @@
     var c = S.chain;
     var line;
     if (S.phase === 'locking') {
-      line = 'Lock ' + usdtTxt() + ' USDT in the escrow. One call from your wallet does it.';
+      line = practice
+        ? 'Lock ' + usdtTxt() + ' USDT in the escrow. The stand-in signs for the wallet here.'
+        : (provider()
+          ? 'Lock ' + usdtTxt() + ' USDT in the escrow. One tap in your wallet approves the USDT and locks it.'
+          : 'Lock ' + usdtTxt() + ' USDT from your wallet: approve the USDT first, then send the lock call.');
     } else if (S.phase === 'paid') {
       line = sendBtc
         ? 'Paid. The USDT is yours once the escrow releases it \u2014 this screen closes the swap when the chain says so.'
@@ -2545,12 +2889,28 @@
     $('payCopyCall').hidden = !canCopy || !locking;
     $('payLink').hidden = !canCopy || !locking;
     $('payLink').setAttribute('href', canCopy && locking ? callLink(lockCall(), 'lock', [
-      'bytes32=' + pad64(normHex(S.H)),
+      'bytes32=0x' + pad64(normHex(S.H)),
       'uint256=' + String(S.t2),
       'address=' + S.addr,
       'address=' + tokenNow(),
       'uint256=' + String(usdtUnits())
     ]) : '#');
+    /* Moving USDT from a wallet outside this page is two calls, not one: the
+       token has to allow the escrow the amount first, and only then can the
+       lock pull it. The approve call is offered exactly the way the lock is -
+       copied, or opened as an ethereum: link - so that wallet can do its part
+       in the order the token requires. */
+    var external = !practice && !provider() && locking && isAddr(tokenNow());
+    var arow = $('payRowApprove');
+    if (arow) arow.hidden = !external;
+    var alink = $('payApproveLink');
+    if (alink) {
+      alink.hidden = !external;
+      alink.setAttribute('href', external ? callLink(approveCall(), 'approve', [
+        'address=' + String(S.contract),
+        'uint256=' + String(usdtUnits())
+      ]) : '#');
+    }
     // the secret opens the escrow; whoever holds it can claim, and the app
     // checks that it hashes to this swap before offering it to a wallet. A
     // window that has closed can no longer be claimed, only refunded.
@@ -2854,7 +3214,7 @@
     S.t1 = null; S.t2 = null;
     S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null; S.basis = null;
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
-    S.locker = ''; S.codeWarn = ''; S.codeAddr = '';
+    S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
     S.lockTx = ''; S.claimTx = ''; S.secret = '';
     S.busy = false;
     var s = $('secretIn'); if (s) { s.value = ''; }
@@ -2965,6 +3325,9 @@
     /* The id is the terms plus the funding address: when the other side funds
        the escrow, their code is where that address comes from. */
     S.locker = S.direction === 'btc2u' ? (c.locker || '') : '';
+    /* The address the escrow actually saw is learned from the escrow, not from
+       a code, so a new set of terms starts without one. */
+    S.funder = '';
     /* Where the USDT lands is the one field a code must not set on the side that
        receives it: whoever wrote the code could name their own address, and the
        sats would buy USDT paid to them. On the side that sends the USDT the
@@ -3127,8 +3490,18 @@
     var c = String($('contractIn').value || '').trim();
     var t = String($('tokenIn').value || '').trim();
     var r = String($('rpcIn').value || '').trim();
-    if (c && !isAddr(c)) { toast('That contract address is not a 0x one'); return false; }
-    if (t && !isAddr(t)) { toast('That token address is not a 0x one'); return false; }
+    if (c && !isAddr(c)) {
+      toast(/^0x[0-9a-fA-F]{40}$/.test(c)
+        ? 'That contract address has a mistyped character: its capitals do not spell it the way an address spells itself'
+        : 'That contract address is not a 0x one');
+      return false;
+    }
+    if (t && !isAddr(t)) {
+      toast(/^0x[0-9a-fA-F]{40}$/.test(t)
+        ? 'That token address has a mistyped character: its capitals do not spell it the way an address spells itself'
+        : 'That token address is not a 0x one');
+      return false;
+    }
     if (r && !endpointsOk(r)) { toast('Every endpoint has to be an https one'); return false; }
     S.contract = c.toLowerCase();
     S.token = t.toLowerCase();
@@ -3185,6 +3558,10 @@
       if (S.phase === 'locking') { copy(callPacket(lockCall(), 'lock'), 'Call copied'); return; }
       toast('Nothing to copy yet');
     },
+    copyApprove: function () {
+      if (!isAddr(tokenNow())) { toast('Nothing to copy yet'); return; }
+      copy(callPacket(approveCall(), 'approve'), 'Approve call copied');
+    },
     openTx: function () {
       var row = $('txRow');
       if (!row) return;
@@ -3209,6 +3586,9 @@
     direction: function () {
       if (S.phase === 'settled' || S.phase === 'refunded') return;
       S.direction = opposite(S.direction);
+      /* The other direction is funded by the other side: an address learned
+         for one side is not this side's. */
+      S.funder = '';
       render();
       refreshGate();
     },
@@ -3225,14 +3605,33 @@
     /* Sharing a code on the side that funds the escrow asks the wallet who it
        is first: the id is the terms plus that address, so the partner cannot
        check the escrow without it. */
+    /* A code states the terms of a swap, and a term of zero is not a term: an
+       exchange rate that has not loaded yet cannot be written as "0 USDT" and
+       handed to the other side, so no code is made here at all. */
     copyCode: function () {
-      ensureMe().then(function () { copy(swapCode(), 'Code copied'); render(); });
+      ensureMe().then(function () {
+        var code;
+        try { code = swapCode(); } catch (e) {
+          log('BLOCK', String((e && e.message) || e), 'c-err');
+          render();
+          toast(String((e && e.message) || e));
+          return;
+        }
+        copy(code, 'Code copied');
+        render();
+      });
     },
     qrCode: function () {
       var box = $('qrBox');
       if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
       ensureMe().then(function () {
-        var code = swapCode();
+        var code;
+        try { code = swapCode(); } catch (e) {
+          log('BLOCK', String((e && e.message) || e), 'c-err');
+          render();
+          toast(String((e && e.message) || e));
+          return;
+        }
         S.qrInv = code;
         showQr(code, 'Your partner scans this for the same terms', true);
         render();
@@ -3372,6 +3771,9 @@
     sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
     SECP: SECP, wordsToInt: wordsToInt, fromHex: fromHex, effNow: effNow, syncChainTime: syncChainTime,
     unitsTxt: unitsTxt,
+    KECCAK: KECCAK, eip55: eip55, checksumOk: checksumOk, isAddr: isAddr,
+    quorumKey: quorumKey, LOCKED_TOPIC: LOCKED_TOPIC, readLockedLog: readLockedLog,
+    lockedLogFits: lockedLogFits,
     base58Bytes: base58Bytes, tronAddressBytes: tronAddressBytes, chainOf: chainOf,
     decodeBolt11: decodeBolt11, decodeBolt12: decodeSwapOffer, decodeSwapOffer: decodeSwapOffer,
     mintInvoice: mintInvoice, mintOffer: mintOffer,

@@ -201,6 +201,13 @@
       <button class="pill" id="payCopyCall" data-act="copyCall" type="button" hidden>Copy call</button>
       <a class="pill" id="payLink" href="#" hidden>Open in wallet</a>
     </div>
+    <!-- USDT from a wallet outside this page takes two calls: the token allows
+         the escrow the amount, then the lock pulls it. Both are offered here,
+         in the order the token needs them. -->
+    <div class="row" id="payRowApprove" hidden>
+      <button class="pill" id="payCopyApprove" data-act="copyApprove" type="button">Copy approve</button>
+      <a class="pill" id="payApproveLink" href="#" hidden>Approve in wallet</a>
+    </div>
     <div class="row" id="payRowCheck">
       <button class="pill" id="payCheck" data-act="checkChain" type="button">Check chain</button>
       <button class="pill" data-act="openTx" type="button">Paste tx</button>
