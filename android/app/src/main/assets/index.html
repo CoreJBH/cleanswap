@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-B+6BVkyAjKj/6ODE0nWZwXOsBXZO2GfLPxz1VTYtIUc='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-0giirfEj4tqSO2jLlBEUBWhZ36UySAe5SvPKI6vuh4o='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -1203,6 +1203,10 @@ contract CleanSwapHTLC {
     lock: '91644b2b', claim: '84cc9dfb', refund: '7249fbb6',
     swaps: 'eb84e7f2', balance: '70a08231', approve: '095ea7b3', allowance: 'dd62ed3e'
   };
+  /* An id nobody ever locked. The escrow answers it with the whole record,
+     zeroed - eight words, not an error - which is exactly how the probe
+     below tells the escrow from any other contract. */
+  var ZERO_ID = '0x' + '0'.repeat(64);
 
   /* Arbitrum, both ends of it. The test chain is the default: an escrow on a
      test chain is the only place a swap can be rehearsed with no money on it.
@@ -2114,6 +2118,11 @@ contract CleanSwapHTLC {
   function swapIdNow() {
     var who = lockerNow();
     if (!isAddr(who)) return Promise.reject(new Error('the escrow side is not known yet'));
+    /* The id is the terms plus the funding address. Terms that never arrived
+       (no swap code, no lock read back yet) mean there is no id to compute,
+       and refusing here says so instead of handing a null into the bytes
+       below and calling it a chain error. */
+    if (!S.H || !S.t2) return Promise.reject(new Error('the swap terms are not complete yet'));
     return computeSwapId(S.H, who, S.addr, tokenNow(), S.units != null ? S.units : usdtUnits(), S.t2);
   }
 
@@ -2192,6 +2201,10 @@ contract CleanSwapHTLC {
        definition nothing of this side's is in the escrow, and the address is
        learned when the wallet signs or the lock transaction comes back. */
     if (!isAddr(lockerNow())) return Promise.resolve(null);
+    /* Without the window there is no id to read under: a null reading, which
+       the screen treats as nothing to say, never a chain error dressed as
+       one. loadTx() fills the window from the lock before it asks here. */
+    if (!S.t2) return Promise.resolve(null);
     return swapIdNow().then(function (id) { return rpcQuorum('eth_call', [{ to: S.contract, data: swapsCalldata(id) }, 'latest']); })
       .then(decodeSwap);
   }
@@ -2244,9 +2257,12 @@ contract CleanSwapHTLC {
     });
   }
 
-  /* Does the chain answer, and is there really a contract at that address?
-     A swap screen that points at an empty address explains nothing; this one
-     says so before any money is asked for. */
+  /* Does the chain answer, and is the escrow really the escrow? Code at an
+     address is not yet an answer: any contract has code, and a token or a
+     mimic wears an address just as well. The escrow is known by its own
+     reading - `swaps(id)` returns the whole record, eight words, and for an
+     id nobody locked it is zeroed fields rather than a revert. A screen that
+     points at something else says so before any money is asked for. */
   function chainProbe() {
     /* A rehearsal has a stand-in escrow on the phone, so it already answers. */
     if (S.mode === 'practice') {
@@ -2266,10 +2282,29 @@ contract CleanSwapHTLC {
          depends on, so it keeps the cross-check. */
       return rpcQuorum('eth_getCode', [S.contract, 'latest']);
     }).then(function (code) {
-      S.busy = false;
       var empty = !code || /^0x0*$/.test(String(code));
-      S.rpcState = empty ? 'nocon' : 'ok';
-      if (empty) log('SETUP', 'no contract answers at the escrow address', 'c-err');
+      if (empty) return null;
+      /* Code is not the escrow; the escrow's view function is. An unknown
+         swap reads back as eight zeroed words on the real contract. Anything
+         else - a revert, a short answer, a different shape - is some other
+         contract wearing the address, and the screen refuses it by name. */
+      return rpcQuorum('eth_call', [{ to: S.contract, data: swapsCalldata(ZERO_ID) }, 'latest'])
+        .then(function (res) { return decodeSwap(res) ? 'htlc' : 'other'; },
+              function (e) { return (e && e.disagree) ? 'unclear' : 'other'; });
+    }).then(function (verdict) {
+      S.busy = false;
+      if (verdict === null) {
+        S.rpcState = 'nocon';
+        log('SETUP', 'no contract answers at the escrow address', 'c-err');
+      } else if (verdict === 'other') {
+        S.rpcState = 'nohtlc';
+        log('SETUP', 'the address answers, but not the way the swap contract answers', 'c-err');
+      } else {
+        /* A disagreement between the endpoints is not a verdict about the
+           contract; the reading below refuses the swap on it, and the screen
+           says the endpoints disagree rather than blaming the address. */
+        S.rpcState = 'ok';
+      }
       renderChain();
       return S.rpcState;
     }, function (e) {
@@ -2392,6 +2427,13 @@ contract CleanSwapHTLC {
         log('BLOCK', 'nothing answers at the escrow address', 'c-err');
         openSetup();
         toast('No contract answers at that address');
+        return null;
+      }
+      if (S.rpcState === 'nohtlc') {
+        busy(false);
+        log('BLOCK', 'that address is not the swap contract, so nothing is approved', 'c-err');
+        openSetup();
+        toast('That address is not the swap contract');
         return null;
       }
       if (S.rpcState === 'bad') {
@@ -2668,6 +2710,20 @@ contract CleanSwapHTLC {
         }
         S.funder = ev.sender;
         log('LOCK', 'the escrow was funded from ' + short(ev.sender, 6) + ', read from its Locked event');
+        /* The event is also where the terms come back when no swap code ever
+           reached this phone: the window's end is written in it, and the
+           hashlock and receiver the fit check just verified against this
+           screen's invoice and address can be carried into the swap, so the
+           escrow can be read at all. A side without them used to be shown a
+           chain error that was really a missing code. */
+        var t = termsOnScreen();
+        if (!S.H && t.H) S.H = t.H;
+        if (!S.addr && isAddr(t.addr)) S.addr = t.addr;
+        if (!S.t2 && Number(ev.timelock) > 0) {
+          S.t2 = Number(ev.timelock);
+          if (!S.t1) S.t1 = curHeight() + T1_BLOCKS;
+          log('CODE', 'no swap code was loaded, so the window came from the escrow\u2019s own event: ends ' + clock(S.t2));
+        }
         return null;
       }
       if (rc && rc.logs && rc.logs.length) {
@@ -2686,9 +2742,43 @@ contract CleanSwapHTLC {
           input.slice(0, 10) !== ('0x' + SEL.lock).toLowerCase()) return null;
         S.funder = String(tx.from).toLowerCase();
         log('LOCK', 'the escrow was funded from ' + short(tx.from, 6) + ', read from the transaction');
+        /* A plain wallet's lock call states the terms itself - the same
+           calldata the escrow reads. The window comes from there when the
+           code never did, and the hashlock has to be the one this screen's
+           invoice names: a lock against another hash is not this swap. */
+        var dec = decodeLockCalldata(tx.input);
+        if (dec) {
+          var t = termsOnScreen();
+          if (t.H && normHex(dec.hashlock) !== normHex(t.H)) {
+            log('BLOCK', 'that transaction locks a different hash, so it is not this swap\u2019s lock', 'c-err');
+            toast('That transaction is not the lock for this swap');
+            S.funder = '';
+            return null;
+          }
+          if (!S.H && t.H) S.H = t.H;
+          if (!S.addr && isAddr(dec.receiver) && isAddr(t.addr) &&
+            String(dec.receiver).toLowerCase() === t.addr.toLowerCase()) S.addr = t.addr;
+          if (!S.t2 && Number(dec.timelock) > 0) {
+            S.t2 = Number(dec.timelock);
+            if (!S.t1) S.t1 = curHeight() + T1_BLOCKS;
+            log('CODE', 'no swap code was loaded, so the window came from the lock call itself: ends ' + clock(S.t2));
+          }
+        }
         return null;
       }, function () { return null; });
     }).then(function () {
+      /* The escrow is read with the terms, and without them there is no id
+         to read under. Say what is missing instead of showing a chain
+         connection error that would only send the person looking at the
+         wrong thing. */
+      if (!S.t2) {
+        var msg = 'The terms are incomplete: load the swap code from your partner first.';
+        log('CODE', 'the escrow cannot be read without the terms a swap code carries', 'c-err');
+        S.note = msg;
+        render();
+        toast(msg);
+        return null;
+      }
       return refreshChain();
     }).then(function (c) {
       if (!c) return;
@@ -3394,6 +3484,23 @@ contract CleanSwapHTLC {
 
   function opposite(dir) { return dir === 'btc2u' ? 'u2b' : 'btc2u'; }
 
+  /* How far a code's own price sits from the live market, or null when there
+     is nothing to compare yet. A code implies a price: it offers so many
+     token units for so many sats, and units and sats together are USDT per
+     whole bitcoin. Only a quote that actually arrived is believed - the
+     fallback one is a guess this page made, and warning against a guess
+     would be worse than silence. The rate in a code is the one term a
+     stranger wrote that the money follows, so a price far off the market is
+     said out loud when the code is read, not after anything has moved. */
+  var RATE_WARN = 0.10;             /* warn when a code sits more than 10% off the live quote */
+  function rateGap(units, sats) {
+    var u = Number(units), st = Number(sats);
+    if (!(u > 0) || !(st > 0)) return null;
+    if (!isFinite(S.price) || !(S.price > 0) || S.pstate !== 'live') return null;
+    var codePrice = u * 100 / st;   /* USDT per whole bitcoin */
+    return { gap: Math.abs(codePrice - S.price) / S.price, codePrice: codePrice };
+  }
+
   /* A code states what the sender of the code does; the phone that reads it
      takes the other side, so the same code reads correctly from both ends. A
      code is only made when it carries real terms: a rate that has not loaded
@@ -3957,6 +4064,8 @@ contract CleanSwapHTLC {
       txt += ' \u00b7 no answer from the chain';
     } else if (!practice && S.rpcState === 'nocon') {
       txt += ' \u00b7 no contract at that address';
+    } else if (!practice && S.rpcState === 'nohtlc') {
+      txt += ' \u00b7 not the swap contract';
     } else if (S.chain) {
       if (S.chain.state === 'error') { txt += S.chain.disagree ? ' \u00b7 endpoints disagree' : ' \u00b7 no answer from the chain'; }
       else if (S.chain.state === 'locked') { txt += ' \u00b7 USDT locked'; dot = 'live'; }
@@ -4080,10 +4189,11 @@ contract CleanSwapHTLC {
     var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
-      : (S.rpcState === 'ok' ? 'The chain answers and the escrow has code: block ' + fmt(S.block || 0) + '.'
+      : (S.rpcState === 'ok' ? 'The chain answers and the escrow reads like the swap contract: block ' + fmt(S.block || 0) + '.'
         : (S.rpcState === 'nocon' ? 'Nothing answers at that address on ' + c.label + '.'
-          : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
-            : 'Tap Check to read the chain.')))) + cross;
+          : (S.rpcState === 'nohtlc' ? 'That address answers, but it is not the swap contract. Check the address in Setup.'
+            : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
+              : 'Tap Check to read the chain.'))))) + cross;
   }
 
   function presetsOn() {
@@ -4480,6 +4590,18 @@ contract CleanSwapHTLC {
     if (!practice && S.direction === 'btc2u' && !isAddr(S.locker)) {
       log('CODE', 'the code does not name the address that funds the escrow; paste its lock transaction instead');
     }
+    /* The price the code carries is checked against the live quote before
+       anything is rendered as accepted. The swap still runs - a partner is
+       allowed to quote their own spread - but the screen says how far the
+       terms sit from the market, while it is still only terms. */
+    var rg = rateGap(c.units, c.sats);
+    if (rg && rg.gap > RATE_WARN) {
+      S.codeWarn = 'Careful: this code prices 1 BTC at about ' + fmt(Math.round(rg.codePrice)) +
+        ' USDT, which is ' + Math.round(rg.gap * 100) + '% away from the market rate. Check the terms with your partner before paying.';
+      renderCodeWarn();
+      log('SECURITY', 'a code pricing 1 BTC at ' + fmt(Math.round(rg.codePrice)) + ' USDT was loaded; the live quote says ' +
+        fmt(Math.round(S.price)) + ' (' + Math.round(rg.gap * 100) + '% off)', 'c-err');
+    }
     render();
     refreshGate();
     toast('Terms loaded');
@@ -4675,6 +4797,7 @@ contract CleanSwapHTLC {
       chainProbe().then(function () {
         if (S.rpcState === 'ok') toast('The chain answers');
         else if (S.rpcState === 'nocon') toast('No contract at that address');
+        else if (S.rpcState === 'nohtlc') toast('That address is not the swap contract');
         else toast('The chain did not answer');
         paintSetup();
       });
@@ -4920,6 +5043,7 @@ contract CleanSwapHTLC {
     parseLightning: parseLightning, nextCalldata: nextCalldata, escrowProof: escrowProof,
     escrowUnits: escrowUnits, usdtUnits: usdtUnits, usdtTxt: usdtTxt, tokenNow: tokenNow,
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
+    rateGap: rateGap, RATE_WARN: RATE_WARN, ZERO_ID: ZERO_ID,
     applyCode: applyCode, acceptCode: function (t) { return applyCode(t); },
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
     approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,

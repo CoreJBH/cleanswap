@@ -11,7 +11,8 @@ and XML, and each one is a promise worth a test:
   * /index.html over https is the only document served from the APK
   * the app host is only a page under https, and mixed content is never allowed
   * https hand-offs go to a named list of hosts, not to anywhere
-  * cleartext traffic is off in the manifest
+  * cleartext traffic is off in the manifest, and the network security config
+    allows plain HTTP to the loopback only
   * a release APK is signed with the release key or not built at all
 
     python3 test/android-shell.py
@@ -24,6 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 JAVA = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'com', 'jbitmstr', 'cleanswap', 'MainActivity.java')
 MANIFEST = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
+NSC = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res', 'xml', 'network_security_config.xml')
 GRADLE = os.path.join(ROOT, 'android', 'app', 'build.gradle.kts')
 CI = os.path.join(ROOT, 'android', 'ci', 'build-apk.yml')
 
@@ -122,6 +124,20 @@ def main():
     check('shell: cleartext traffic is off in the manifest',
           'android:usesCleartextTraffic="false"' in manifest)
     check('shell: no backup of the app data', 'android:allowBackup="false"' in manifest)
+
+    # --- cleartext: refused everywhere but this phone itself ---------------
+    nsc = open(NSC, encoding='utf-8').read()
+    check('shell: a network security config exists and is wired into the manifest',
+          'android:networkSecurityConfig="@xml/network_security_config"' in manifest)
+    check('shell: cleartext is refused for every host by default',
+          re.search(r'<base-config[^>]*cleartextTrafficPermitted="false"', nsc) is not None)
+    dc = re.search(r'<domain-config[^>]*cleartextTrafficPermitted="true"\s*>(.*?)</domain-config>', nsc, re.S)
+    domains = re.findall(r'<domain[^>]*>([^<]+)</domain>', dc.group(1)) if dc else []
+    check('shell: plain HTTP is allowed only to the loopback names, without subdomains',
+          dc is not None and set(domains) == {'localhost', '127.0.0.1'}
+          and 'includeSubdomains="false"' in dc.group(1)
+          and '*' not in nsc.split('<domain-config')[1] if dc else False,
+          ', '.join(domains))
 
     # --- release signing: the release key, or no release ------------------
     check('gradle: the release key is read from the environment or keystore.properties',

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cleartext HTTP is refused everywhere except this phone itself.
+
+    The page reads the escrow over https endpoints and takes its quote over
+    https, and the manifest's usesCleartextTraffic="false" said so for every
+    host at once. A private RPC endpoint has one legitimate plain-http shape:
+    a node on the same device, or one reached over adb forward, on the
+    loopback interface. That traffic never leaves the phone, so it is the one
+    exception; everything else stays refused, and the exception covers the
+    loopback names only - not a subnet, not a wildcard, not a redirect target.
+
+    When this file is present, Android reads cleartext policy from here, so
+    the base-config below carries the manifest's rule for every other host.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

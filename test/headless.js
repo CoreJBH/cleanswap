@@ -199,7 +199,8 @@ const CHAIN = {
   txs: {},                            /* tx hash -> transaction (from, to, input) */
   calls: [],                          /* every method the page asked for */
   down: false,                        /* flip to make the endpoint refuse */
-  headSkew: 0                         /* how many blocks the second endpoint is ahead */
+  headSkew: 0,                        /* how many blocks the second endpoint is ahead */
+  nohtlc: false                       /* flip to make the address answer like some other contract */
 };
 function hexWord(v) { return BigInt(v).toString(16).padStart(64, '0'); }
 function hexAddr(a) { return String(a).replace(/^0x/, '').toLowerCase().padStart(64, '0'); }
@@ -225,6 +226,7 @@ function chainJson(j) {
     case 'eth_call': {
       const data = String((p[0] && p[0].data) || '');
       if (data.toLowerCase().startsWith('0xeb84e7f2')) {              /* swaps(bytes32) */
+        if (CHAIN.nohtlc) return '0x';                                /* a contract that is not the escrow */
         const id = ('0x' + data.slice(10, 74)).toLowerCase();
         const rec = CHAIN.records[id];
         return rec ? recordHex(rec) : '0x' + '0'.repeat(64 * 8);
@@ -782,6 +784,62 @@ const view = (pg) => pg.evaluate(() => {
   check('net: the field shows the testnet escrow again',
     (await page.inputValue('#contractIn')) === CONTRACT, await page.inputValue('#contractIn'));
 
+  /* An address with code is not yet the escrow: any contract has code. The
+     probe asks the escrow's own view function - `swaps()` on an id nobody
+     locked reads back eight zeroed words on the real contract, and anything
+     else (a revert, a short answer, some other shape) is refused by name
+     before any money is asked for. */
+  /* the setup panel is still open here, left that way by the net tests */
+  CHAIN.nohtlc = true;
+  await page.click('[data-act="saveSetup"]');
+  await page.waitForTimeout(1400);
+  const noHtlc = await view(page);
+  check('probe: an address that answers but is not the escrow is refused by name',
+    noHtlc.chainTxt.includes('not the swap contract') &&
+    (await page.evaluate(() => window.CLEANSWAP.state.rpcState)) === 'nohtlc', noHtlc.chainTxt);
+  const noHtlcCalls = CHAIN.calls.filter(c => c.method === 'eth_call' &&
+    String((c.params[0] || {}).data || '').toLowerCase().startsWith('0xeb84e7f2'));
+  check('probe: the escrow view function was really asked', noHtlcCalls.length > 0,
+    noHtlcCalls.length + ' swaps() calls');
+  const HNH = '0x' + crypto.createHash('sha256').update(Buffer.from('64'.repeat(32), 'hex')).digest('hex');
+  const invNH = await page.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), HNH);
+  await page.click('#swapDir');   /* the side that sends USDT has no locker gate, so Approve reaches the probe */
+  await page.waitForTimeout(250);
+  await page.fill('#invIn', invNH);
+  await page.fill('#addrIn', '0x7a3c9b1e5d84f0a2c6b7390e14d8f52a6c9b0e71');
+  await page.waitForTimeout(300);
+  await page.click('#primary');
+  await page.waitForTimeout(1600);
+  const noHtlcTap = await view(page);
+  check('probe: Approve on a look-alike address says so and approves nothing',
+    noHtlcTap.phase === 'idle' && /not the swap contract/.test(noHtlcTap.toast),
+    noHtlcTap.phase + ' / ' + noHtlcTap.toast);
+  await page.click('#swapDir');
+  await page.fill('#invIn', '');
+  await page.fill('#addrIn', '');
+  await page.waitForTimeout(200);
+  /* the refused tap had already filled in the terms, and a saved setup reads
+     the chain again when terms are on screen: clear them, so the recovery
+     reads as a fresh setup would */
+  await page.evaluate(() => window.CLEANSWAP.reset());
+  await page.waitForTimeout(200);
+  /* the refusal opens Setup on its way out - and the panel toggles, so the
+     state after the refusal depends on the state before. Make sure it is
+     open before saving the real contract back. */
+  if (!(await page.isVisible('#setupBox'))) {
+    await page.click('#chainRow');
+    await page.waitForTimeout(250);
+  }
+  CHAIN.nohtlc = false;
+  await page.click('[data-act="saveSetup"]');
+  await page.waitForTimeout(1400);
+  const htlcBack = await view(page);
+  check('probe: the same address reads ready again once it answers like the escrow',
+    /escrow ready/.test(htlcBack.chainTxt) &&
+    (await page.evaluate(() => window.CLEANSWAP.state.rpcState)) === 'ok', htlcBack.chainTxt);
+  check('probe: no page errors through the refusal and the recovery',
+    A.errs.length === 0, A.errs.join(' | '));
+
   await page.click('#chainRow');
   await page.waitForTimeout(250);
 
@@ -828,6 +886,37 @@ const view = (pg) => pg.evaluate(() => {
   check('code: it still fits a QR with the hashlock inside',
     new TextEncoder().encode(walletCode).length <= 340 && /^0x[0-9a-f]{64}$/.test(walletCodeBack.H),
     new TextEncoder().encode(walletCode).length + ' bytes');
+
+  /* The rate a code carries is the one term a stranger wrote that the money
+     follows. Against the live quote, a price far off the market is said out
+     loud while it is still only terms; the quote is fed by hand here, since
+     the page's own fetch fails off-line and the fallback price is a guess
+     the app refuses to warn against. */
+  const RG = await freshPage(390, 844);
+  const rgp = RG.p;
+  await rgp.evaluate(() => {
+    window.CLEANSWAP.state.price = 90000;
+    window.CLEANSWAP.state.pstate = 'live';
+  });
+  const t2rg = Math.floor(Date.now() / 1000) + 7200;
+  const fairCode = swapCodeOf({ dir: 'u2b', sats: 50000, units: 45000000, t2: t2rg });
+  const skewCode = swapCodeOf({ dir: 'u2b', sats: 50000, units: 60000000, t2: t2rg + 10 });
+  await rgp.evaluate(c => window.CLEANSWAP.applyCode(c), fairCode);
+  let rgw = await view(rgp);
+  check('rate: a code at the market price loads with no warning', rgw.codeWarn === '', rgw.codeWarn);
+  const gap = await rgp.evaluate(() => window.CLEANSWAP.rateGap(60000000, 50000));
+  check('rate: the gap is computed as a fraction of the market price',
+    gap && Math.abs(gap.gap - 1 / 3) < 0.001 && gap.codePrice === 120000, JSON.stringify(gap));
+  await rgp.evaluate(c => window.CLEANSWAP.applyCode(c), skewCode);
+  rgw = await view(rgp);
+  check('rate: a code 33% off the market is warned about while it is still only terms',
+    /33% away from the market rate/.test(rgw.codeWarn) && rgw.codeWarn.startsWith('Careful:'), rgw.codeWarn);
+  check('rate: the warning is plain English', !JARGON.test(rgw.codeWarn), rgw.codeWarn);
+  check('rate: the terms still loaded, nothing was refused',
+    rgw.phase === 'idle' && rgw.send === '50,000 sats', rgw.phase + ' ' + rgw.send);
+  check('rate: the log records the divergence',
+    await rgp.evaluate(() => window.CLEANSWAP.state.log.some(e => /% off/.test(e.text))));
+  await RG.c.close();
 
   /* 4a. nothing in the escrow: Approve may not start a swap */
   await page.click('#primary');
@@ -1032,7 +1121,12 @@ const view = (pg) => pg.evaluate(() => {
     sender: LOCKER5, receiver: t5.addr, claimed: false, refunded: false
   };
   CHAIN.receipts[lockTx] = { status: '0x1' };
-  CHAIN.txs[lockTx] = { from: LOCKER5, to: CONTRACT, input: '0x91644b2b' + '0'.repeat(320) };
+  /* the lock call itself, as the wallet signed it: the app reads its terms,
+     so a lock against another hash can never be read as this swap's */
+  CHAIN.txs[lockTx] = {
+    from: LOCKER5, to: CONTRACT,
+    input: '0x91644b2b' + hexB32(t5.H) + hexWord(t5.t2) + hexAddr(t5.addr) + hexAddr(t5.token) + hexWord(t5.units)
+  };
   await p5.click('[data-act="openTx"]');
   await p5.fill('#txIn', lockTx);
   await p5.click('[data-act="loadTx"]');
@@ -2480,6 +2574,117 @@ const view = (pg) => pg.evaluate(() => {
     await inp.evaluate((o) => window.__calls.every(c => String(c.from).toLowerCase() === o), OWNER));
   check('in-page wallet: no page errors', inpErrs.length === 0, inpErrs.join(' | '));
   await INP.close();
+
+  /* A lock read back with no swap code on the phone. The terms a code would
+     have carried are still knowable: the escrow's Locked event names the
+     window, and a plain wallet's lock call states it in its calldata. The
+     old code read the escrow with a null window instead, threw inside
+     BigInt, and showed a chain error that had nothing to do with the chain. */
+  const NT = await freshPage(390, 844);
+  const ntp = NT.p;
+  await ntp.click('#modeWallet');
+  await ntp.waitForTimeout(300);
+  await ntp.click('#chainRow');
+  await ntp.fill('#contractIn', CONTRACT);
+  await ntp.fill('#tokenIn', TOKEN);
+  await ntp.fill('#rpcIn', RPC);
+  await ntp.click('[data-act="saveSetup"]');
+  await ntp.waitForTimeout(1300);
+  await ntp.click('#chainRow');
+  const H10 = '0x' + crypto.createHash('sha256').update(Buffer.from('63'.repeat(32), 'hex')).digest('hex');
+  const inv10 = await ntp.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), H10);
+  await ntp.fill('#invIn', inv10);
+  await ntp.fill('#addrIn', USER_ADDR);
+  await ntp.waitForTimeout(300);
+  const units10 = await ntp.evaluate(() => window.CLEANSWAP.usdtUnits());
+  check('terms: a wallet swap without a code has no window yet',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === null,
+    String(await ntp.evaluate(() => window.CLEANSWAP.state.t2)));
+  const t2_10 = Math.floor(Date.now() / 1000) + 7200;
+  const LOCKER10 = '0x4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70';
+  const lockTx10 = '0x' + 'd1'.repeat(32);
+  CHAIN.receipts[lockTx10] = { logs: [lockEvent({ H: H10, sender: LOCKER10, units: units10, t2: t2_10 })] };
+  const id10 = swapIdOf({ hashlock: H10, sender: LOCKER10, receiver: USER_ADDR, token: TOKEN, amount: units10, timelock: t2_10 });
+  CHAIN.records[id10.toLowerCase()] = {
+    hashlock: H10, amount: units10, timelock: t2_10, token: TOKEN,
+    sender: LOCKER10, receiver: USER_ADDR, claimed: false, refunded: false
+  };
+  await ntp.fill('#lockTxIn', lockTx10);
+  await ntp.click('[data-act="useLockTx"]');
+  await ntp.waitForTimeout(2200);
+  const nw10 = await view(ntp);
+  check('terms: the lock event fills the window instead of crashing on a null one',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === t2_10,
+    String(await ntp.evaluate(() => window.CLEANSWAP.state.t2)));
+  check('terms: the funding address still comes from the event',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.funder)) === LOCKER10,
+    await ntp.evaluate(() => String(window.CLEANSWAP.state.funder)));
+  check('terms: the escrow reads as locked under the terms the event carried',
+    /USDT locked/.test(nw10.chainTxt) && nw10.phase === 'idle', nw10.phase + ' / ' + nw10.chainTxt);
+  check('terms: the log says where the window came from',
+    await ntp.evaluate(() => window.CLEANSWAP.state.log.some(e => /window came from/.test(e.text))));
+  check('terms: no page errors through the event path', NT.errs.length === 0, NT.errs.join(' | '));
+
+  /* The same gap, but a receipt with no log at all: a plain wallet's lock
+     call carries the terms itself, and the window is read out of the
+     calldata the escrow was called with. */
+  await ntp.evaluate(() => window.CLEANSWAP.reset());
+  await ntp.waitForTimeout(200);
+  await ntp.fill('#invIn', inv10);
+  await ntp.fill('#addrIn', USER_ADDR);
+  await ntp.waitForTimeout(250);
+  const t2_11 = Math.floor(Date.now() / 1000) + 7200;
+  const EOA10 = '0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081';
+  const lockTx11 = '0x' + 'd2'.repeat(32);
+  CHAIN.receipts[lockTx11] = { logs: [] };
+  CHAIN.txs[lockTx11] = {
+    from: EOA10, to: CONTRACT,
+    input: '0x91644b2b' + hexB32(H10) + hexWord(t2_11) + hexAddr(USER_ADDR) + hexAddr(TOKEN) + hexWord(units10)
+  };
+  const id11 = swapIdOf({ hashlock: H10, sender: EOA10, receiver: USER_ADDR, token: TOKEN, amount: units10, timelock: t2_11 });
+  CHAIN.records[id11.toLowerCase()] = {
+    hashlock: H10, amount: units10, timelock: t2_11, token: TOKEN,
+    sender: EOA10, receiver: USER_ADDR, claimed: false, refunded: false
+  };
+  await ntp.fill('#lockTxIn', lockTx11);
+  await ntp.click('[data-act="useLockTx"]');
+  await ntp.waitForTimeout(2200);
+  const nw11 = await view(ntp);
+  check('terms: a plain lock call fills the window from its own calldata',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === t2_11,
+    String(await ntp.evaluate(() => window.CLEANSWAP.state.t2)));
+  check('terms: the funding address comes from the transaction',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.funder)) === EOA10,
+    await ntp.evaluate(() => String(window.CLEANSWAP.state.funder)));
+  check('terms: the escrow reads as locked under the terms the call carried',
+    /USDT locked/.test(nw11.chainTxt), nw11.chainTxt);
+  check('terms: no page errors through the calldata path', NT.errs.length === 0, NT.errs.join(' | '));
+
+  /* And when nothing on chain says what the terms are, the screen says what
+     is missing instead of a chain error that would send the person looking
+     at the wrong thing. */
+  await ntp.evaluate(() => window.CLEANSWAP.reset());
+  await ntp.waitForTimeout(200);
+  await ntp.fill('#invIn', inv10);
+  await ntp.fill('#addrIn', USER_ADDR);
+  await ntp.waitForTimeout(250);
+  const lockTx12 = '0x' + 'd3'.repeat(32);
+  CHAIN.receipts[lockTx12] = { logs: [] };
+  CHAIN.txs[lockTx12] = { from: EOA10, to: CONTRACT, input: '0x' };
+  await ntp.fill('#lockTxIn', lockTx12);
+  await ntp.click('[data-act="useLockTx"]');
+  await ntp.waitForTimeout(1400);
+  const nw12 = await view(ntp);
+  check('terms: nothing knowable says what is missing, not a chain error',
+    /terms are incomplete/.test(nw12.toast) && !/chain/.test(nw12.toast), nw12.toast);
+  check('terms: the refusal is plain English', !JARGON.test(nw12.toast), nw12.toast);
+  check('terms: nothing was adopted from a transaction that was not the lock',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === null &&
+    (await ntp.evaluate(() => window.CLEANSWAP.state.funder)) === '',
+    await ntp.evaluate(() => window.CLEANSWAP.state.funder + ' / ' + window.CLEANSWAP.state.t2));
+  check('terms: no page errors through the empty path', NT.errs.length === 0, NT.errs.join(' | '));
+  await ntp.screenshot({ path: path.join(SHOTS, 'v65-no-terms.png') });
+  await NT.c.close();
 
   /* A code states terms, and zero is not a term: a rate that has not loaded
      cannot become "0 USDT" in a code the other phone would refuse. */

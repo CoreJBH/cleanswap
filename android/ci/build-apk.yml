@@ -13,6 +13,12 @@
 #   CLEANSWAP_KEYSTORE_PASSWORD
 #   CLEANSWAP_KEY_ALIAS
 #   CLEANSWAP_KEY_PASSWORD
+#
+# Adding those four secrets is not enough by itself: the automation still cannot
+# write .github/workflows/, so this file has to be pasted into that folder by
+# hand (the same one-click commit URL the setup notes give) before a push builds
+# a signed release APK. Until then a secret-less run fails at the keystore step
+# and produces no APK, which is the intended shape of "not ready".
 name: Build Android APK
 
 on:

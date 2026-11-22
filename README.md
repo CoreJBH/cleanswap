@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-606%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-634%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.4" src="https://img.shields.io/badge/android-0.6.4-0f9d6e">
+  <img alt="android 0.6.5" src="https://img.shields.io/badge/android-0.6.5-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -145,7 +145,8 @@ its own terms. Every item in that review is closed:
   screenshots, no recents thumbnail), the WebView cache off and cleared with the screen, exactly one
   document served from the APK (`https`, the app's own host, `/index.html`), `https:` hand-offs
   narrowed to a named host list (`remix.ethereum.org`, `arbiscan.io`, `sepolia.arbiscan.io`,
-  `mempool.space`), and `android:usesCleartextTraffic="false"` in the manifest.
+  `mempool.space`), and `android:usesCleartextTraffic="false"` in the manifest - with the cleartext
+  rule now written as a network security config that allows plain HTTP to the loopback names only.
 
 `v0.6.3` closes the fourth pass, the one about what the app believes when something is merely
 present:
@@ -219,6 +220,40 @@ present:
 * **No code is made before the rate is known.** `Share code` and `QR` refuse while the BTC/USD
   quote has not arrived, instead of writing `u:"0"` into a code the other phone would have to
   refuse.
+
+`v0.6.5` is the pass that asks what a stranger's terms are worth, and what an address is:
+
+* **A lock read back without a code no longer shows a chain error.** On the side that sends
+  bitcoin, the swap terms normally arrive in the partner's `cleanswap:` code. Reading the partner's
+  lock transaction back before any code was loaded used to read the escrow with a missing window,
+  throw inside `BigInt(null)`, and put up a chain-connection error that had nothing to do with the
+  chain. The terms are now read back out of the lock itself: the escrow's own `Locked` event names
+  the window, a plain wallet's lock call states it in its calldata, and the hashlock and receiver
+  the fit check just verified against the screen's invoice and address carry into the swap. A lock
+  against a different hash is refused by name, and when nothing on chain says what the terms are,
+  the screen says the swap code is missing - not that the chain is down.
+* **A code far off the market is said out loud.** The rate is the one term a stranger wrote that
+  the money follows, so when a code is read its implied price (token units per whole bitcoin) is
+  compared with the live BTC/USD quote, and a code sitting more than 10% off says so on the screen
+  while it is still only terms - the swap still runs, because a partner may quote their own spread,
+  but nobody pays without knowing. A warning is never computed against the fallback quote, which is
+  a guess the page made, not a price.
+* **An address with code is not yet the escrow.** The probe used to stop at "some code is there",
+  which any contract passes. It now asks the escrow's own view function: `swaps(id)` on an id nobody
+  locked reads back as eight zeroed words on the real contract, and anything else - a revert, a
+  short answer, some other shape - is some other contract wearing the address, refused on the chain
+  line as `not the swap contract` and by `Approve` before anything is signed. A disagreement between
+  endpoints on that reading is not a verdict about the contract; the reading below refuses the swap
+  on it instead.
+* **Plain HTTP reaches this phone only.** The shell refused cleartext everywhere, which also shut
+  out a private RPC node on the device itself. A network security config now allows cleartext to
+  the loopback names only (`localhost`, `127.0.0.1`, no subdomains, no wildcard) and keeps
+  `cleartextTrafficPermitted="false"` for every other host, so the escrow and the quote stay
+  https-only while a local node can still be pointed at in Setup.
+* **The release CI note says what a secret alone does not do.** `android/ci/build-apk.yml` states
+  that adding the four signing secrets is not enough on its own: the automation cannot write
+  `.github/workflows/`, so the file still has to be pasted there by hand before a push builds a
+  signed release APK.
 
 ## What it does
 
@@ -443,7 +478,7 @@ test/
                              one https document, mixed content off, release signing fail-closed
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.4, versionCode 13)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.5, versionCode 14)
 ```
 
 ## Build
@@ -464,11 +499,11 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain, a 5-minute or 8-day window, or a token amount above 2^53 refused with the setup untouched, a code refused while a swap is running, a code's USDT address offered but not written into the receiving side's field, Practice walking the same road, and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; the chain's own clock past the window -> paying refused; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), an old allowance reset to zero before the exact one, a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: BOLT #11's own invoices (a real signature recovered to the spec's key, a duplicate field and an unrecoverable signature refused, an amountless invoice refused, high-S accepted for recovery), a QR drawn element by element whose caption stays text, and a Content-Security-Policy that names the hashes of its own code and refuses a block added afterwards. And the fourth pass: the head read from every endpoint with the highest standing (two nodes nine blocks apart still answer), one escrow, token and endpoint list per network with nothing carried across a switch, and a BOLT12 invoice refused with its creation time and expiry still decoded - and refused at the decoder when either is missing. Plus v0.6.4: a signed invoice with two route hints and two fallback addresses read hop by hop and accepted by the gate, keccak-256 against the known digest and the four addresses EIP-55 prints (a wrong capital refused, all-lower and all-upper kept), two endpoints where one writes every receipt in another shape agreeing through a real lock while a different status, a different log or an unknown shape still disagree, and a lock funded by a smart contract wallet - by a pasted transaction and by a wallet in the page - whose funding address comes from the escrow's Locked event and never from `tx.from` | **385/385 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain, a 5-minute or 8-day window, or a token amount above 2^53 refused with the setup untouched, a code refused while a swap is running, a code's USDT address offered but not written into the receiving side's field, Practice walking the same road, and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; the chain's own clock past the window -> paying refused; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), an old allowance reset to zero before the exact one, a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: BOLT #11's own invoices (a real signature recovered to the spec's key, a duplicate field and an unrecoverable signature refused, an amountless invoice refused, high-S accepted for recovery), a QR drawn element by element whose caption stays text, and a Content-Security-Policy that names the hashes of its own code and refuses a block added afterwards. And the fourth pass: the head read from every endpoint with the highest standing (two nodes nine blocks apart still answer), one escrow, token and endpoint list per network with nothing carried across a switch, and a BOLT12 invoice refused with its creation time and expiry still decoded - and refused at the decoder when either is missing. Plus v0.6.4: a signed invoice with two route hints and two fallback addresses read hop by hop and accepted by the gate, keccak-256 against the known digest and the four addresses EIP-55 prints (a wrong capital refused, all-lower and all-upper kept), two endpoints where one writes every receipt in another shape agreeing through a real lock while a different status, a different log or an unknown shape still disagree, and a lock funded by a smart contract wallet - by a pasted transaction and by a wallet in the page - whose funding address comes from the escrow's Locked event and never from `tx.from`. Plus v0.6.5: a lock read back with no swap code on the phone - the window taken from the escrow's Locked event or the lock call's own calldata, the hash and receiver carried in from the screen they were verified against, a lock against another hash refused, and a lock with nothing knowable told apart from a chain failure by saying the swap code is missing; a code 33% off the live quote warned about while it is still only terms with a code at the market loading silent; an address that answers but is not the escrow refused by name through the probe and through Approve, and reading ready again once it answers like the escrow | **410/410 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted, a zero hashlock and a receiver that is the escrow itself refused, a token that re-enters `lock` mid-transfer refused with nothing escrowed (and the same token accepted when its call-back is harmless) - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **48/48 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder, its signature is recovered and verified by OpenSSL (`cryptography`), all of them are signed by the one practice key, and the BOLT #11 vectors recover to the spec's key with the signed preimage equal to the hash the spec prints | **79/79 pass** |
-| `test/android-shell.py` | `FLAG_SECURE`, no WebView cache and a cleared one, no `saveState`/`restoreState`, one document served (`https`, the app host, `/index.html`), the app host only as an https page, `MIXED_CONTENT_NEVER_ALLOW`, an `https` hand-off allowlist with no wildcard, `usesCleartextTraffic="false"`, and a release build that stops without the four signing values (with `android/ci/build-apk.yml` assembling and checking the signed release) | **30/30 pass** |
+| `test/android-shell.py` | `FLAG_SECURE`, no WebView cache and a cleared one, no `saveState`/`restoreState`, one document served (`https`, the app host, `/index.html`), the app host only as an https page, `MIXED_CONTENT_NEVER_ALLOW`, an `https` hand-off allowlist with no wildcard, `usesCleartextTraffic="false"` with a network security config that allows plain HTTP to the loopback names only, and a release build that stops without the four signing values (with `android/ci/build-apk.yml` assembling and checking the signed release) | **33/33 pass** |
 | `test/verify-english.py` | Hangul count is 0 across every tracked text file, file name and commit message | **0 characters** |
 
 ```bash
@@ -487,8 +522,8 @@ suite.
    solc 0.8.26), deploy with your wallet - Sepolia for a rehearsal.
 3. Copy the deployed address, and the token address (deploy `TestUSDT.sol` on Sepolia and tap its
    `faucet()`; on One it is USDT's own contract), into Setup and **Save**.
-4. `Check` reads the chain and tells you the escrow has code. Everything else stays on the phone;
-   the other phone learns the address from a `cleanswap:` code.
+4. `Check` reads the chain and tells you the escrow reads like the swap contract. Everything else
+   stays on the phone; the other phone learns the address from a `cleanswap:` code.
 
 Each network keeps its own escrow, token and endpoint list: switching the network in Setup shows
 that network's set, and nothing typed for one is read while the other is selected.
@@ -496,7 +531,7 @@ that network's set, and nothing typed for one is read while the other is selecte
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.4`, `versionCode 13`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.5`, `versionCode 14`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
@@ -539,7 +574,9 @@ any APK exists and say which one is missing - a build signed with a debug key wo
 never update. `assembleDebug`, lint and the tests need no key. In CI the key is
 `CLEANSWAP_KEYSTORE_BASE64` (base64 of the .jks) plus the three passwords as repository secrets;
 `android/ci/build-apk.yml` writes it to a temporary file, assembles the release, and checks the
-certificate with `apksigner` before uploading.
+certificate with `apksigner` before uploading. Adding the secrets alone is not enough: the
+automation cannot write `.github/workflows/`, so the workflow file still has to be pasted into that
+folder by hand before a push builds a signed release APK.
 
 ## Security notes and limitations
 
