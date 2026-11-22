@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-420%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-456%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.0" src="https://img.shields.io/badge/android-0.6.0-0f9d6e">
+  <img alt="android 0.6.1" src="https://img.shields.io/badge/android-0.6.1-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -70,6 +70,37 @@ its own terms. Every item in that review is closed:
   mint-emerald accents (`#50D2C1` / `#2DD4BF` / `#10B981`) on the one button that matters, hairline
   borders in `#1A332D`, and text at `#F0FDF9` / `#9CAEA8`. The Android shell's status bar, navigation
   bar and window background follow it, so nothing flashes white on launch.
+
+`v0.6.1` closes the second review, the one that went after what the first pass left standing:
+
+* **A BOLT11 invoice with no `x` tag expires after an hour.** The standard says so (`3600` seconds
+  after the timestamp); reading a missing tag as "never expires" was a way past the window check,
+  because an invoice that never ends can never end before the escrow window does.
+* **The escrow has a reentrancy guard, and refuses a lock nobody could claim.** `lock`, `claim` and
+  `refund` carry `nonReentrant`: a token is a stranger's contract, and one that calls back during a
+  transfer must not enter a second time. A zero `hashlock` (sha256 never returns zero, so such a
+  swap could only ever be refunded) and `receiver == address(this)` (the tokens would be paid back
+  into the escrow) are refused at the door. `ReentrantUSDT` in the test suite proves both the
+  refusal and that the guard is released when the call ends.
+* **A code cannot land on a running swap.** `applyCode` refuses in every phase but `idle`: the terms
+  of the next swap cannot be loaded over a swap whose money has already moved.
+* **A lock code is parsed as data.** Its query string is built on `Object.create(null)`, needs a
+  `key=value` shape, keeps the first of two same keys, and a malformed `%` escape drops that one
+  field instead of throwing out of the decoder. The QR is parsed with `DOMParser` and imported, and
+  its caption is set with `textContent` - nothing from a payload is ever pasted into `innerHTML`.
+* **One endpoint is not a cross-check.** When `rpcQuorum()` falls back to a single endpoint the
+  chain line says `one endpoint, no cross-check` and the Setup panel says what that means. A receipt
+  and a transaction (`waitReceipt`, `loadTx`) are read by the same quorum as the escrow itself, and
+  hex answers are compared in one case.
+* **The page carries a Content-Security-Policy.** `default-src 'none'`, its own inline script and
+  style as the only code allowed, `data:` images, and `connect-src` limited to the chain endpoints
+  (`https:`, or a node on this machine).
+* **The Android shell is tighter again.** Safe Browsing is left on, a navigation is handed to another
+  app only for `lightning:`, `bitcoin:`, `ethereum:` and `https:` (anything else is refused with a
+  toast), `data:` and `blob:` are no longer treated as the app's own document, and the release build
+  is shrunk and obfuscated with `proguard-rules.pro` keeping the shell's entry points.
+* **One APK workflow, not two.** The duplicate `.github/workflows/build-apk.yml` - a broken copy
+  that failed on every push - is gone; `.github/workflows/apk.yml` is the one that builds.
 
 ## What it does
 
@@ -276,7 +307,7 @@ src/
 contracts/
   CleanSwapHTLC.sol          sha256 hashlock, ERC-20 escrow, timelock refund, swaps(id) getter
   CleanSwapHTLC.bin          creation bytecode, checked against the source by the build and the tests
-  TestUSDT.sol               6-decimal faucet token, plus FeeUSDT and QuietUSDT for the escrow tests
+  TestUSDT.sol               6-decimal faucet token, plus FeeUSDT, QuietUSDT and ReentrantUSDT for the escrow tests
 docs/                        icon and screens, regenerated from the built app
 tools/                       invoice minting, icons, QR and doc-shot helpers
 test/
@@ -286,7 +317,7 @@ test/
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.0, versionCode 9)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.1, versionCode 10)
 ```
 
 ## Build
@@ -307,8 +338,8 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain or a 5-minute or 8-day window refused with the setup untouched, Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry, and no request leaving the phone), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded | **271/271 pass** |
-| `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **40/40 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain or a 5-minute or 8-day window refused with the setup untouched, a code refused while a swap is running, Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry, and no request leaving the phone), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: an invoice with no `x` tag read as expiring in an hour and refused for a two-hour window, one endpoint saying `no cross-check`, a lock code with a broken escape / `__proto__` / no `=` / a duplicate key, a QR whose caption stays text, and the page's own Content-Security-Policy blocking an outside script while its inline code still runs | **299/299 pass** |
+| `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted, a zero hashlock and a receiver that is the escrow itself refused, a token that re-enters `lock` mid-transfer refused with nothing escrowed (and the same token accepted when its call-back is harmless) - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **48/48 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder | **45/45 pass** |
 | `test/verify-english.py` | Hangul count is 0 across every tracked text file, file name and commit message | **0 characters** |
@@ -335,16 +366,20 @@ suite.
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.0`, `versionCode 9`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.1`, `versionCode 10`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
 manifest declares a `<queries>` entry for all three schemes so Android 11+ package visibility does
-not hide them. The page is served to the WebView from the app's own virtual origin
-(`https://appassets.androidplatform.net`, answered by the shell from `assets/index.html`), not from
-`file://`, so file access and universal file access are both off while the chain reads and the quote
-work as ordinary CORS requests. `cleanswap:` intents are quoted with `JSONObject.quote`, and a code
-handed over by another app opens CleanSwap on it.
+not hide them. The scheme list is an allowlist - `lightning:`, `bitcoin:`, `ethereum:` and `https:`
+and nothing else - so a link the page never needs cannot reach an app on the phone. The page is
+served to the WebView from the app's own virtual origin (`https://appassets.androidplatform.net`,
+answered by the shell from `assets/index.html`), not from `file://`, so file access and universal
+file access are both off while the chain reads and the quote work as ordinary CORS requests, and
+`data:`/`blob:` documents are not treated as the app's own page. Safe Browsing stays on. `cleanswap:`
+intents are quoted with `JSONObject.quote`, and a code handed over by another app opens CleanSwap on
+it. A release build is minified and shrunk by R8 with `proguard-rules.pro` keeping the shell's entry
+points.
 
 GitHub Actions builds `cleanswap.apk` on every push to `main` and on `v*` tags
 (`.github/workflows/apk.yml`); the same file is kept under `android/ci/build-apk.yml` for reference.
@@ -358,8 +393,15 @@ The APK is uploaded as a workflow artifact.
   read from the contract, and everything else it says is a sentence, not a receipt.
 * The read path is the page's own JSON-RPC client against public endpoints (or the ones you set).
   With two or more endpoints the state is read by quorum, so one lying node is caught by the
-  disagreement; with a single endpoint that node is trusted by definition - run your own for real
-  value.
+  disagreement, and so are receipts and transactions. With a single endpoint that node is trusted by
+  definition: the chain line says `one endpoint, no cross-check` and Setup says the same, so the
+  screen never claims a cross-check that did not happen. Run your own node for real value.
+* The escrow guards `lock`, `claim` and `refund` against re-entry, and refuses a zero hashlock or a
+  receiver that is the escrow itself. It is still not audited.
+* The page runs under its own Content-Security-Policy: no script, style or frame from another
+  origin, `data:` images only, and connections only to the chain endpoints. A code, an invoice or a
+  lock code is a stranger's text and is parsed as data - never as markup (the QR is imported as an
+  SVG document, its caption set as text).
 * A `cleanswap:` code carries terms only. It is not a web address, has no host, and is never built
   from the page's own URL - and it never changes the setup: the chain and the escrow in a code are
   requirements that must already match, not settings that get written.

@@ -1,4 +1,4 @@
-/* CleanSwap v0.6.0 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.1 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -510,7 +510,13 @@
      answer — that is what a private node is for. */
   function rpcQuorum(method, params) {
     var list = endpoints();
-    if (list.length < 2) return rpc(method, params);
+    if (list.length < 2) {
+      /* One endpoint is its own answer - that is what a private node is for -
+         but the reading was not cross-checked, and the screen says so instead
+         of letting a single node's word pass for a verified one. */
+      if (S.mode !== 'practice') { S.quorum = 'single'; renderChain(); }
+      return rpc(method, params);
+    }
     return Promise.all(list.map(function (url) {
       return rpcOne(url, method, params).then(
         function (v) { return { ok: true, key: JSON.stringify(v), v: v }; },
@@ -772,17 +778,24 @@
   function waitReceipt(hash) {
     var tries = 0;
     return new Promise(function (resolve, reject) {
+      function again(e) {
+        if (++tries > 45) return reject(e || new Error('the transaction is not mined yet'));
+        setTimeout(poll, 3000);
+      }
       function poll() {
-        rpc('eth_getTransactionReceipt', [hash]).then(function (rc) {
+        /* A receipt decides whether money moved, so it is read the way the
+           escrow is: every endpoint is asked, and two answers have to agree.
+           One node that has the block while another has not yet is not a
+           disagreement to act on - the question is simply asked again. */
+        rpcQuorum('eth_getTransactionReceipt', [hash]).then(function (rc) {
           if (rc && rc.blockNumber) {
-            if (String(rc.status) === '0x0') return reject(new Error('the transaction failed on chain'));
+            if (String(rc.status).toLowerCase() === '0x0') return reject(new Error('the transaction failed on chain'));
             return resolve(rc);
           }
-          if (++tries > 45) return reject(new Error('the transaction is not mined yet'));
-          setTimeout(poll, 3000);
+          again();
         }, function (e) {
-          if (++tries > 45) return reject(e);
-          setTimeout(poll, 3000);
+          if (e && e.disagree) return again();
+          again(e);
         });
       }
       poll();
@@ -1069,10 +1082,11 @@
          not fund it reads that address from the lock transaction itself, after
          checking the call went to this escrow and is a lock. */
       if (S.mode !== 'wallet' || isAddr(lockerNow())) return null;
-      return rpc('eth_getTransactionByHash', [h]).then(function (tx) {
+      return rpcQuorum('eth_getTransactionByHash', [h]).then(function (tx) {
         var to = tx && tx.to ? String(tx.to).toLowerCase() : '';
         var input = tx && tx.input ? String(tx.input).toLowerCase() : '';
-        if (!tx || !isAddr(tx.from) || to !== String(S.contract || '').toLowerCase() || input.slice(0, 10) !== '0x' + SEL.lock) return null;
+        if (!tx || !isAddr(tx.from) || to !== String(S.contract || '').toLowerCase() ||
+          input.slice(0, 10) !== ('0x' + SEL.lock).toLowerCase()) return null;
         if (S.direction === 'u2b') S.me = String(tx.from).toLowerCase();
         else S.locker = String(tx.from).toLowerCase();
         log('LOCK', 'the escrow was funded from ' + short(tx.from, 6) + ', read from the transaction');
@@ -1203,7 +1217,11 @@
       i += 3 + len;
     }
     var ph = fields.p && fields.p[0];
-    var expiry = fields.x && fields.x[0] ? wordsToInt(fields.x[0]) : null;
+    /* BOLT 11: an invoice with no `x` field expires 3600 seconds after its
+       timestamp. Reading a missing tag as "never expires" would hand the
+       escrow-window check an invoice that outlives every window, so the
+       standard default is what a missing tag means here too. */
+    var expiry = fields.x && fields.x[0] ? wordsToInt(fields.x[0]) : 3600;
     var desc = fields.d && fields.d[0] ? new TextDecoder().decode(wordsToBytes(fields.d[0])) : null;
     return {
       kind: 'bolt11',
@@ -1212,7 +1230,7 @@
       paymentHash: ph && ph.length === 52 ? '0x' + hexOf(wordsToBytes(ph)) : null,
       timestamp: ts,
       expiry: expiry,
-      expiresAt: expiry == null ? null : ts + expiry,
+      expiresAt: ts + expiry,
       description: desc,
       tags: Object.keys(fields).sort().join('')
     };
@@ -1674,12 +1692,20 @@
       var body = t.replace(/^liquidnetwork:/i, '');
       var qi = body.indexOf('?');
       var addr = qi < 0 ? body : body.slice(0, qi);
-      var q = {};
+      /* A lock code is a stranger's text: a query string with no prototype to
+         reach, only whole key=value pairs, and a broken escape in it is one
+         field dropped rather than an exception out of the decoder. */
+      var q = Object.create(null);
       if (qi >= 0) {
         body.slice(qi + 1).split('&').forEach(function (kv) {
           if (!kv) return;
           var i = kv.indexOf('=');
-          q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+          if (i < 1) return;
+          try {
+            var k = decodeURIComponent(kv.slice(0, i));
+            var v = decodeURIComponent(kv.slice(i + 1));
+            if (k && !(k in q)) q[k] = v;
+          } catch (e) { /* not a field, and not a reason to fail the whole code */ }
         });
       }
       return {
@@ -1699,7 +1725,9 @@
       log('REF', 'lock transaction ' + short(p.hash, 6) + ' recorded');
       return { ok: true, code: 'ref', msg: 'Lock recorded.', dec: p };
     }
-    if (p.kind === 'calldata' && p.selector !== SEL.lock) return bad('format', 'That lock code cannot be read.');
+    if (p.kind === 'calldata' && String(p.selector || '').toLowerCase() !== ('0x' + SEL.lock).toLowerCase()) {
+      return bad('format', 'That lock code cannot be read.');
+    }
     var locked = String(p.hashlock || '').toLowerCase();
     if (!/^0x[0-9a-f]{64}$/.test(locked)) return bad('format', 'That lock code cannot be read.');
     if (normHex(locked) !== normHex(S.H)) return bad('mismatch', 'That lock is for a different swap.');
@@ -1951,6 +1979,9 @@
       txt += practice || S.rpcState === 'ok' ? ' \u00b7 escrow ready' : ' \u00b7 escrow set';
       dot = practice || S.rpcState === 'ok' ? 'live' : 'off';
     }
+    /* A reading that was not cross-checked says so on the row itself: one node
+       answering is a fact about the setup, not a mistake to hide. */
+    if (!practice && S.quorum === 'single') txt += ' \u00b7 one endpoint, no cross-check';
     $('chainTxt').textContent = txt;
     $('chainDot').className = 'dot ' + dot;
     if (!practice) paintSetup();
@@ -2031,7 +2062,14 @@
     $('rpcIn').value = S.rpc || '';
     var c = curChain();
     var eps = endpoints().length;
-    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
+    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.'
+      : ' Only one endpoint is in use, so nothing here is cross-checked: add a second one (comma-separated) and a node that lies is caught by the disagreement.';
+    var warn = $('quorumWarn');
+    if (warn) {
+      warn.textContent = eps > 1 || S.mode === 'practice' ? ''
+        : 'One endpoint only: this phone trusts a single node for the escrow and its receipts. Add a second RPC endpoint to have them cross-checked.';
+      warn.hidden = !warn.textContent;
+    }
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow has code: block ' + fmt(S.block || 0) + '.'
@@ -2352,6 +2390,13 @@
     if (!c) { toast('That is not a swap code'); return false; }
     var now = nowSec();
     if (S.phase === 'settled' || S.phase === 'refunded') { toast('Tap Done first, then use the code.'); return false; }
+    /* A code names the terms of the next swap. Loading one into a swap that is
+       already running would put different numbers under money that has moved,
+       so every phase but idle refuses it. */
+    if (S.phase !== 'idle') {
+      return refuseCode('A swap is already running. Finish it first, then use the code.',
+        'a code was refused while a swap was ' + S.phase);
+    }
     if (c.t2 <= now) return refuseCode('Those terms have run out. Ask for a new code.');
     if (c.t2 - now < T2_MIN) {
       return refuseCode('Those terms close too soon to pay and claim. Ask for a new code.',
@@ -2434,9 +2479,31 @@
   }
 
   /* ---------------------------------------------------------------- QR --- */
+  function qrLine(text) {
+    var p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = text;
+    return p;
+  }
+  function qrClear(box) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+  }
+  /* The encoder's own SVG, parsed as a document and imported rather than pasted
+     into the page: the payload is a stranger's text, and markup assembled from
+     strings would run whatever it happened to carry. */
+  function qrNode(svg) {
+    try {
+      var doc = new DOMParser().parseFromString(String(svg), 'image/svg+xml');
+      if (!doc || doc.getElementsByTagName('parsererror').length) return null;
+      var node = doc.documentElement;
+      if (!node || String(node.nodeName).toLowerCase() !== 'svg') return null;
+      return document.importNode(node, true);
+    } catch (e) { return null; }
+  }
   function showQr(payload, caption, reveal) {
     var box = $('qrBox');
-    if (!payload) { box.innerHTML = ''; toast('Nothing to show yet'); return; }
+    if (!box) return;
+    if (!payload) { qrClear(box); toast('Nothing to show yet'); return; }
     var bytes = utf8(payload).length;
     var svg = null;
     if (bytes <= QR_MAX) {
@@ -2445,11 +2512,14 @@
         try { svg = window.QR.svg(payload, { level: level, quiet: 2 }); } catch (e) { svg = null; }
       });
     }
-    if (!svg) {
-      box.innerHTML = '<p class="hint">Too long for a QR: use Copy instead.</p>';
+    qrClear(box);
+    var node = svg ? qrNode(svg) : null;
+    if (!node) {
+      box.appendChild(qrLine('Too long for a QR: use Copy instead.'));
       return;
     }
-    box.innerHTML = svg + (caption ? '<p class="hint">' + caption + '</p>' : '');
+    box.appendChild(node);
+    if (caption) box.appendChild(qrLine(String(caption)));
     if (reveal) revealQr(box);
   }
 
@@ -2746,7 +2816,7 @@
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
     approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
     checkChain: checkChain, settleByChain: settleByChain, loadTx: loadTx,
-    sampleInvoice: sampleInvoice, sampleAddress: sampleAddress, revealQr: revealQr,
+    sampleInvoice: sampleInvoice, sampleAddress: sampleAddress, revealQr: revealQr, showQr: showQr,
     historyEntry: historyEntry, pasted: pasted, addrIn: addrIn
   };
 })();

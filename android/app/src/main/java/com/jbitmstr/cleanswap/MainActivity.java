@@ -86,9 +86,6 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            s.setSafeBrowsingEnabled(false);
-        }
 
         setContentView(web);
         if (state != null) {
@@ -234,7 +231,8 @@ public class MainActivity extends Activity {
 
     /**
      * Returns true when the navigation was taken away from the WebView. Only the schemes the
-     * shell can actually display are left to it; anything else is a hand-off to another app.
+     * shell can actually display are left to it; anything else is either handed to another
+     * app from {@link #HANDOFF_SCHEMES} or refused.
      */
     private boolean handleNavigation(Uri uri) {
         if (uri == null) {
@@ -247,15 +245,35 @@ public class MainActivity extends Activity {
         return openInOtherApp(uri);
     }
 
-    /** Schemes that never leave the phone's own app surface. */
+    /** Schemes that never leave the phone's own app surface. `data:` and `blob:` are not
+        among them: a page that can name such a document could otherwise show it in place of
+        the app's own screen, and nothing in this page ever needs one. */
     private static boolean isLocalScheme(String rawScheme) {
         String scheme = rawScheme == null ? "" : rawScheme.toLowerCase(Locale.ROOT);
-        return scheme.isEmpty() || scheme.equals("data") || scheme.equals("about") || scheme.equals("blob");
+        return scheme.isEmpty() || scheme.equals("about");
+    }
+
+    /** The only schemes this shell hands to another app. The page asks for exactly these
+        three wallet schemes and https; anything else stays here and is refused, so a page
+        cannot use an intent to reach an app the person never asked for. */
+    private static final String[] HANDOFF_SCHEMES = {"lightning", "bitcoin", "ethereum", "https"};
+
+    private static boolean isHandoffScheme(String scheme) {
+        for (String allowed : HANDOFF_SCHEMES) {
+            if (allowed.equals(scheme)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean openInOtherApp(Uri uri) {
         String raw = uri.getScheme() == null ? "" : uri.getScheme();
         String scheme = raw.toLowerCase(Locale.ROOT);
+        if (!isHandoffScheme(scheme)) {
+            Toast.makeText(this, "This app does not open " + label(scheme) + ".", Toast.LENGTH_LONG).show();
+            return true;
+        }
         // Intent filters match the scheme case-sensitively, and a pasted or QR-read link may
         // arrive as LIGHTNING:. Hand off the lower-cased form the wallets declare.
         Uri target = raw.equals(scheme) ? uri : uri.buildUpon().scheme(scheme).build();

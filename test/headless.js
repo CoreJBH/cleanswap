@@ -97,6 +97,48 @@ function bolt12Offer(o) {
 const BOLT11_SAMPLE_HASH = '0x' + '11'.repeat(32);
 const BOLT12_NODE = '02d40d722b8fa32f8c588757c481462b27dadfece667ea0c662daa0e6d8a8b595e';
 
+/* bech32 for a BOLT11 body built here, so an invoice with a field the app's own
+   minter never leaves out can still be handed to it. */
+const B32_GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+function b32Polymod(values) {
+  let chk = 1;
+  for (const v of values) {
+    const b = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let j = 0; j < 5; j++) if ((b >>> j) & 1) chk ^= B32_GEN[j];
+  }
+  return chk >>> 0;
+}
+function b32Hrp(hrp) {
+  const out = [];
+  for (const ch of hrp) out.push(ch.charCodeAt(0) >>> 5);
+  out.push(0);
+  for (const ch of hrp) out.push(ch.charCodeAt(0) & 31);
+  return out;
+}
+function intWords(n, len) {
+  const out = [];
+  for (let i = len - 1; i >= 0; i--) out.push(Math.floor(n / Math.pow(32, i)) % 32);
+  return out;
+}
+function tagField(ch, words) {
+  return [ch.charCodeAt(0) - 96, words.length >> 5, words.length & 31, ...words];
+}
+/* A BOLT11 invoice with the payment hash and the timestamp and no `x` tag: the
+   standard says such an invoice expires 3600 seconds after its timestamp. */
+function bolt11NoExpiry(hashHex, sats, ts) {
+  const hrp = 'lnbc' + (sats % 100 === 0 ? (sats / 100) + 'u' : (sats * 10) + 'n');
+  const words = [
+    ...intWords(ts, 7),
+    ...tagField('p', fiveBits(Buffer.from(hashHex.slice(2), 'hex'))),
+    ...new Array(104).fill(0)
+  ];
+  const p = b32Polymod([...b32Hrp(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const sum = [];
+  for (let i = 0; i < 6; i++) sum.push((p >>> (5 * (5 - i))) & 31);
+  return hrp + '1' + [...words, ...sum].map(i => B32C[i]).join('');
+}
+
 /* A binary field of a swap code: `~` plus base64url of the bytes, the way the
    app writes a hash and an address so the whole code still fits a QR. */
 function codeField(hex) {
@@ -314,6 +356,7 @@ const view = (pg) => pg.evaluate(() => {
     rcNet: t('rcNet').textContent,
     chainState: window.CLEANSWAP.state.chain && window.CLEANSWAP.state.chain.state,
     codeWarn: document.getElementById('codeWarn').hidden ? '' : document.getElementById('codeWarn').textContent,
+    quorumWarn: t('quorumWarn').hidden ? '' : t('quorumWarn').textContent,
     back: vis('headRow'),
     gate: window.CLEANSWAP.state.gate && window.CLEANSWAP.state.gate.code
   };
@@ -1365,6 +1408,152 @@ const view = (pg) => pg.evaluate(() => {
   await pg.waitForTimeout(250);
   check('secret: sending USDT does not ask for it', !(await pg.evaluate(() => !document.getElementById('invHint').hidden)));
   await PG.c.close();
+
+  /* ------------------------------ 7g. one endpoint is not a cross-check --- */
+  /* A private node is its own answer, but a reading nobody else confirms is not
+     a cross-checked one, and the screen says which it got. */
+  const ONE = await freshPage(390, 844);
+  const p1e = ONE.p;
+  await p1e.click('#modeWallet');
+  await p1e.waitForTimeout(250);
+  await p1e.click('#chainRow');
+  await p1e.fill('#contractIn', CONTRACT);
+  await p1e.fill('#tokenIn', TOKEN);
+  await p1e.fill('#rpcIn', RPC);
+  await p1e.click('[data-act="saveSetup"]');
+  await p1e.waitForTimeout(1500);
+  const oneW = await view(p1e);
+  check('single: one endpoint can still read the chain', /escrow ready/.test(oneW.chainTxt), oneW.chainTxt);
+  check('single: the row says the reading was not cross-checked', /no cross-check/.test(oneW.chainTxt), oneW.chainTxt);
+  check('single: the setup panel carries the same warning', /One endpoint only/.test(oneW.quorumWarn), oneW.quorumWarn);
+  check('single: the warning is plain English', !JARGON.test(oneW.quorumWarn), oneW.quorumWarn);
+  check('single: no page errors', ONE.errs.length === 0, ONE.errs.join(' | '));
+  await p1e.screenshot({ path: path.join(SHOTS, 'v61-single-endpoint.png') });
+  await ONE.c.close();
+
+  /* --------------- 7h. an invoice with no expiry tag, and a running swap --- */
+  /* BOLT 11: no `x` field means 3600 seconds after the timestamp. Read as
+     "never", an old invoice would pass the window check for any window. A code
+     is the terms of the next swap, so it may not land on a running one. */
+  const EXPW = await freshPage(390, 844);
+  const pex = EXPW.p;
+  const t2x = Math.floor(Date.now() / 1000) + 7200;
+  const hx = '0x' + crypto.createHash('sha256').update(Buffer.from('a7'.repeat(32), 'hex')).digest('hex');
+  await pex.evaluate((c) => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 50000, units: unitsS, t2: t2x, h: hx, a: USER_ADDR }));
+  const noXInv = bolt11NoExpiry(hx, 50000, Math.floor(Date.now() / 1000));
+  const noX = await pex.evaluate((inv) => {
+    const d = window.CLEANSWAP.decodeBolt11(inv);
+    return { expiry: d.expiry, expiresAt: d.expiresAt, ts: d.timestamp, sats: d.sats, hash: d.paymentHash };
+  }, noXInv);
+  check('expiry: a BOLT11 with no x tag expires 3600s after its timestamp',
+    noX.expiry === 3600 && noX.expiresAt === noX.ts + 3600, noX.expiry + ' / ' + noX.expiresAt);
+  check('expiry: the rest of that invoice is read normally',
+    noX.sats === 50000 && String(noX.hash).toLowerCase() === hx, noX.sats + ' ' + noX.hash);
+  await pex.fill('#invIn', noXInv);
+  await pex.fill('#addrIn', USER_ADDR);
+  await pex.waitForTimeout(350);
+  w = await view(pex);
+  check('expiry: an hour-long invoice cannot serve a two-hour escrow window',
+    w.ready === '0' && w.gate === 'window' && /stays payable at least an hour longer/.test(w.say), w.gate + ' · ' + w.say);
+  check('expiry: the refusal is plain English', !JARGON.test(w.say), w.say);
+
+  /* the same page now runs a real rehearsal, and a second code tries to land */
+  const t2r = Math.floor(Date.now() / 1000) + 7200;
+  const hr = '0x' + crypto.createHash('sha256').update(Buffer.from('b8'.repeat(32), 'hex')).digest('hex');
+  await pex.evaluate((c) => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 50000, units: unitsS, t2: t2r, h: hr, a: USER_ADDR }));
+  const invR = await pex.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 14400 }), hr);
+  await pex.fill('#invIn', invR);
+  await pex.fill('#addrIn', USER_ADDR);
+  await pex.waitForTimeout(350);
+  await pex.click('#primary');
+  await pex.waitForFunction(() => document.body.dataset.phase !== 'idle', null, { timeout: 8000 });
+  await pex.waitForTimeout(300);
+  const runBefore = await pex.evaluate(() => ({ sats: window.CLEANSWAP.state.sats, t2: window.CLEANSWAP.state.t2 }));
+  const tookRun = await pex.evaluate((c) => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 250000, units: unitsS, t2: t2r + 600, h: '0x' + 'c9'.repeat(32), a: USER_ADDR }));
+  const runAfter = await pex.evaluate(() => ({
+    sats: window.CLEANSWAP.state.sats, t2: window.CLEANSWAP.state.t2,
+    warn: document.getElementById('codeWarn').hidden ? '' : document.getElementById('codeWarn').textContent
+  }));
+  check('running: a code cannot overwrite a swap that is under way', tookRun === false, String(tookRun));
+  check('running: the running terms are untouched',
+    runAfter.sats === runBefore.sats && runAfter.t2 === runBefore.t2, runAfter.sats + ' / ' + runAfter.t2);
+  check('running: the refusal says a swap is already running', /already running/.test(runAfter.warn), runAfter.warn);
+  check('running: the refusal is plain English', !JARGON.test(runAfter.warn), runAfter.warn);
+  check('running: no page errors', EXPW.errs.length === 0, EXPW.errs.join(' | '));
+  await EXPW.c.close();
+
+  /* -------- 7i. a lock code is data, a QR is drawn, the page has a policy --- */
+  const LC = await freshPage(360, 780);
+  const lc = await LC.p.evaluate(() => {
+    const out = {};
+    out.bad = window.CLEANSWAP.readLockProof('liquidnetwork:lq1example?hashlock=%E0%A4%A&timelock=1');
+    out.proto = window.CLEANSWAP.readLockProof('liquidnetwork:lq1example?__proto__=x&hashlock=abc');
+    out.bare = window.CLEANSWAP.readLockProof('liquidnetwork:lq1example?hashlock');
+    out.dup = window.CLEANSWAP.readLockProof('liquidnetwork:lq1example?hashlock=aa&hashlock=bb');
+    out.ctor = window.CLEANSWAP.readLockProof('liquidnetwork:lq1example?constructor=z&amount=7');
+    out.clean = Object.prototype.hashlock === undefined && ({})['__proto__'] === Object.prototype;
+    return out;
+  });
+  check('lock code: a broken escape drops one field instead of failing the code',
+    lc.bad.kind === 'liquid' && lc.bad.hashlock === '' && lc.bad.timelock === '1',
+    JSON.stringify([lc.bad.kind, lc.bad.hashlock, lc.bad.timelock]));
+  check('lock code: __proto__ is an ordinary key and changes no prototype',
+    lc.proto.hashlock === 'abc' && lc.clean, lc.proto.hashlock);
+  check('lock code: a pair with no = is ignored', lc.bare.kind === 'liquid' && lc.bare.hashlock === '', lc.bare.hashlock);
+  check('lock code: the first of two same keys wins', lc.dup.hashlock === 'aa', lc.dup.hashlock);
+  check('lock code: constructor= is data, not a function call', lc.ctor.amount === '7', lc.ctor.amount);
+
+  const qz = await LC.p.evaluate(() => {
+    const evil = '<img src=x onerror="window.__pwn=1"><b>bold</b>';
+    window.CLEANSWAP.showQr('lightning:lnbc2500u1sample', evil, false);
+    const box = document.getElementById('qrBox');
+    const shown = {
+      svg: !!box.querySelector('svg'),
+      imgs: box.querySelectorAll('img').length,
+      bolds: box.querySelectorAll('b').length,
+      caption: (box.querySelector('p') || { textContent: '' }).textContent
+    };
+    window.CLEANSWAP.showQr('x'.repeat(window.CLEANSWAP.QR_MAX + 40), '<i>cap</i>', false);
+    const long = {
+      svg: !!box.querySelector('svg'),
+      text: box.textContent,
+      italics: box.querySelectorAll('i').length
+    };
+    return { shown, long, pwn: !!window.__pwn };
+  });
+  check('qr: the code is drawn as an SVG', qz.shown.svg, String(qz.shown.svg));
+  check('qr: the caption is text, not markup',
+    qz.shown.caption.indexOf('<img') === 0 && qz.shown.imgs === 0 && qz.shown.bolds === 0, qz.shown.caption);
+  check('qr: nothing in the payload ran as script', qz.pwn === false);
+  check('qr: a payload too long for a QR says so, still as text',
+    qz.long.svg === false && /Too long for a QR/.test(qz.long.text) && qz.long.italics === 0, qz.long.text);
+
+  const csp = await LC.p.evaluate(() => {
+    const m = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    const icon = document.querySelector('img.mark');
+    return { policy: m ? m.getAttribute('content') : '', icon: icon ? icon.naturalWidth : 0 };
+  });
+  check('csp: the page carries a Content-Security-Policy', /default-src 'none'/.test(csp.policy), csp.policy.slice(0, 70));
+  check('csp: its own inline script and style are the only code allowed',
+    /script-src 'unsafe-inline'/.test(csp.policy) && /style-src 'unsafe-inline'/.test(csp.policy) &&
+    /object-src 'none'/.test(csp.policy) && !/unsafe-eval/.test(csp.policy), csp.policy);
+  check('csp: images come from the page itself, connections from the chain',
+    /img-src data:/.test(csp.policy) && /connect-src https:/.test(csp.policy), csp.policy);
+  check("csp: the page's own icon still renders", csp.icon > 0, String(csp.icon));
+  const errsBefore = LC.errs.length;
+  await LC.p.evaluate(() => {
+    const s = document.createElement('script');
+    s.src = 'https://example.com/outside.js';
+    document.head.appendChild(s);
+  });
+  await LC.p.waitForTimeout(800);
+  const cspErrs = LC.errs.slice(errsBefore).filter((m) => /Content Security Policy/.test(m));
+  check('csp: a script from outside the page is refused by the policy',
+    cspErrs.length === 1 && /script-src 'unsafe-inline'/.test(cspErrs[0]), String(cspErrs.join(' | ')).slice(0, 110));
+  await LC.c.close();
 
   /* ------------------------------------------------- 8. protocol vectors --- */
   const E = await freshPage(390, 844);

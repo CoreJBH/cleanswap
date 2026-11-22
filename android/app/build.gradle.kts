@@ -10,8 +10,8 @@ android {
         applicationId = "com.jbitmstr.cleanswap"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.6.0"
+        versionCode = 10
+        versionName = "0.6.1"
         resourceConfigurations += listOf("en", "ko")
     }
 
@@ -20,7 +20,10 @@ android {
             isMinifyEnabled = false
         }
         getByName("release") {
-            isMinifyEnabled = false
+            /* A release build is the bytes a person installs: shrink and
+               obfuscate it, with the rules that keep the shell's entry points. */
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

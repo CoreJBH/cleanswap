@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Everything this page needs is inside this file. Nothing is loaded from
+     another origin: no script, no style, no frame. The only requests it makes
+     are the RPC calls to the endpoints it is configured with (https, or a
+     node on this machine) and the optional BTC/USD quote. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -65,6 +70,7 @@
       <button class="pill" data-act="checkSetup" type="button">Check</button>
     </div>
     <p class="hint" id="setupHint">Deploy the escrow once, then paste its address here.</p>
+    <p class="say err" id="quorumWarn" hidden></p>
   </section>
 
   <section class="cards" aria-label="Swap amounts">

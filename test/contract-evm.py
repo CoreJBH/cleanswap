@@ -112,7 +112,7 @@ arts = compile_contracts()
 accounts = t.get_accounts()
 taker, maker = accounts[1], accounts[2]
 concrete = {k: v for k, v in arts.items() if v['bin']}
-check('solc: every contract compiled to bytecode', len(concrete) == 4 and 'CleanSwapHTLC' in concrete,
+check('solc: every contract compiled to bytecode', len(concrete) == 5 and 'CleanSwapHTLC' in concrete,
       ', '.join('%s %dB' % (k, len(v['bin']) // 2) for k, v in concrete.items()))
 
 usdt = deploy(arts['TestUSDT'], accounts[0])
@@ -267,6 +267,60 @@ check('lock: a token that returns no bool is accepted', view(quiet, 'balanceOf(a
 send(htlc, 'claim(bytes32,bytes32)', ['bytes32', 'bytes32'], [quiet_id, R], accounts[8])
 check('claim: the quiet token pays the receiver in full',
       view(quiet, 'balanceOf(address)', ['address'], [maker], ['uint256'])[0] == amount)
+
+# ---- the door --------------------------------------------------------------
+# A zero hashlock can never be claimed (sha256 never returns zero), and a
+# receiver that is the escrow would have the tokens paid back into the escrow:
+# both are refused before any token moves.
+zero_hash = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                          ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                          [b'\x00' * 32, now() + 3600, maker, usdt, amount], taker)
+check('lock: a zero hashlock is refused (EmptyHashlock)', 'revert' in zero_hash.lower(), zero_hash[:60])
+self_pay = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                         ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                         [H, now() + 3600, htlc, usdt, amount], taker)
+check('lock: a receiver that is the escrow itself is refused (ReceiverIsEscrow)',
+      'revert' in self_pay.lower(), self_pay[:60])
+
+# ---- reentrancy -------------------------------------------------------------
+# A token is a stranger's contract. This one calls back into the escrow in the
+# middle of transferFrom, with a second lock: without the guard one lock would
+# become two.
+LOCK_SIG = 'lock(bytes32,uint256,address,address,uint256)'
+LOCK_TYPES = ['bytes32', 'uint256', 'address', 'address', 'uint256']
+re_tok = deploy(arts['ReentrantUSDT'], accounts[0])
+sender_re = accounts[9]
+cash_re = 10_000 * 10 ** 6
+send(re_tok, 'faucet()', [], [], sender_re)
+send(re_tok, 'approve(address,uint256)', ['address', 'uint256'], [htlc, 2 * amount], sender_re)
+nested = selector(LOCK_SIG) + abi_encode(LOCK_TYPES, [H, now() + 3600, maker, re_tok, amount])
+send(re_tok, 'arm(address,bytes)', ['address', 'bytes'], [htlc, nested], accounts[0])
+outer_tl = now() + 3700
+outer_id = view(htlc, 'computeSwapId(bytes32,address,address,address,uint256,uint256)',
+                ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
+                [H, sender_re, maker, re_tok, amount, outer_tl], ['bytes32'])[0]
+re_lock = revert_reason(htlc, LOCK_SIG, LOCK_TYPES, [H, outer_tl, maker, re_tok, amount], sender_re)
+check('guard: a token that re-enters lock mid-transfer is refused', 'revert' in re_lock.lower(), re_lock[:60])
+check('guard: the refused lock escrowed nothing',
+      view(re_tok, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == 0,
+      str(view(re_tok, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0]))
+check('guard: the sender kept every unit',
+      view(re_tok, 'balanceOf(address)', ['address'], [sender_re], ['uint256'])[0] == cash_re)
+check('guard: no swap record was left behind under that id', swaps_raw(outer_id)[0] == b'\x00' * 256)
+
+# The same token, armed with a harmless call back, locks normally: what the
+# guard refuses is the second entry, not a token that happens to call out.
+harmless = selector('computeSwapId(bytes32,address,address,address,uint256,uint256)') + abi_encode(
+    ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
+    [H, sender_re, maker, re_tok, amount, now() + 3800])
+send(re_tok, 'arm(address,bytes)', ['address', 'bytes'], [htlc, harmless], accounts[0])
+ctl_rc = send(htlc, LOCK_SIG, LOCK_TYPES, [H, now() + 3800, maker, re_tok, amount], sender_re)
+ctl_id = to_bytes(hexstr=event(ctl_rc, 'Locked(bytes32,address,address,address,uint256,bytes32,uint256)')['topics'][1])
+check('guard: the same token with a harmless call back locks normally',
+      view(re_tok, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == amount,
+      str(view(re_tok, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0]))
+check('guard: the guard is released after a call finishes',
+      view(htlc, 'canClaim(bytes32)', ['bytes32'], [ctl_id], ['bool'])[0] is True)
 
 # ---- the app's own encoding ------------------------------------------------
 # The UI builds lock() calldata in the browser. These two checks tie that

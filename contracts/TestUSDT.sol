@@ -125,6 +125,72 @@ contract FeeUSDT {
     }
 }
 
+/// @title  ReentrantUSDT
+/// @notice A token that calls back into the escrow in the middle of a transfer.
+///         It exists only to prove the escrow's reentrancy guard: without it a
+///         token contract could enter `lock`, `claim` or `refund` again while the
+///         first call is still running, and one lock could become two.
+contract ReentrantUSDT {
+    string public constant name = "Reentrant Tether USD";
+    string public constant symbol = "RUSDT";
+    uint8 public constant decimals = 6;
+
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+
+    address public escrow;
+    bytes public poke;
+    bool public fired;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    /// @notice Load the escrow to call back into and the call to make there.
+    function arm(address escrow_, bytes calldata call_) external {
+        escrow = escrow_;
+        poke = call_;
+        fired = false;
+    }
+
+    function faucet() external returns (uint256) {
+        balanceOf[msg.sender] += 10_000 * 1e6;
+        return 10_000 * 1e6;
+    }
+
+    function approve(address spender, uint256 value) external returns (bool) {
+        allowance[msg.sender][spender] = value;
+        return true;
+    }
+
+    function transfer(address to, uint256 value) external returns (bool) {
+        _poke();
+        _move(msg.sender, to, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool) {
+        _poke();
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed < value) revert("allowance");
+        allowance[from][msg.sender] = allowed - value;
+        _move(from, to, value);
+        return true;
+    }
+
+    function _poke() private {
+        if (fired || escrow == address(0)) return;
+        fired = true;
+        (bool ok, ) = escrow.call(poke);
+        if (!ok) revert("the call back failed");
+    }
+
+    function _move(address from, address to, uint256 value) private {
+        require(balanceOf[from] >= value, "balance");
+        balanceOf[from] -= value;
+        balanceOf[to] += value;
+        emit Transfer(from, to, value);
+    }
+}
+
 /// @title  QuietUSDT
 /// @notice An ERC-20 that returns nothing from transfer/transferFrom, the way
 ///         some older tokens do. The escrow accepts it: what it checks is the

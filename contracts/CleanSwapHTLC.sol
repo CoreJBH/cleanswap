@@ -24,11 +24,13 @@ pragma solidity ^0.8.26;
 ///         claimable by whoever holds the invoice; if nobody claims here before
 ///         `timelock`, the token leg is refundable to the sender.
 ///
-///         Deliberately minimal: no fees, no owner, no upgrade path, no
-///         reentrancy guard (checks-effects-interactions plus a one-shot
-///         `claimed` flag is enough for an idempotent swap record). Token
-///         movement goes through `_safeTransfer`/`_safeTransferFrom`, which
-///         accept tokens that return no bool but refuse any transfer whose
+///         Deliberately minimal: no fees, no owner, no upgrade path. The three
+///         functions that move tokens carry a reentrancy guard: checks-effects-
+///         interactions and a one-shot `claimed` flag would cover this escrow
+///         on their own, but the token is a stranger's contract, and a token
+///         that calls back during a transfer must not be able to enter a second
+///         time. Token movement goes through `_safeTransfer`/`_safeTransferFrom`,
+///         which accept tokens that return no bool but refuse any transfer whose
 ///         actual balance movement differs from the agreed amount, so a
 ///         fee-on-transfer token cannot quietly short the other side.
 interface IERC20 {
@@ -53,6 +55,20 @@ contract CleanSwapHTLC {
     ///         record as a tuple, which is exactly what the app's `eth_call`
     ///         decodes. A zero `sender` means "no such swap".
     mapping(bytes32 swapId => Swap) public swaps;
+
+    /// @dev Reentrancy guard state for `lock`, `claim` and `refund`.
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+    uint256 private guardState = NOT_ENTERED;
+
+    /// @dev Refuse a call that re-enters one of the three that move tokens,
+    ///      through a token (or a receiver) that calls back mid-transfer.
+    modifier nonReentrant() {
+        if (guardState == ENTERED) revert ReentrantCall();
+        guardState = ENTERED;
+        _;
+        guardState = NOT_ENTERED;
+    }
 
     /// @notice Refuse timelocks so short a refund could race the claim.
     uint256 public constant MIN_TIMELOCK_DELTA = 5 minutes;
@@ -79,6 +95,9 @@ contract CleanSwapHTLC {
 
     error ZeroAmount();
     error ZeroAddress();
+    error EmptyHashlock();
+    error ReceiverIsEscrow();
+    error ReentrantCall();
     error TimelockTooSoon(uint256 timelock, uint256 minimum);
     error TimelockTooFar(uint256 timelock, uint256 maximum);
     error SwapExists(bytes32 swapId);
@@ -104,9 +123,15 @@ contract CleanSwapHTLC {
         address receiver,
         address token,
         uint256 amount
-    ) external returns (bytes32 swapId) {
+    ) external nonReentrant returns (bytes32 swapId) {
         if (amount == 0) revert ZeroAmount();
+        /* A zero hashlock is a swap nobody can claim: sha256() never returns
+           zero, so such a lock would only ever be refunded. A receiver that is
+           this contract would have the tokens paid back into the escrow and
+           counted as a swap that settled. Both are refused at the door. */
+        if (hashlock == bytes32(0)) revert EmptyHashlock();
         if (receiver == address(0) || token == address(0)) revert ZeroAddress();
+        if (receiver == address(this)) revert ReceiverIsEscrow();
         uint256 minimum = block.timestamp + MIN_TIMELOCK_DELTA;
         if (timelock < minimum) revert TimelockTooSoon(timelock, minimum);
         uint256 maximum = block.timestamp + MAX_TIMELOCK_DELTA;
@@ -132,7 +157,7 @@ contract CleanSwapHTLC {
     /// @notice Reveal the preimage and pay the receiver. Emits R on-chain.
     /// @dev    Callable by anyone holding R — the token can only go to the
     ///         receiver fixed at lock time, so a front-runner gains nothing.
-    function claim(bytes32 swapId, bytes32 preimage) external {
+    function claim(bytes32 swapId, bytes32 preimage) external nonReentrant {
         Swap storage s = swaps[swapId];
         if (s.sender == address(0)) revert SwapUnknown(swapId);
         if (s.claimed || s.refunded) revert AlreadySettled(swapId);
@@ -150,7 +175,7 @@ contract CleanSwapHTLC {
 
     /// @notice After the timelock, return the tokens to the sender.
     /// @dev    Permissionless: the destination is fixed, so anyone may clean up.
-    function refund(bytes32 swapId) external {
+    function refund(bytes32 swapId) external nonReentrant {
         Swap storage s = swaps[swapId];
         if (s.sender == address(0)) revert SwapUnknown(swapId);
         if (s.claimed || s.refunded) revert AlreadySettled(swapId);
