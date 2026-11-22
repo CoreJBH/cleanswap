@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-gpZbCh0Gna2uJuudPGp/6q6eZbs4jezHADo91RYx9Ns='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/FOV1TQ0zTTcdfYEjQ62+2JF0HP8GCoVK8g0Jy4+1do=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-SYXUNkMcoh3QFJXvfaSJzO0OdfOvQOgrnHOvF5cudyI='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -547,7 +547,10 @@ pragma solidity ^0.8.26;
 ///         time. Token movement goes through `_safeTransfer`/`_safeTransferFrom`,
 ///         which accept tokens that return no bool but refuse any transfer whose
 ///         actual balance movement differs from the agreed amount, so a
-///         fee-on-transfer token cannot quietly short the other side.
+///         fee-on-transfer token cannot quietly short the other side. The token
+///         itself must be a contract, and a rebasing token that shrinks a balance
+///         between the two reads is refused with its own error rather than an
+///         arithmetic panic.
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
@@ -613,6 +616,8 @@ contract CleanSwapHTLC {
     error EmptyHashlock();
     error ReceiverIsEscrow();
     error ReentrantCall();
+    error TokenHasNoCode(address token);
+    error BalanceShrank(address token, uint256 wasBalance, uint256 nowBalance);
     error TimelockTooSoon(uint256 timelock, uint256 minimum);
     error TimelockTooFar(uint256 timelock, uint256 maximum);
     error SwapExists(bytes32 swapId);
@@ -647,6 +652,13 @@ contract CleanSwapHTLC {
         if (hashlock == bytes32(0)) revert EmptyHashlock();
         if (receiver == address(0) || token == address(0)) revert ZeroAddress();
         if (receiver == address(this)) revert ReceiverIsEscrow();
+        /* The token address is a stranger's word for a contract. A call to an
+           account without code "succeeds" with no return value at all - which
+           the safe-transfer helpers would read as success - and its balance
+           reads answer nothing, so the mismatch would surface as a raw
+           EVM panic instead of a sentence. A token with no code is refused
+           here, by name. */
+        if (token.code.length == 0) revert TokenHasNoCode(token);
         uint256 minimum = block.timestamp + MIN_TIMELOCK_DELTA;
         if (timelock < minimum) revert TimelockTooSoon(timelock, minimum);
         uint256 maximum = block.timestamp + MAX_TIMELOCK_DELTA;
@@ -743,19 +755,31 @@ contract CleanSwapHTLC {
     /// @dev A transfer that refuses to move less than `amount`: the escrow's
     ///      own balance has to grow by exactly the agreed number of units.
     function _safeTransferFrom(address token, address from, uint256 amount) private {
-        uint256 before = IERC20(token).balanceOf(address(this));
+        uint256 was = IERC20(token).balanceOf(address(this));
         _callToken(token, abi.encodeWithSelector(IERC20.transferFrom.selector, from, address(this), amount));
-        uint256 moved = IERC20(token).balanceOf(address(this)) - before;
+        uint256 moved = _balanceMoved(token, address(this), was);
         if (moved != amount) revert TransferAmountMismatch(amount, moved);
     }
 
     /// @dev A transfer that refuses to deliver less than `amount`: the
     ///      destination's balance has to grow by exactly the agreed units.
     function _safeTransfer(address token, address to, uint256 amount) private {
-        uint256 before = IERC20(token).balanceOf(to);
+        uint256 was = IERC20(token).balanceOf(to);
         _callToken(token, abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
-        uint256 moved = IERC20(token).balanceOf(to) - before;
+        uint256 moved = _balanceMoved(token, to, was);
         if (moved != amount) revert TransferAmountMismatch(amount, moved);
+    }
+
+    /// @dev The balance movement a transfer is judged by. A rebasing token can
+    ///      shrink a balance between the two reads that bracket a transfer;
+    ///      the plain subtraction would then panic with an arithmetic
+    ///      underflow that says nothing about the cause. A shrinking balance
+    ///      is refused here as its own error, which says what happened and
+    ///      which token did it.
+    function _balanceMoved(address token, address who, uint256 was) private view returns (uint256) {
+        uint256 nowBalance = IERC20(token).balanceOf(who);
+        if (nowBalance < was) revert BalanceShrank(token, was, nowBalance);
+        return nowBalance - was;
     }
 
     /// @dev ERC-20 tokens that return nothing (USDT on some chains) are
@@ -1245,7 +1269,7 @@ contract CleanSwapHTLC {
   /* The escrow's creation bytecode, compiled by build.py from
      contracts/CleanSwapHTLC.sol with solc 0.8.26. It is what the Setup panel
      hands over to a deploy, so a swap can exist before any escrow does. */
-  var BYTECODE = '6080604052600180553480156012575f80fd5b50610fda806100205f395ff3fe608060405234801561000f575f80fd5b50600436106100a6575f3560e01c80638d9fba101161006e5780638d9fba101461020557806391644b2b1461020e578063bde40a0114610221578063eaaa98fa14610234578063eb84e7f214610247578063f3192c08146102f9575f80fd5b80633da0e66e146100aa5780637249fbb61461019957806384cc9dfb146101ae5780638bfa6f18146101c15780638c8c2003146101e2575b5f80fd5b6101836100b8366004610daa565b60408051610100810182525f80825260208201819052918101829052606081018290526080810182905260a0810182905260c0810182905260e0810191909152505f90815260208181526040918290208251610100810184528154815260018201549281019290925260028101549282019290925260038201546001600160a01b03908116606083015260048301548116608083015260059092015491821660a082015260ff600160a01b83048116151560c0830152600160a81b909204909116151560e082015290565b6040516101909190610dc1565b60405180910390f35b6101ac6101a7366004610daa565b610303565b005b6101ac6101bc366004610e3e565b610452565b6101d46101cf366004610e79565b610649565b604051908152602001610190565b6101f56101f0366004610daa565b6106f9565b6040519015158152602001610190565b6101d461012c81565b6101d461021c366004610ed4565b61075d565b6101d461022f366004610daa565b6109c1565b6101f5610242366004610daa565b610a35565b6102ae610255366004610daa565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501549394929391926001600160a01b03918216929082169181169060ff600160a01b8204811691600160a81b90041688565b604080519889526020890197909752958701949094526001600160a01b03928316606087015290821660808601521660a0840152151560c0830152151560e082015261010001610190565b6101d462093a8081565b600260015403610326576040516306fda65d60e31b815260040160405180910390fd5b60026001555f81815260208190526040902060048101546001600160a01b031661036b57604051634e86cc8760e11b8152600481018390526024015b60405180910390fd5b6005810154600160a01b900460ff168061039057506005810154600160a81b900460ff165b156103b1576040516358cb522560e11b815260048101839052602401610362565b80600201544210156103e557600281015460405163126b74dd60e11b81526004810191909152426024820152604401610362565b60058101805460ff60a81b1916600160a81b179055600381015460048201546001830154610420926001600160a01b03908116921690610a95565b60405182907ffe509803c09416b28ff3d8f690c8b0c61462a892c46d5430c8fb20abe472daf0905f90a2505060018055565b600260015403610475576040516306fda65d60e31b815260040160405180910390fd5b60026001555f82815260208190526040902060048101546001600160a01b03166104b557604051634e86cc8760e11b815260048101849052602401610362565b6005810154600160a01b900460ff16806104da57506005810154600160a81b900460ff165b156104fb576040516358cb522560e11b815260048101849052602401610362565b8060020154421061052e57600281015460405163301b1fcd60e01b81526004810191909152426024820152604401610362565b5f60028360405160200161054491815260200190565b60408051601f198184030181529082905261055e91610f1e565b602060405180830381855afa158015610579573d5f803e3d5ffd5b5050506040513d601f19601f8201168201806040525081019061059c9190610f34565b825490915081146105cd5781546040516305ea586160e51b8152600481019190915260248101829052604401610362565b60058201805460ff60a01b198116600160a01b1790915560038301546001840154610605926001600160a01b03928316921690610a95565b837f38d6042dbdae8e73a7f6afbabd3fbe0873f9f5ed3cd71294591c3908c2e65fee8460405161063791815260200190565b60405180910390a25050600180555050565b60408051602081018890526bffffffffffffffffffffffff19606088811b82168385015287811b8216605484015286901b166068820152607c8101849052609c8082018490528251808303909101815260bc909101918290525f916002916106b091610f1e565b602060405180830381855afa1580156106cb573d5f803e3d5ffd5b5050506040513d601f19601f820116820180604052508101906106ee9190610f34565b979650505050505050565b5f81815260208190526040812060048101546001600160a01b03161580159061072e57506005810154600160a01b900460ff16155b801561074657506005810154600160a81b900460ff16155b8015610756575080600201544210155b9392505050565b5f600260015403610781576040516306fda65d60e31b815260040160405180910390fd5b60026001555f8290036107a757604051631f2a200560e01b815260040160405180910390fd5b856107c557604051637550078560e01b815260040160405180910390fd5b6001600160a01b03841615806107e257506001600160a01b038316155b156108005760405163d92e233d60e01b815260040160405180910390fd5b306001600160a01b03851603610829576040516303fe161d60e21b815260040160405180910390fd5b5f61083661012c42610f5f565b9050808610156108635760405163dfb9368360e01b81526004810187905260248101829052604401610362565b5f61087162093a8042610f5f565b90508087111561089e57604051630748617d60e01b81526004810188905260248101829052604401610362565b6108ac88338888888c610649565b5f818152602081905260409020600401549093506001600160a01b0316156108ea5760405163afa955b960e01b815260048101849052602401610362565b5f83815260208190526040902088815560018101859055600281018890556003810180546001600160a01b038089166001600160a01b031992831617909255600483018054821633908117909155600584018054938b169390921692909217905561095790879087610c10565b604080516001600160a01b038881168252602082018890529181018b9052606081018a905290881690339086907f14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf9060800160405180910390a45050600180555095945050505050565b5f6002826040516020016109d791815260200190565b60408051601f19818403018152908290526109f191610f1e565b602060405180830381855afa158015610a0c573d5f803e3d5ffd5b5050506040513d601f19601f82011682018060405250810190610a2f9190610f34565b92915050565b5f81815260208190526040812060048101546001600160a01b031615801590610a6a57506005810154600160a01b900460ff16155b8015610a8257506005810154600160a81b900460ff16155b8015610756575060020154421092915050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f91908516906370a0823190602401602060405180830381865afa158015610adc573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b009190610f34565b6040516001600160a01b038516602482015260448101849052909150610b6690859063a9059cbb60e01b906064015b60408051601f198184030181529190526020810180516001600160e01b03166001600160e01b031990931692909217909152610ce1565b6040516370a0823160e01b81526001600160a01b0384811660048301525f9183918716906370a08231906024015b602060405180830381865afa158015610baf573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610bd39190610f34565b610bdd9190610f72565b9050828114610c0957604051632daa6d9560e21b81526004810184905260248101829052604401610362565b5050505050565b6040516370a0823160e01b81523060048201525f906001600160a01b038516906370a0823190602401602060405180830381865afa158015610c54573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c789190610f34565b6040516001600160a01b038516602482015230604482015260648101849052909150610cb19085906323b872dd60e01b90608401610b2f565b6040516370a0823160e01b81523060048201525f9082906001600160a01b038716906370a0823190602401610b94565b5f80836001600160a01b031683604051610cfb9190610f1e565b5f604051808303815f865af19150503d805f8114610d34576040519150601f19603f3d011682016040523d82523d5f602084013e610d39565b606091505b5091509150811580610d515750610d4f81610d75565b155b15610d6f576040516312171d8360e31b815260040160405180910390fd5b50505050565b5f81515f03610d8657506001919050565b8151602014610d9657505f919050565b81806020019051810190610a2f9190610f85565b5f60208284031215610dba575f80fd5b5035919050565b8151815260208083015190820152604080830151908201526060808301516001600160a01b039081169183019190915260808084015182169083015260a0808401519091169082015260c080830151610100830191610e239084018215159052565b5060e0830151610e3760e084018215159052565b5092915050565b5f8060408385031215610e4f575f80fd5b50508035926020909101359150565b80356001600160a01b0381168114610e74575f80fd5b919050565b5f805f805f8060c08789031215610e8e575f80fd5b86359550610e9e60208801610e5e565b9450610eac60408801610e5e565b9350610eba60608801610e5e565b9598949750929560808101359460a0909101359350915050565b5f805f805f60a08688031215610ee8575f80fd5b8535945060208601359350610eff60408701610e5e565b9250610f0d60608701610e5e565b949793965091946080013592915050565b5f82518060208501845e5f920191825250919050565b5f60208284031215610f44575f80fd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b80820180821115610a2f57610a2f610f4b565b81810381811115610a2f57610a2f610f4b565b5f60208284031215610f95575f80fd5b81518015158114610756575f80fdfea2646970667358221220738d0d412b59cbeae99458f3d0057ec50ed8d814d33f20efb91e8cac7675fbb064736f6c634300081a0033';
+  var BYTECODE = '6080604052600180553480156012575f80fd5b5061103b806100205f395ff3fe608060405234801561000f575f80fd5b50600436106100a6575f3560e01c80638d9fba101161006e5780638d9fba101461020557806391644b2b1461020e578063bde40a0114610221578063eaaa98fa14610234578063eb84e7f214610247578063f3192c08146102f9575f80fd5b80633da0e66e146100aa5780637249fbb61461019957806384cc9dfb146101ae5780638bfa6f18146101c15780638c8c2003146101e2575b5f80fd5b6101836100b8366004610e0b565b60408051610100810182525f80825260208201819052918101829052606081018290526080810182905260a0810182905260c0810182905260e0810191909152505f90815260208181526040918290208251610100810184528154815260018201549281019290925260028101549282019290925260038201546001600160a01b03908116606083015260048301548116608083015260059092015491821660a082015260ff600160a01b83048116151560c0830152600160a81b909204909116151560e082015290565b6040516101909190610e22565b60405180910390f35b6101ac6101a7366004610e0b565b610303565b005b6101ac6101bc366004610e9f565b610452565b6101d46101cf366004610eda565b610649565b604051908152602001610190565b6101f56101f0366004610e0b565b6106f9565b6040519015158152602001610190565b6101d461012c81565b6101d461021c366004610f35565b61075d565b6101d461022f366004610e0b565b6109f6565b6101f5610242366004610e0b565b610a6a565b6102ae610255366004610e0b565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501549394929391926001600160a01b03918216929082169181169060ff600160a01b8204811691600160a81b90041688565b604080519889526020890197909752958701949094526001600160a01b03928316606087015290821660808601521660a0840152151560c0830152151560e082015261010001610190565b6101d462093a8081565b600260015403610326576040516306fda65d60e31b815260040160405180910390fd5b60026001555f81815260208190526040902060048101546001600160a01b031661036b57604051634e86cc8760e11b8152600481018390526024015b60405180910390fd5b6005810154600160a01b900460ff168061039057506005810154600160a81b900460ff165b156103b1576040516358cb522560e11b815260048101839052602401610362565b80600201544210156103e557600281015460405163126b74dd60e11b81526004810191909152426024820152604401610362565b60058101805460ff60a81b1916600160a81b179055600381015460048201546001830154610420926001600160a01b03908116921690610aca565b60405182907ffe509803c09416b28ff3d8f690c8b0c61462a892c46d5430c8fb20abe472daf0905f90a2505060018055565b600260015403610475576040516306fda65d60e31b815260040160405180910390fd5b60026001555f82815260208190526040902060048101546001600160a01b03166104b557604051634e86cc8760e11b815260048101849052602401610362565b6005810154600160a01b900460ff16806104da57506005810154600160a81b900460ff165b156104fb576040516358cb522560e11b815260048101849052602401610362565b8060020154421061052e57600281015460405163301b1fcd60e01b81526004810191909152426024820152604401610362565b5f60028360405160200161054491815260200190565b60408051601f198184030181529082905261055e91610f7f565b602060405180830381855afa158015610579573d5f803e3d5ffd5b5050506040513d601f19601f8201168201806040525081019061059c9190610f95565b825490915081146105cd5781546040516305ea586160e51b8152600481019190915260248101829052604401610362565b60058201805460ff60a01b198116600160a01b1790915560038301546001840154610605926001600160a01b03928316921690610aca565b837f38d6042dbdae8e73a7f6afbabd3fbe0873f9f5ed3cd71294591c3908c2e65fee8460405161063791815260200190565b60405180910390a25050600180555050565b60408051602081018890526bffffffffffffffffffffffff19606088811b82168385015287811b8216605484015286901b166068820152607c8101849052609c8082018490528251808303909101815260bc909101918290525f916002916106b091610f7f565b602060405180830381855afa1580156106cb573d5f803e3d5ffd5b5050506040513d601f19601f820116820180604052508101906106ee9190610f95565b979650505050505050565b5f81815260208190526040812060048101546001600160a01b03161580159061072e57506005810154600160a01b900460ff16155b801561074657506005810154600160a81b900460ff16155b8015610756575080600201544210155b9392505050565b5f600260015403610781576040516306fda65d60e31b815260040160405180910390fd5b60026001555f8290036107a757604051631f2a200560e01b815260040160405180910390fd5b856107c557604051637550078560e01b815260040160405180910390fd5b6001600160a01b03841615806107e257506001600160a01b038316155b156108005760405163d92e233d60e01b815260040160405180910390fd5b306001600160a01b03851603610829576040516303fe161d60e21b815260040160405180910390fd5b826001600160a01b03163b5f0361085e5760405163d0b1b2a760e01b81526001600160a01b0384166004820152602401610362565b5f61086b61012c42610fc0565b9050808610156108985760405163dfb9368360e01b81526004810187905260248101829052604401610362565b5f6108a662093a8042610fc0565b9050808711156108d357604051630748617d60e01b81526004810188905260248101829052604401610362565b6108e188338888888c610649565b5f818152602081905260409020600401549093506001600160a01b03161561091f5760405163afa955b960e01b815260048101849052602401610362565b5f83815260208190526040902088815560018101859055600281018890556003810180546001600160a01b038089166001600160a01b031992831617909255600483018054821633908117909155600584018054938b169390921692909217905561098c90879087610bda565b604080516001600160a01b038881168252602082018890529181018b9052606081018a905290881690339086907f14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf9060800160405180910390a45050600180555095945050505050565b5f600282604051602001610a0c91815260200190565b60408051601f1981840301815290829052610a2691610f7f565b602060405180830381855afa158015610a41573d5f803e3d5ffd5b5050506040513d601f19601f82011682018060405250810190610a649190610f95565b92915050565b5f81815260208190526040812060048101546001600160a01b031615801590610a9f57506005810154600160a01b900460ff16155b8015610ab757506005810154600160a81b900460ff16155b8015610756575060020154421092915050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f91908516906370a0823190602401602060405180830381865afa158015610b11573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b359190610f95565b6040516001600160a01b038516602482015260448101849052909150610b9b90859063a9059cbb60e01b906064015b60408051601f198184030181529190526020810180516001600160e01b03166001600160e01b031990931692909217909152610c87565b5f610ba7858584610d1b565b9050828114610bd357604051632daa6d9560e21b81526004810184905260248101829052604401610362565b5050505050565b6040516370a0823160e01b81523060048201525f906001600160a01b038516906370a0823190602401602060405180830381865afa158015610c1e573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c429190610f95565b6040516001600160a01b038516602482015230604482015260648101849052909150610c7b9085906323b872dd60e01b90608401610b64565b5f610ba7853084610d1b565b5f80836001600160a01b031683604051610ca19190610f7f565b5f604051808303815f865af19150503d805f8114610cda576040519150601f19603f3d011682016040523d82523d5f602084013e610cdf565b606091505b5091509150811580610cf75750610cf581610dd6565b155b15610d15576040516312171d8360e31b815260040160405180910390fd5b50505050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f9182918616906370a0823190602401602060405180830381865afa158015610d63573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610d879190610f95565b905082811015610dc35760405163d35f6edb60e01b81526001600160a01b03861660048201526024810184905260448101829052606401610362565b610dcd8382610fd3565b95945050505050565b5f81515f03610de757506001919050565b8151602014610df757505f919050565b81806020019051810190610a649190610fe6565b5f60208284031215610e1b575f80fd5b5035919050565b8151815260208083015190820152604080830151908201526060808301516001600160a01b039081169183019190915260808084015182169083015260a0808401519091169082015260c080830151610100830191610e849084018215159052565b5060e0830151610e9860e084018215159052565b5092915050565b5f8060408385031215610eb0575f80fd5b50508035926020909101359150565b80356001600160a01b0381168114610ed5575f80fd5b919050565b5f805f805f8060c08789031215610eef575f80fd5b86359550610eff60208801610ebf565b9450610f0d60408801610ebf565b9350610f1b60608801610ebf565b9598949750929560808101359460a0909101359350915050565b5f805f805f60a08688031215610f49575f80fd5b8535945060208601359350610f6060408701610ebf565b9250610f6e60608701610ebf565b949793965091946080013592915050565b5f82518060208501845e5f920191825250919050565b5f60208284031215610fa5575f80fd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b80820180821115610a6457610a64610fac565b81810381811115610a6457610a64610fac565b5f60208284031215610ff6575f80fd5b81518015158114610756575f80fdfea26469706673582212200ca4a0c151cd946c35dc56d28fa596020b17760011207e9e35d2fb34900525cd64736f6c634300081a0033';
   var FALLBACK_PRICE = 90000;
   var QR_MAX = 340;                 /* bytes at level L, version 13 (the encoder's ceiling) */
   var QR_M = 269;                   /* bytes at level M, version 12 */
@@ -1709,10 +1733,28 @@ contract CleanSwapHTLC {
   }
   /* Setup takes one endpoint or several, separated by commas or spaces. More
      than one is a cross-check: the escrow is only believed when two of them
-     answer the same thing. */
+     answer the same thing.
+
+     The list is deduplicated before it is used, because the cross-check counts
+     answers, not strings: the same URL typed twice - padded with a space, a
+     trailing slash, or spelled in another case - is still one node, and two
+     answers from one node would let that node alone decide what the escrow
+     says. The comparison is on the trimmed, lower-cased address with a
+     trailing slash dropped, which is the same endpoint however it is spelled;
+     the spelling the person typed is what the list keeps, so the calls and the
+     wallet's chain setup still go to the address as it was written. */
+  function endpointKey(u) {
+    return String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  }
   function endpointList(raw) {
-    var parts = String(raw == null ? '' : raw).split(/[\s,]+/), out = [], i;
-    for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+    var parts = String(raw == null ? '' : raw).split(/[\s,]+/), out = [], seen = {}, i, k;
+    for (i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      k = endpointKey(parts[i]);
+      if (seen[k]) continue;
+      seen[k] = true;
+      out.push(parts[i]);
+    }
     return out;
   }
   function endpointsOk(raw) {
@@ -2341,6 +2383,21 @@ contract CleanSwapHTLC {
         });
     });
   }
+  /* The chain a transaction lands on is the chain the wallet is on at the
+     moment it signs, not the one it was on when it was asked to switch. Between
+     the switch request and the signature a person can change networks in the
+     wallet, and the same calldata on another chain is a call to whatever
+     contract holds that address there. So the chain is read again immediately
+     before every send, and a mismatch refuses the send instead of signing on
+     the wrong chain. */
+  function assertChain(p) {
+    return p.request({ method: 'eth_chainId' }).then(function (id) {
+      if (String(id || '').toLowerCase() === curChain().chainHex) return true;
+      var e = new Error('the wallet is on another network now');
+      e.chainSwitched = true;
+      throw e;
+    });
+  }
   function walletSend(to, data) {
     var p = provider();
     if (!p) return Promise.reject(new Error('no wallet in this page'));
@@ -2355,7 +2412,9 @@ contract CleanSwapHTLC {
         var from = accts && accts[0];
         if (!from) throw new Error('the wallet shared no account');
         S.me = String(from);
-        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: to, data: data, value: '0x0' }] });
+        return assertChain(p).then(function () {
+          return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: to, data: data, value: '0x0' }] });
+        });
       })
       .then(function (h) { S.sending = false; return h; }, function (e) { S.sending = false; throw e; });
   }
@@ -2447,6 +2506,7 @@ contract CleanSwapHTLC {
     return chainProbe().then(function () {
       if (S.rpcState === 'nocon') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'nothing answers at the escrow address', 'c-err');
         openSetup();
         toast('No contract answers at that address');
@@ -2454,6 +2514,7 @@ contract CleanSwapHTLC {
       }
       if (S.rpcState === 'nohtlc') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'that address is not the swap contract, so nothing is approved', 'c-err');
         openSetup();
         toast('That address is not the swap contract');
@@ -2461,12 +2522,14 @@ contract CleanSwapHTLC {
       }
       if (S.rpcState === 'bad') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'the chain did not answer, so nothing is approved', 'c-err');
         toast('The chain did not answer. Nothing was approved.');
         return null;
       }
       if (S.rpcState === 'unclear') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'the endpoints disagree about the escrow, so nothing is approved', 'c-err');
         toast('The two endpoints disagree about the escrow. Nothing was approved.');
         return null;
@@ -2479,14 +2542,17 @@ contract CleanSwapHTLC {
       var st = c.state;
       if (st === 'claimed') { settleByChain(c); return; }
       if (st === 'refunded') { wentBack(c); return; }
-      if (st === 'error') { blockChain(c); return; }
+      if (st === 'error') { blockChain(c); dropSwapTerms(); return; }
       if (S.direction === 'btc2u') {
         if (st === 'locked') { beginPaying(c); return; }
-        blockChain(c);                 /* 'none' or 'mismatch': the USDT is not there yet */
+        /* 'none' is not a refusal: the partner has not locked yet, and the
+           terms are what both sides are converging on. They stay, so the next
+           tap reads the same escrow the first one described. */
+        blockChain(c);
         return;
       }
       if (st === 'locked' || st === 'closed') { lockedMine(c); return; }   /* already locked: pick it up from here */
-      if (st === 'mismatch') { blockChain(c); return; }
+      if (st === 'mismatch') { blockChain(c); dropSwapTerms(); return; }
       beginLocking();
     });
   }
@@ -2526,11 +2592,15 @@ contract CleanSwapHTLC {
        zero first and the new one is then exact. */
     function approveTo(v, why) {
       log('APPROVE', why);
-      return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, v), value: '0x0' }] })
-        .then(function (h) {
-          if (!h) throw new Error('the wallet sent nothing');
-          return waitReceipt(h);
-        });
+      /* The chain is read once more here, because the approval was asked for
+         some time after the switch: a wallet moved to another network in
+         between would put the allowance on that chain's contract instead. */
+      return assertChain(p).then(function () {
+        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, v), value: '0x0' }] });
+      }).then(function (h) {
+        if (!h) throw new Error('the wallet sent nothing');
+        return waitReceipt(h);
+      });
     }
     busy(true);
     ensureChain(p)
@@ -2538,10 +2608,15 @@ contract CleanSwapHTLC {
       .then(function (accts) {
         S.me = accts && accts[0] ? String(accts[0]) : '';
         if (!S.me) throw new Error('the wallet shared no account');
-        /* What the token already allows is a state the money depends on, so it
-           is read the way the escrow is: every endpoint, and two answers that
-           agree before either is believed. */
-        return rpcQuorum('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
+        /* The switch was requested a moment ago; the wallet is read again
+           before anything is asked of it, so a person who changed networks in
+           that moment is stopped before an approval goes out. */
+        return assertChain(p).then(function () {
+          /* What the token already allows is a state the money depends on, so it
+             is read the way the escrow is: every endpoint, and two answers that
+             agree before either is believed. */
+          return rpcQuorum('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
+        });
       })
       .then(function (raw) {
         var w = abiWords(raw);
@@ -2555,7 +2630,13 @@ contract CleanSwapHTLC {
       })
       .then(function () {
         log('LOCK', 'the wallet is asked for the lock');
-        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: S.contract, data: lockCall().data, value: '0x0' }] });
+        /* The last look before the money moves: between the approval and this
+           call the wallet can be switched to another network, and the same
+           lock calldata there is a lock on that chain's contract at this
+           chain's escrow address - or on nothing. */
+        return assertChain(p).then(function () {
+          return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: S.contract, data: lockCall().data, value: '0x0' }] });
+        });
       })
       .then(function (h) {
         if (!h) throw new Error('the wallet sent nothing');
@@ -2585,7 +2666,9 @@ contract CleanSwapHTLC {
 
   function walletFail(e) {
     var m = String((e && e.message) || e || '');
-    var say = /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
+    var say = (e && e.chainSwitched) ? 'Your wallet moved to another network, so nothing was sent. Switch it back to ' +
+        curChain().label + ', then tap again.'
+      : /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
       : /insufficient|balance|allowance/i.test(m) ? 'That wallet does not hold enough USDT for this swap.'
         : /already in flight/i.test(m) ? 'That call is already on its way, so nothing was sent twice.'
           : 'The wallet did not finish, so nothing has moved.';
@@ -4282,10 +4365,20 @@ contract CleanSwapHTLC {
   }
 
   /* ------------------------------------------------------------- gate UI -- */
-  var gateTimer;
+  /* The gate reads the chain, so the answer comes back after the keystroke
+     that asked for it. A generation token is taken when the read is scheduled:
+     a validation that was already on its way when newer input arrived is
+     dropped here instead of painting its answer - an older invoice's verdict
+     must never overwrite the gate the newer input earned. */
+  var gateTimer, gateGen = 0;
   function refreshGate() {
     clearTimeout(gateTimer);
-    gateTimer = setTimeout(function () { validate().then(paintGate); }, 60);
+    var gen = ++gateGen;
+    gateTimer = setTimeout(function () {
+      validate().then(function (r) {
+        if (gen === gateGen) paintGate(r);
+      });
+    }, 60);
   }
 
   function paintGate(r) {
@@ -4330,6 +4423,22 @@ contract CleanSwapHTLC {
       ' \u00b7 invoice ends ' + (invoiceExpiry(r.dec) == null ? 'never' : clock(invoiceExpiry(r.dec))));
   }
 
+  /* Approve puts the terms of a swap together in steps: the window first, then
+     the invoice, the address and the amount, and only then does it ask the
+     chain. A refusal in the middle would otherwise leave half a swap behind: a
+     window with nothing locked under it, an amount with no invoice, a hash no
+     invoice names - and the next tap would build its swap on those leftovers.
+     Everything the refused tap had put together is dropped here, so a swap
+     that never started leaves no terms of its own. The terms a code brought
+     stay: the partner's sats, the window the code named and the hash it pinned
+     are not this tap's doing, and Back is what clears those. */
+  function dropSwapTerms() {
+    S.t1 = null; S.t2 = null;
+    S.units = null; S.inv = ''; S.invDec = null;
+    S.addr = ''; S.H = null; S.basis = null;
+    log('RESET', 'the refused tap left no swap terms behind');
+  }
+
   function approve() {
     if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
     if (S.phase === 'paying') { paid(); return; }
@@ -4353,9 +4462,11 @@ contract CleanSwapHTLC {
       }
       if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
       /* Last look at the clock: nothing is approved on a window that has
-         already closed or is about to. */
+         already closed or is about to. The tap had already built part of the
+         swap - the window it set is dropped with the rest. */
       var wp = windowProblem(r.dec, S.t2);
       if (wp) {
+        dropSwapTerms();
         log('BLOCK', wp, 'c-err');
         render();
         toast(wp);
@@ -4371,7 +4482,13 @@ contract CleanSwapHTLC {
       /* Practice rehearses the same gates against a stand-in escrow. Wallet
          mode moves real USDT and the chain has the last word. */
       return startSwap();
-    }).then(opEnd, function (e) { opEnd(); walletFail(e); });
+    }).then(opEnd, function (e) {
+      opEnd();
+      /* A tap that never got the swap going leaves no terms of its own: what
+         it had half-built is dropped before the refusal is explained. */
+      if (S.phase === 'idle') dropSwapTerms();
+      walletFail(e);
+    });
   }
 
   /* ------------------------------------------------- the rehearsal escrow --
@@ -5086,8 +5203,40 @@ contract CleanSwapHTLC {
   var fromUrl = parseSwapCode(String(location.search) + ' ' + String(location.hash));
   if (fromUrl) applyCode(String(location.search) + ' ' + String(location.hash));
 
+  /* What this page leaves on the window. The host shell needs one entry -
+     `acceptCode`, to hand a swap code over from another app - and the page's
+     own verification suites drive the rest through the same handle. The state
+     is shared as a view, not as the object itself: the view answers every
+     field the suites and a host may watch or set for a test, but keeps the
+     one thing on this page worth stealing out of the window entirely -
+     this side's payment secret, the 32 bytes that open the escrow leg. The
+     app itself reads its state through the closure, so the guard costs the
+     page nothing and the secret never crosses it. Every other export is
+     either an action the page's own buttons call or a pure helper whose code
+     ships in the same file anyone can download. */
+  function guardedState() {
+    return new Proxy(S, {
+      get: function (o, k) { return k === 'secret' ? undefined : o[k]; },
+      has: function (o, k) { return k !== 'secret' && k in o; },
+      ownKeys: function (o) {
+        return Reflect.ownKeys(o).filter(function (k) { return k !== 'secret'; });
+      },
+      getOwnPropertyDescriptor: function (o, k) {
+        return k === 'secret' ? undefined : Reflect.getOwnPropertyDescriptor(o, k);
+      },
+      set: function (o, k, v) { if (k === 'secret') return false; o[k] = v; return true; },
+      deleteProperty: function (o, k) { if (k === 'secret') return false; delete o[k]; return true; },
+      defineProperty: function (o, k, d) {
+        if (k === 'secret') return false;
+        Object.defineProperty(o, k, d);
+        return true;
+      }
+    });
+  }
+
   window.CLEANSWAP = {
-    state: S, SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
+    state: guardedState(), acceptCode: function (t) { return applyCode(t); }, applyCode: applyCode,
+    SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
     T2_MIN: T2_MIN, T2_MAX: T2_MAX, T1_MARGIN: T1_MARGIN, PAY_MARGIN: PAY_MARGIN,
     b64field: b64field, unB64field: unB64field,
     BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
@@ -5112,7 +5261,6 @@ contract CleanSwapHTLC {
     escrowUnits: escrowUnits, usdtUnits: usdtUnits, usdtTxt: usdtTxt, tokenNow: tokenNow,
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
     rateGap: rateGap, RATE_WARN: RATE_WARN, ZERO_ID: ZERO_ID,
-    applyCode: applyCode, acceptCode: function (t) { return applyCode(t); },
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
     approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
     checkChain: checkChain, settleByChain: settleByChain, loadTx: loadTx,

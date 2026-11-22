@@ -21,7 +21,19 @@
    settling on the same hash), the QR clearing the fixed Approve bar, layout at
    360x780 / 390x844 / 1280x800 including the waiting screen, the protocol
    vectors (SHA-256 both ways, Base58Check, abi.encodePacked swap id, bech32,
-   BOLT11, BOLT12), and a Hangul-free, jargon-free screen. Writes shots/v43-*.
+   BOLT11, BOLT12), and a Hangul-free, jargon-free screen. Later passes add:
+   the head read from every endpoint with the highest standing, one escrow,
+   token and endpoint list per network, the fourth through sixth review items
+   (a lock funded by a smart contract wallet, terms with no swap code, a rate
+   warning on a stranger's code, one tap one operation, Back leaving the last
+   swap behind, two disagreeing endpoints never read as ready). And the seventh
+   pass: the same RPC URL typed twice counted once, so one node cannot stand in
+   for two; a wallet that moves to another network between the switch and the
+   signature refused before the call is sent; an approve refused before the
+   swap leaving no window, hash, amount or address behind; a validation still
+   on the chain when newer input arrives never painting over the newer gate;
+   and the payment secret absent from the window the page shares with its host.
+   Writes shots/v43-*.
 */
 const path = require('path');
 const fs = require('fs');
@@ -200,7 +212,8 @@ const CHAIN = {
   calls: [],                          /* every method the page asked for */
   down: false,                        /* flip to make the endpoint refuse */
   headSkew: 0,                        /* how many blocks the second endpoint is ahead */
-  nohtlc: false                       /* flip to make the address answer like some other contract */
+  nohtlc: false,                      /* flip to make the address answer like some other contract */
+  slowBlock: 0                        /* one-shot: delay the next head read by this many ms */
 };
 function hexWord(v) { return BigInt(v).toString(16).padStart(64, '0'); }
 function hexAddr(a) { return String(a).replace(/^0x/, '').toLowerCase().padStart(64, '0'); }
@@ -253,6 +266,10 @@ const chainServer = http.createServer((req, res) => {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'content-type'
   };
+  const answer = (j) => {
+    res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: chainJson(j) }));
+  };
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
   let body = '';
   req.on('data', (c) => { body += c; });
@@ -262,8 +279,16 @@ const chainServer = http.createServer((req, res) => {
     try { j = JSON.parse(body); } catch (e) { j = null; }
     if (!j) { res.writeHead(400, cors); res.end('{}'); return; }
     CHAIN.calls.push({ method: j.method, params: j.params || [] });
-    res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
-    res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: chainJson(j) }));
+    /* A one-shot slow head read: the gate-race test needs a validation that is
+       still on the chain when newer input arrives, and a real node can take
+       its time exactly like this. */
+    if (CHAIN.slowBlock && j.method === 'eth_getBlockByNumber') {
+      const ms = CHAIN.slowBlock;
+      CHAIN.slowBlock = 0;
+      setTimeout(() => answer(j), ms);
+      return;
+    }
+    answer(j);
   });
 });
 
@@ -1156,6 +1181,10 @@ const view = (pg) => pg.evaluate(() => {
   w = await view(p5);
   check('claim: a secret that does not hash to the swap is refused', /does not open this swap/.test(w.toast), w.toast);
   check('claim: and the swap is still not finished', w.phase === 'paid' && !w.receipt, w.phase);
+  check('claim: the secret the page itself holds never reaches the window',
+    await p5.evaluate(() => window.CLEANSWAP.state.secret === undefined &&
+      !('secret' in window.CLEANSWAP.state) &&
+      Object.keys(window.CLEANSWAP.state).indexOf('secret') === -1));
 
   CHAIN.records[id5.toLowerCase()].claimed = true;
   await p5.click('#primary');
@@ -3160,6 +3189,228 @@ const view = (pg) => pg.evaluate(() => {
     wcAfter.t2 === null && wcAfter.expectH === null, JSON.stringify(wcAfter));
   check('one call: no page errors through the claim and Back', wcErrs.length === 0, wcErrs.join(' | '));
   await WC.close();
+
+  /* ------------- 12. v0.6.7: one endpoint is one answer, a chain read again,
+     no half a swap left behind, and a window without the secret ---------- */
+
+  /* (a) The cross-check counts endpoints, not strings: the same RPC URL typed
+     twice - padded, re-cased, trailing slash - is still one node, and two
+     answers from one node must never pass for two nodes agreeing. */
+  const DQ = await freshPage(390, 844);
+  const dq = DQ.p;
+  await dq.click('#modeWallet');
+  await dq.waitForTimeout(250);
+  const dedup = await dq.evaluate((rpc) => {
+    const C = window.CLEANSWAP;
+    C.state.rpc = '  ' + rpc.toUpperCase() + '/  , ' + rpc + ' , ' + rpc + '/';
+    const same = C.endpoints();
+    C.state.rpc = rpc + ' , http://127.0.0.1:9';
+    const two = C.endpoints();
+    C.state.rpc = '';
+    return { same: same.length, sameList: same, two: two.length };
+  }, RPC);
+  check('dedup: the same endpoint spelled three ways is one endpoint',
+    dedup.same === 1, JSON.stringify(dedup.sameList));
+  check('dedup: a second, different endpoint still counts', dedup.two === 2, String(dedup.two));
+  const dqQuorum = await dq.evaluate(async (rpc) => {
+    const C = window.CLEANSWAP;
+    C.state.rpc = rpc + '  ,  ' + rpc.toUpperCase() + '/';
+    await C.rpcQuorum('eth_chainId', []);
+    const out = { n: C.endpoints().length, quorum: C.state.quorum };
+    C.state.rpc = '';
+    return out;
+  }, RPC);
+  check('dedup: two copies of one URL cannot stand in for a cross-check',
+    dqQuorum.n === 1 && dqQuorum.quorum === 'single', JSON.stringify(dqQuorum));
+  check('dedup: no page errors', DQ.errs.length === 0, DQ.errs.join(' | '));
+  await DQ.c.close();
+
+  /* (b) The chain a call lands on is the chain the wallet is on when it signs.
+     This wallet answers the first three chain reads with the right network,
+     and from the fourth on it is on another one: the switch happened between
+     the approval and the lock. The lock must be refused, not signed there. */
+  const FLIP = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ACCOUNT2 = '0xc0ffee0000000000000000000000000000000002';
+  await FLIP.addInitScript((acct) => {
+    window.__chainReads = 0;
+    window.__walletCalls = [];
+    window.ethereum = {
+      request: function (o) {
+        const p = o.params || [];
+        if (o.method === 'eth_chainId') {
+          window.__chainReads++;
+          return Promise.resolve(window.__chainReads < 4 ? '0x66eee' : '0x1');
+        }
+        if (o.method === 'eth_accounts' || o.method === 'eth_requestAccounts') return Promise.resolve([acct]);
+        if (o.method === 'eth_sendTransaction') {
+          const h = '0x' + String(window.__walletCalls.length + 1).padStart(64, '0');
+          window.__walletCalls.push({ to: p[0].to, data: p[0].data, hash: h });
+          return Promise.resolve(h);
+        }
+        return Promise.reject(new Error('unexpected ' + o.method));
+      }
+    };
+  }, ACCOUNT2);
+  const fp = await FLIP.newPage();
+  const flipErrs = [];
+  fp.on('pageerror', e => flipErrs.push(e.message));
+  fp.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) flipErrs.push(m.text()); });
+  await fp.goto(URL, { waitUntil: 'load' });
+  await fp.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await fp.click('#modeWallet');
+  await fp.click('#swapDir');
+  await fp.waitForTimeout(250);
+  const flipInv = await fp.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '7c'.repeat(32), sats: 50000, expiry: 6 * 3600 }));
+  await fp.fill('#addrIn', PARTNER);
+  await fp.fill('#invIn', flipInv);
+  await fp.click('#chainRow');
+  await fp.fill('#contractIn', CONTRACT);
+  await fp.fill('#tokenIn', TOKEN);
+  await fp.fill('#rpcIn', RPC);
+  await fp.click('[data-act="saveSetup"]');
+  await fp.waitForTimeout(900);
+  await fp.click('#chainRow');
+  await fp.waitForTimeout(200);
+  const flipHash = '0x' + '01'.padStart(64, '0');
+  CHAIN.receipts[flipHash] = { status: '0x1' };
+  await fp.click('#primary');
+  await fp.waitForTimeout(2500);
+  const flipCalls = await fp.evaluate(() => window.__walletCalls);
+  const flipLocks = flipCalls.filter(c => String(c.data).toLowerCase().startsWith('0x91644b2b'));
+  const flipApproves = flipCalls.filter(c => String(c.data).toLowerCase().startsWith('0x095ea7b3'));
+  check('chain: the approval went out while the wallet was still on the chain',
+    flipApproves.length === 1, flipCalls.length + ' sends');
+  check('chain: the lock is refused once the wallet has moved to another network',
+    flipLocks.length === 0 && (await fp.evaluate(() => String(window.CLEANSWAP.state.lockTx))) === '',
+    flipLocks.length + ' locks');
+  const flipW = await view(fp);
+  check('chain: the refusal says what happened and what to do',
+    /another network/.test(flipW.toast) ||
+    (await fp.evaluate(() => window.CLEANSWAP.state.log.some(e => /another network/.test(e.text)))),
+    flipW.toast);
+  check('chain: no page errors through the refused lock', flipErrs.length === 0, flipErrs.join(' | '));
+  delete CHAIN.receipts[flipHash];
+  await fp.screenshot({ path: path.join(SHOTS, 'v63-chain-flip.png') });
+  await FLIP.close();
+
+  /* (c) An approve that is refused before the swap starts leaves nothing of
+     itself behind: the window it set, the invoice it read and the amount it
+     priced are dropped, so the next tap builds its swap from what it finds,
+     not from the refused one's leftovers. */
+  const PS = await freshPage(390, 844);
+  const pps = PS.p;
+  await pps.click('#modeWallet');
+  await pps.click('#swapDir');
+  await pps.waitForTimeout(250);
+  const ppsInv = await pps.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '8b'.repeat(32), sats: 50000, expiry: 6 * 3600 }));
+  await pps.fill('#addrIn', PARTNER);
+  await pps.fill('#invIn', ppsInv);
+  await pps.click('#chainRow');
+  await pps.fill('#contractIn', CONTRACT);
+  await pps.fill('#tokenIn', TOKEN);
+  await pps.fill('#rpcIn', RPC);
+  await pps.click('[data-act="saveSetup"]');
+  await pps.waitForTimeout(900);
+  await pps.click('#chainRow');
+  await pps.waitForTimeout(200);
+  CHAIN.nohtlc = true;
+  await pps.click('#primary');
+  await pps.waitForTimeout(2500);
+  const ppsAfter = await pps.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { phase: S.phase, H: S.H, t2: S.t2, units: S.units, inv: S.inv, addr: S.addr, dec: S.invDec };
+  });
+  check('partial: an approve refused before the swap says why',
+    /not the swap contract/.test((await view(pps)).toast), (await view(pps)).toast);
+  check('partial: and it leaves no window, hash, amount or address behind',
+    ppsAfter.phase === 'idle' && ppsAfter.H === null && ppsAfter.t2 === null &&
+    ppsAfter.units === null && ppsAfter.inv === '' && ppsAfter.addr === '' && ppsAfter.dec === null,
+    JSON.stringify(ppsAfter));
+  const ppsAgain = await pps.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { log: S.log.filter(e => /no swap terms behind/.test(e.text)).length };
+  });
+  check('partial: the drop is said in the log', ppsAgain.log >= 1, String(ppsAgain.log));
+  check('partial: no page errors through the refused approve', PS.errs.length === 0, PS.errs.join(' | '));
+  CHAIN.nohtlc = false;
+  await pps.screenshot({ path: path.join(SHOTS, 'v63-partial-drop.png') });
+  await PS.c.close();
+
+  /* (d) The gate reads the chain, so its answer comes home after the
+     keystroke that asked for it. One validation is sent on its way with the
+     head read delayed; newer input arrives and asks again. When the slow
+     answer comes home it must not paint over the newer gate. */
+  const GR = await freshPage(390, 844);
+  const gr = GR.p;
+  await gr.click('#modeWallet');
+  await gr.click('#swapDir');
+  await gr.waitForTimeout(250);
+  const grInv = await gr.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '6e'.repeat(32), sats: 50000, expiry: 6 * 3600 }));
+  await gr.fill('#addrIn', PARTNER);
+  await gr.fill('#invIn', grInv);
+  await gr.click('#chainRow');
+  await gr.fill('#contractIn', CONTRACT);
+  await gr.fill('#tokenIn', TOKEN);
+  await gr.fill('#rpcIn', RPC);
+  await gr.click('[data-act="saveSetup"]');
+  await gr.waitForTimeout(900);
+  await gr.click('#chainRow');
+  await gr.waitForTimeout(200);
+  CHAIN.slowBlock = 800;
+  await gr.evaluate(() => {
+    const C = window.CLEANSWAP;
+    C.state.blockTsAt = 0;                        /* the next head read goes to the chain */
+    document.getElementById('invIn').value = 'not an invoice at all';
+    C.refreshGate();
+  });
+  await gr.waitForTimeout(300);                   /* the first validation is on the chain now */
+  await gr.fill('#invIn', grInv);                 /* newer input, newer gate */
+  await gr.waitForTimeout(1400);                  /* the slow, stale answer comes home */
+  const grGate = await gr.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { ok: !!(S.gate && S.gate.ok), code: S.gate && S.gate.code, say: document.getElementById('say').textContent };
+  });
+  check('gate: a stale validation never paints over newer input',
+    grGate.ok === true && grGate.code === 'ok' && /ready/i.test(grGate.say),
+    JSON.stringify({ ok: grGate.ok, code: grGate.code, say: grGate.say }));
+  check('gate: no page errors through the race', RG.errs.length === 0, RG.errs.join(' | '));
+  await gr.screenshot({ path: path.join(SHOTS, 'v63-gate-race.png') });
+  await RG.c.close();
+
+  /* (e) What the page leaves on the window is what a host shell and the
+     suites need: the code hand-off and the verification hooks. The payment
+     secret is on neither list - the page holds it, the window does not. */
+  const GW = await freshPage(390, 844);
+  const gw = GW.p;
+  const guard = await gw.evaluate(() => {
+    const C = window.CLEANSWAP, S = C.state;
+    return {
+      secret: S.secret,
+      hasSecret: 'secret' in S,
+      keysHasSecret: Object.keys(S).indexOf('secret') !== -1,
+      jsonHasSecret: JSON.stringify(S).indexOf('"secret"') !== -1,
+      hasAcceptCode: typeof C.acceptCode === 'function',
+      isProxy: typeof Reflect !== 'undefined' && !!S.log
+    };
+  });
+  check('guard: the payment secret is not on the window, by name or by key',
+    guard.secret === undefined && guard.hasSecret === false &&
+    guard.keysHasSecret === false && guard.jsonHasSecret === false,
+    JSON.stringify({ has: guard.hasSecret, keys: guard.keysHasSecret, json: guard.jsonHasSecret }));
+  check('guard: the shell\'s code hand-off is on the window', guard.hasAcceptCode === true);
+  check('guard: the state the suites watch still answers', guard.isProxy === true);
+  const gwSet = await gw.evaluate(() => {
+    const C = window.CLEANSWAP;
+    const was = C.state.sats;
+    C.state.sats = 75000;
+    const now = C.state.sats;
+    C.state.sats = was;
+    return { was: was, now: now };
+  });
+  check('guard: the view the suites drive still reaches the page',
+    gwSet.now === 75000, JSON.stringify(gwSet));
+  check('guard: no page errors on the guarded window', GW.errs.length === 0, GW.errs.join(' | '));
+  await GW.c.close();
 
   await browser.close();
 

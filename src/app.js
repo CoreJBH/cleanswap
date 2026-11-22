@@ -590,10 +590,28 @@
   }
   /* Setup takes one endpoint or several, separated by commas or spaces. More
      than one is a cross-check: the escrow is only believed when two of them
-     answer the same thing. */
+     answer the same thing.
+
+     The list is deduplicated before it is used, because the cross-check counts
+     answers, not strings: the same URL typed twice - padded with a space, a
+     trailing slash, or spelled in another case - is still one node, and two
+     answers from one node would let that node alone decide what the escrow
+     says. The comparison is on the trimmed, lower-cased address with a
+     trailing slash dropped, which is the same endpoint however it is spelled;
+     the spelling the person typed is what the list keeps, so the calls and the
+     wallet's chain setup still go to the address as it was written. */
+  function endpointKey(u) {
+    return String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  }
   function endpointList(raw) {
-    var parts = String(raw == null ? '' : raw).split(/[\s,]+/), out = [], i;
-    for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+    var parts = String(raw == null ? '' : raw).split(/[\s,]+/), out = [], seen = {}, i, k;
+    for (i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      k = endpointKey(parts[i]);
+      if (seen[k]) continue;
+      seen[k] = true;
+      out.push(parts[i]);
+    }
     return out;
   }
   function endpointsOk(raw) {
@@ -1222,6 +1240,21 @@
         });
     });
   }
+  /* The chain a transaction lands on is the chain the wallet is on at the
+     moment it signs, not the one it was on when it was asked to switch. Between
+     the switch request and the signature a person can change networks in the
+     wallet, and the same calldata on another chain is a call to whatever
+     contract holds that address there. So the chain is read again immediately
+     before every send, and a mismatch refuses the send instead of signing on
+     the wrong chain. */
+  function assertChain(p) {
+    return p.request({ method: 'eth_chainId' }).then(function (id) {
+      if (String(id || '').toLowerCase() === curChain().chainHex) return true;
+      var e = new Error('the wallet is on another network now');
+      e.chainSwitched = true;
+      throw e;
+    });
+  }
   function walletSend(to, data) {
     var p = provider();
     if (!p) return Promise.reject(new Error('no wallet in this page'));
@@ -1236,7 +1269,9 @@
         var from = accts && accts[0];
         if (!from) throw new Error('the wallet shared no account');
         S.me = String(from);
-        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: to, data: data, value: '0x0' }] });
+        return assertChain(p).then(function () {
+          return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: to, data: data, value: '0x0' }] });
+        });
       })
       .then(function (h) { S.sending = false; return h; }, function (e) { S.sending = false; throw e; });
   }
@@ -1328,6 +1363,7 @@
     return chainProbe().then(function () {
       if (S.rpcState === 'nocon') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'nothing answers at the escrow address', 'c-err');
         openSetup();
         toast('No contract answers at that address');
@@ -1335,6 +1371,7 @@
       }
       if (S.rpcState === 'nohtlc') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'that address is not the swap contract, so nothing is approved', 'c-err');
         openSetup();
         toast('That address is not the swap contract');
@@ -1342,12 +1379,14 @@
       }
       if (S.rpcState === 'bad') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'the chain did not answer, so nothing is approved', 'c-err');
         toast('The chain did not answer. Nothing was approved.');
         return null;
       }
       if (S.rpcState === 'unclear') {
         busy(false);
+        dropSwapTerms();
         log('BLOCK', 'the endpoints disagree about the escrow, so nothing is approved', 'c-err');
         toast('The two endpoints disagree about the escrow. Nothing was approved.');
         return null;
@@ -1360,14 +1399,17 @@
       var st = c.state;
       if (st === 'claimed') { settleByChain(c); return; }
       if (st === 'refunded') { wentBack(c); return; }
-      if (st === 'error') { blockChain(c); return; }
+      if (st === 'error') { blockChain(c); dropSwapTerms(); return; }
       if (S.direction === 'btc2u') {
         if (st === 'locked') { beginPaying(c); return; }
-        blockChain(c);                 /* 'none' or 'mismatch': the USDT is not there yet */
+        /* 'none' is not a refusal: the partner has not locked yet, and the
+           terms are what both sides are converging on. They stay, so the next
+           tap reads the same escrow the first one described. */
+        blockChain(c);
         return;
       }
       if (st === 'locked' || st === 'closed') { lockedMine(c); return; }   /* already locked: pick it up from here */
-      if (st === 'mismatch') { blockChain(c); return; }
+      if (st === 'mismatch') { blockChain(c); dropSwapTerms(); return; }
       beginLocking();
     });
   }
@@ -1407,11 +1449,15 @@
        zero first and the new one is then exact. */
     function approveTo(v, why) {
       log('APPROVE', why);
-      return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, v), value: '0x0' }] })
-        .then(function (h) {
-          if (!h) throw new Error('the wallet sent nothing');
-          return waitReceipt(h);
-        });
+      /* The chain is read once more here, because the approval was asked for
+         some time after the switch: a wallet moved to another network in
+         between would put the allowance on that chain's contract instead. */
+      return assertChain(p).then(function () {
+        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, v), value: '0x0' }] });
+      }).then(function (h) {
+        if (!h) throw new Error('the wallet sent nothing');
+        return waitReceipt(h);
+      });
     }
     busy(true);
     ensureChain(p)
@@ -1419,10 +1465,15 @@
       .then(function (accts) {
         S.me = accts && accts[0] ? String(accts[0]) : '';
         if (!S.me) throw new Error('the wallet shared no account');
-        /* What the token already allows is a state the money depends on, so it
-           is read the way the escrow is: every endpoint, and two answers that
-           agree before either is believed. */
-        return rpcQuorum('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
+        /* The switch was requested a moment ago; the wallet is read again
+           before anything is asked of it, so a person who changed networks in
+           that moment is stopped before an approval goes out. */
+        return assertChain(p).then(function () {
+          /* What the token already allows is a state the money depends on, so it
+             is read the way the escrow is: every endpoint, and two answers that
+             agree before either is believed. */
+          return rpcQuorum('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
+        });
       })
       .then(function (raw) {
         var w = abiWords(raw);
@@ -1436,7 +1487,13 @@
       })
       .then(function () {
         log('LOCK', 'the wallet is asked for the lock');
-        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: S.contract, data: lockCall().data, value: '0x0' }] });
+        /* The last look before the money moves: between the approval and this
+           call the wallet can be switched to another network, and the same
+           lock calldata there is a lock on that chain's contract at this
+           chain's escrow address - or on nothing. */
+        return assertChain(p).then(function () {
+          return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: S.contract, data: lockCall().data, value: '0x0' }] });
+        });
       })
       .then(function (h) {
         if (!h) throw new Error('the wallet sent nothing');
@@ -1466,7 +1523,9 @@
 
   function walletFail(e) {
     var m = String((e && e.message) || e || '');
-    var say = /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
+    var say = (e && e.chainSwitched) ? 'Your wallet moved to another network, so nothing was sent. Switch it back to ' +
+        curChain().label + ', then tap again.'
+      : /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
       : /insufficient|balance|allowance/i.test(m) ? 'That wallet does not hold enough USDT for this swap.'
         : /already in flight/i.test(m) ? 'That call is already on its way, so nothing was sent twice.'
           : 'The wallet did not finish, so nothing has moved.';
@@ -3163,10 +3222,20 @@
   }
 
   /* ------------------------------------------------------------- gate UI -- */
-  var gateTimer;
+  /* The gate reads the chain, so the answer comes back after the keystroke
+     that asked for it. A generation token is taken when the read is scheduled:
+     a validation that was already on its way when newer input arrived is
+     dropped here instead of painting its answer - an older invoice's verdict
+     must never overwrite the gate the newer input earned. */
+  var gateTimer, gateGen = 0;
   function refreshGate() {
     clearTimeout(gateTimer);
-    gateTimer = setTimeout(function () { validate().then(paintGate); }, 60);
+    var gen = ++gateGen;
+    gateTimer = setTimeout(function () {
+      validate().then(function (r) {
+        if (gen === gateGen) paintGate(r);
+      });
+    }, 60);
   }
 
   function paintGate(r) {
@@ -3211,6 +3280,22 @@
       ' \u00b7 invoice ends ' + (invoiceExpiry(r.dec) == null ? 'never' : clock(invoiceExpiry(r.dec))));
   }
 
+  /* Approve puts the terms of a swap together in steps: the window first, then
+     the invoice, the address and the amount, and only then does it ask the
+     chain. A refusal in the middle would otherwise leave half a swap behind: a
+     window with nothing locked under it, an amount with no invoice, a hash no
+     invoice names - and the next tap would build its swap on those leftovers.
+     Everything the refused tap had put together is dropped here, so a swap
+     that never started leaves no terms of its own. The terms a code brought
+     stay: the partner's sats, the window the code named and the hash it pinned
+     are not this tap's doing, and Back is what clears those. */
+  function dropSwapTerms() {
+    S.t1 = null; S.t2 = null;
+    S.units = null; S.inv = ''; S.invDec = null;
+    S.addr = ''; S.H = null; S.basis = null;
+    log('RESET', 'the refused tap left no swap terms behind');
+  }
+
   function approve() {
     if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
     if (S.phase === 'paying') { paid(); return; }
@@ -3234,9 +3319,11 @@
       }
       if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
       /* Last look at the clock: nothing is approved on a window that has
-         already closed or is about to. */
+         already closed or is about to. The tap had already built part of the
+         swap - the window it set is dropped with the rest. */
       var wp = windowProblem(r.dec, S.t2);
       if (wp) {
+        dropSwapTerms();
         log('BLOCK', wp, 'c-err');
         render();
         toast(wp);
@@ -3252,7 +3339,13 @@
       /* Practice rehearses the same gates against a stand-in escrow. Wallet
          mode moves real USDT and the chain has the last word. */
       return startSwap();
-    }).then(opEnd, function (e) { opEnd(); walletFail(e); });
+    }).then(opEnd, function (e) {
+      opEnd();
+      /* A tap that never got the swap going leaves no terms of its own: what
+         it had half-built is dropped before the refusal is explained. */
+      if (S.phase === 'idle') dropSwapTerms();
+      walletFail(e);
+    });
   }
 
   /* ------------------------------------------------- the rehearsal escrow --
@@ -3967,8 +4060,40 @@
   var fromUrl = parseSwapCode(String(location.search) + ' ' + String(location.hash));
   if (fromUrl) applyCode(String(location.search) + ' ' + String(location.hash));
 
+  /* What this page leaves on the window. The host shell needs one entry -
+     `acceptCode`, to hand a swap code over from another app - and the page's
+     own verification suites drive the rest through the same handle. The state
+     is shared as a view, not as the object itself: the view answers every
+     field the suites and a host may watch or set for a test, but keeps the
+     one thing on this page worth stealing out of the window entirely -
+     this side's payment secret, the 32 bytes that open the escrow leg. The
+     app itself reads its state through the closure, so the guard costs the
+     page nothing and the secret never crosses it. Every other export is
+     either an action the page's own buttons call or a pure helper whose code
+     ships in the same file anyone can download. */
+  function guardedState() {
+    return new Proxy(S, {
+      get: function (o, k) { return k === 'secret' ? undefined : o[k]; },
+      has: function (o, k) { return k !== 'secret' && k in o; },
+      ownKeys: function (o) {
+        return Reflect.ownKeys(o).filter(function (k) { return k !== 'secret'; });
+      },
+      getOwnPropertyDescriptor: function (o, k) {
+        return k === 'secret' ? undefined : Reflect.getOwnPropertyDescriptor(o, k);
+      },
+      set: function (o, k, v) { if (k === 'secret') return false; o[k] = v; return true; },
+      deleteProperty: function (o, k) { if (k === 'secret') return false; delete o[k]; return true; },
+      defineProperty: function (o, k, d) {
+        if (k === 'secret') return false;
+        Object.defineProperty(o, k, d);
+        return true;
+      }
+    });
+  }
+
   window.CLEANSWAP = {
-    state: S, SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
+    state: guardedState(), acceptCode: function (t) { return applyCode(t); }, applyCode: applyCode,
+    SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
     T2_MIN: T2_MIN, T2_MAX: T2_MAX, T1_MARGIN: T1_MARGIN, PAY_MARGIN: PAY_MARGIN,
     b64field: b64field, unB64field: unB64field,
     BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
@@ -3993,7 +4118,6 @@
     escrowUnits: escrowUnits, usdtUnits: usdtUnits, usdtTxt: usdtTxt, tokenNow: tokenNow,
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
     rateGap: rateGap, RATE_WARN: RATE_WARN, ZERO_ID: ZERO_ID,
-    applyCode: applyCode, acceptCode: function (t) { return applyCode(t); },
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
     approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
     checkChain: checkChain, settleByChain: settleByChain, loadTx: loadTx,

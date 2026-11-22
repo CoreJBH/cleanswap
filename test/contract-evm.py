@@ -12,6 +12,7 @@ Requires: solc (SOLC env var or .tools/solc-*), plus eth-tester, py-evm and eth-
     pip install --target .tools/py eth-tester py-evm eth-abi eth-utils
     PYTHONPATH=.tools/py python3 test/contract-evm.py
 """
+import ast
 import glob
 import json
 import os
@@ -94,6 +95,31 @@ def revert_reason(to, sig, types, args, frm):
     return 'revert: status 0' if rc.get('status', 1) == 0 else 'no revert'
 
 
+def revert_data(to, sig, types, args, frm):
+    """The revert data a static call returns, read through eth-tester's own
+    `call`. eth-tester reports that data as the bytes' repr, so it is decoded
+    here: a Panic(uint256) is the 4-byte selector 0x4e487b71 followed by the
+    panic code, which is how the tests tell an arithmetic panic from the
+    contract's own errors."""
+    data = '0x' + (selector(sig) + abi_encode(types, args)).hex()
+    try:
+        t.call({'from': frm, 'to': to, 'data': data})
+    except TransactionFailed as e:
+        try:
+            raw = ast.literal_eval(str(e))
+            return raw if isinstance(raw, bytes) else str(raw).encode('utf-8', 'ignore')
+        except (ValueError, SyntaxError):
+            return str(e).encode('utf-8', 'ignore')
+    return None
+
+
+PANIC_SELECTOR = b'\x4e\x48\x7b\x71'
+
+
+def is_panic(raw):
+    return raw is not None and raw[:4] == PANIC_SELECTOR
+
+
 def deploy(art, frm):
     tx = t.send_transaction({'from': frm, 'data': '0x' + art['bin'], 'gas': 4000000})
     return t.get_transaction_receipt(tx)['contract_address']
@@ -112,7 +138,7 @@ arts = compile_contracts()
 accounts = t.get_accounts()
 taker, maker = accounts[1], accounts[2]
 concrete = {k: v for k, v in arts.items() if v['bin']}
-check('solc: every contract compiled to bytecode', len(concrete) == 5 and 'CleanSwapHTLC' in concrete,
+check('solc: every contract compiled to bytecode', len(concrete) == 6 and 'CleanSwapHTLC' in concrete,
       ', '.join('%s %dB' % (k, len(v['bin']) // 2) for k, v in concrete.items()))
 
 usdt = deploy(arts['TestUSDT'], accounts[0])
@@ -281,6 +307,50 @@ self_pay = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
                          [H, now() + 3600, htlc, usdt, amount], taker)
 check('lock: a receiver that is the escrow itself is refused (ReceiverIsEscrow)',
       'revert' in self_pay.lower(), self_pay[:60])
+
+# ---- tokens that are not tokens --------------------------------------------
+# The token address is a stranger's word for a contract. An account with no
+# code answers no balance and "succeeds" at every call, so the escrow refuses
+# it by name before anything is read or moved - and a rebasing token that
+# shrinks a balance between the escrow's two reads is refused with its own
+# error instead of the subtraction's arithmetic panic.
+LOCK_SIG = 'lock(bytes32,uint256,address,address,uint256)'
+LOCK_TYPES = ['bytes32', 'uint256', 'address', 'address', 'uint256']
+
+no_code = revert_reason(htlc, LOCK_SIG, LOCK_TYPES,
+                        [H, now() + 3600, maker, '0x' + 'ab' * 20, amount], taker)
+check('lock: an address with no code is refused as a token (TokenHasNoCode)',
+      'revert' in no_code.lower(), no_code[:60])
+no_code_data = revert_data(htlc, LOCK_SIG, LOCK_TYPES,
+                           [H, now() + 3600, maker, '0x' + 'ab' * 20, amount], taker)
+check('lock: the no-code refusal is the contract\'s own error, not a panic',
+      no_code_data is not None and not is_panic(no_code_data)
+      and no_code_data[:4] == selector('TokenHasNoCode(address)'),
+      no_code_data[:8].hex() if no_code_data else 'no revert')
+
+rebase = deploy(arts['RebaseUSDT'], accounts[0])
+sender_reb = accounts[7]
+send(rebase, 'faucet()', [], [], sender_reb)
+# 200 moved in, halved on arrival: the escrow holds exactly 100 units of this
+# token before the lock - something a rebase can shrink below its old size.
+send(rebase, 'transfer(address,uint256)', ['address', 'uint256'], [htlc, 200], sender_reb)
+check('rebase: the escrow holds 100 units of the rebasing token',
+      view(rebase, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == 100,
+      str(view(rebase, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0]))
+send(rebase, 'approve(address,uint256)', ['address', 'uint256'], [htlc, 50], sender_reb)
+reb_lock = revert_reason(htlc, LOCK_SIG, LOCK_TYPES,
+                         [H, now() + 3600, maker, rebase, 50], sender_reb)
+check('lock: a rebasing token that shrinks the escrow balance is refused (BalanceShrank)',
+      'revert' in reb_lock.lower(), reb_lock[:60])
+reb_data = revert_data(htlc, LOCK_SIG, LOCK_TYPES,
+                       [H, now() + 3600, maker, rebase, 50], sender_reb)
+check('lock: the shrinking-balance refusal is a clean error, not an arithmetic panic',
+      reb_data is not None and not is_panic(reb_data)
+      and reb_data[:4] == selector('BalanceShrank(address,uint256,uint256)'),
+      reb_data[:8].hex() if reb_data else 'no revert')
+check('lock: the refused rebasing lock left the escrow\'s old balance whole',
+      view(rebase, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0] == 100,
+      str(view(rebase, 'balanceOf(address)', ['address'], [htlc], ['uint256'])[0]))
 
 # ---- reentrancy -------------------------------------------------------------
 # A token is a stranger's contract. This one calls back into the escrow in the

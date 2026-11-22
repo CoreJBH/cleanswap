@@ -231,3 +231,53 @@ contract QuietUSDT {
         emit Transfer(from, to, value);
     }
 }
+
+/// @title  RebaseUSDT
+/// @notice A rebasing token: every transfer also halves every balance, the way
+///         a negative rebase shrinks holders' balances without their asking.
+///         It exists to prove the escrow refuses a balance that shrinks between
+///         its two reads with a clean error of its own, instead of an EVM
+///         panic from the subtraction underneath.
+contract RebaseUSDT {
+    string public constant name = "Rebase Tether USD";
+    string public constant symbol = "BUSDT";
+    uint8 public constant decimals = 6;
+
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function faucet() external {
+        balanceOf[msg.sender] += 10_000 * 1e6;
+    }
+
+    function approve(address spender, uint256 value) external {
+        allowance[msg.sender][spender] = value;
+    }
+
+    function transfer(address to, uint256 value) external {
+        _move(msg.sender, to, value);
+        _halve(msg.sender, to);
+    }
+
+    function transferFrom(address from, address to, uint256 value) external {
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= value, "allowance");
+        allowance[from][msg.sender] = allowed - value;
+        _move(from, to, value);
+        _halve(from, to);
+    }
+
+    function _move(address from, address to, uint256 value) private {
+        require(balanceOf[from] >= value, "balance");
+        balanceOf[from] -= value;
+        balanceOf[to] += value;
+        emit Transfer(from, to, value);
+    }
+
+    function _halve(address a, address b) private {
+        balanceOf[a] /= 2;
+        balanceOf[b] /= 2;
+    }
+}

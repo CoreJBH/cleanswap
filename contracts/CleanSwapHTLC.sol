@@ -32,7 +32,10 @@ pragma solidity ^0.8.26;
 ///         time. Token movement goes through `_safeTransfer`/`_safeTransferFrom`,
 ///         which accept tokens that return no bool but refuse any transfer whose
 ///         actual balance movement differs from the agreed amount, so a
-///         fee-on-transfer token cannot quietly short the other side.
+///         fee-on-transfer token cannot quietly short the other side. The token
+///         itself must be a contract, and a rebasing token that shrinks a balance
+///         between the two reads is refused with its own error rather than an
+///         arithmetic panic.
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
@@ -98,6 +101,8 @@ contract CleanSwapHTLC {
     error EmptyHashlock();
     error ReceiverIsEscrow();
     error ReentrantCall();
+    error TokenHasNoCode(address token);
+    error BalanceShrank(address token, uint256 wasBalance, uint256 nowBalance);
     error TimelockTooSoon(uint256 timelock, uint256 minimum);
     error TimelockTooFar(uint256 timelock, uint256 maximum);
     error SwapExists(bytes32 swapId);
@@ -132,6 +137,13 @@ contract CleanSwapHTLC {
         if (hashlock == bytes32(0)) revert EmptyHashlock();
         if (receiver == address(0) || token == address(0)) revert ZeroAddress();
         if (receiver == address(this)) revert ReceiverIsEscrow();
+        /* The token address is a stranger's word for a contract. A call to an
+           account without code "succeeds" with no return value at all - which
+           the safe-transfer helpers would read as success - and its balance
+           reads answer nothing, so the mismatch would surface as a raw
+           EVM panic instead of a sentence. A token with no code is refused
+           here, by name. */
+        if (token.code.length == 0) revert TokenHasNoCode(token);
         uint256 minimum = block.timestamp + MIN_TIMELOCK_DELTA;
         if (timelock < minimum) revert TimelockTooSoon(timelock, minimum);
         uint256 maximum = block.timestamp + MAX_TIMELOCK_DELTA;
@@ -228,19 +240,31 @@ contract CleanSwapHTLC {
     /// @dev A transfer that refuses to move less than `amount`: the escrow's
     ///      own balance has to grow by exactly the agreed number of units.
     function _safeTransferFrom(address token, address from, uint256 amount) private {
-        uint256 before = IERC20(token).balanceOf(address(this));
+        uint256 was = IERC20(token).balanceOf(address(this));
         _callToken(token, abi.encodeWithSelector(IERC20.transferFrom.selector, from, address(this), amount));
-        uint256 moved = IERC20(token).balanceOf(address(this)) - before;
+        uint256 moved = _balanceMoved(token, address(this), was);
         if (moved != amount) revert TransferAmountMismatch(amount, moved);
     }
 
     /// @dev A transfer that refuses to deliver less than `amount`: the
     ///      destination's balance has to grow by exactly the agreed units.
     function _safeTransfer(address token, address to, uint256 amount) private {
-        uint256 before = IERC20(token).balanceOf(to);
+        uint256 was = IERC20(token).balanceOf(to);
         _callToken(token, abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
-        uint256 moved = IERC20(token).balanceOf(to) - before;
+        uint256 moved = _balanceMoved(token, to, was);
         if (moved != amount) revert TransferAmountMismatch(amount, moved);
+    }
+
+    /// @dev The balance movement a transfer is judged by. A rebasing token can
+    ///      shrink a balance between the two reads that bracket a transfer;
+    ///      the plain subtraction would then panic with an arithmetic
+    ///      underflow that says nothing about the cause. A shrinking balance
+    ///      is refused here as its own error, which says what happened and
+    ///      which token did it.
+    function _balanceMoved(address token, address who, uint256 was) private view returns (uint256) {
+        uint256 nowBalance = IERC20(token).balanceOf(who);
+        if (nowBalance < was) revert BalanceShrank(token, was, nowBalance);
+        return nowBalance - was;
     }
 
     /// @dev ERC-20 tokens that return nothing (USDT on some chains) are
