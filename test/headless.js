@@ -2227,6 +2227,29 @@ const view = (pg) => pg.evaluate(() => {
   await desktop.p.screenshot({ path: path.join(SHOTS, 'v43-desktop.png') });
   await desktop.c.close();
 
+  /* A setup saved by the first version named one network and no others. It is
+     read as the network it was written under, not copied into both. */
+  const legacyCtx = await freshPage(390, 844);
+  const legacy = await legacyCtx.p.evaluate(() => {
+    const key = 'cleanswap.setup.v1';
+    localStorage.setItem(key, JSON.stringify({
+      net: 'mainnet', contract: '0x' + 'ab'.repeat(20), token: '0x' + 'cd'.repeat(20), rpc: ''
+    }));
+    window.CLEANSWAP.loadSetup();
+    const s = window.CLEANSWAP.state;
+    const out = {
+      net: s.net, contract: s.contract, token: s.token,
+      testnet: s.setups.testnet.contract, mainnet: s.setups.mainnet.contract
+    };
+    localStorage.removeItem(key);
+    return out;
+  });
+  check('setup: a first-version setup is read as the network it was written under',
+    legacy.net === 'mainnet' && legacy.contract === '0x' + 'ab'.repeat(20) &&
+    legacy.mainnet === '0x' + 'ab'.repeat(20) && legacy.testnet === '',
+    JSON.stringify(legacy));
+  await legacyCtx.c.close();
+
   await E.c.close();
   await browser.close();
 
