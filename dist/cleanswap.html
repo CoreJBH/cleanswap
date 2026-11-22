@@ -128,6 +128,8 @@ body[data-phase="locking"] .flip{display:none}
 .setup .row{margin:0 0 12px}
 .setup .pill{height:44px;font-size:13px}
 .hint{margin:2px 0 10px;font-size:12.5px;line-height:1.45;color:var(--dim);font-weight:500}
+/* a reading that was not cross-checked: quiet, but on the screen */
+#quorumLine{margin:7px 2px 0;color:var(--warn);font-weight:600}
 /* guidance the money depends on: a mint rule and a brighter tone, still quiet */
 #invHint,#payWarn{margin:2px 0 10px;padding-left:9px;border-left:2px solid rgba(45,212,191,.45);color:var(--ink2)}
 
@@ -294,6 +296,10 @@ body[data-phase="locking"] .flip{display:none}
     <span class="chev" aria-hidden="true">›</span>
   </button>
 
+  <!-- A reading nobody else confirms is not a cross-checked one. Said here, on
+       the screen, instead of hiding it in the row's ellipsis. -->
+  <p class="hint" id="quorumLine" hidden></p>
+
   <!-- the one place an address is on screen: it belongs to the person who
        deploys the escrow, not to the swap itself -->
   <section class="setup" id="setupBox" hidden>
@@ -323,7 +329,6 @@ body[data-phase="locking"] .flip{display:none}
       <button class="pill" data-act="checkSetup" type="button">Check</button>
     </div>
     <p class="hint" id="setupHint">Deploy the escrow once, then paste its address here.</p>
-    <p class="say err" id="quorumWarn" hidden></p>
   </section>
 
   <section class="cards" aria-label="Swap amounts">
@@ -3081,11 +3086,16 @@ contract CleanSwapHTLC {
       txt += practice || S.rpcState === 'ok' ? ' \u00b7 escrow ready' : ' \u00b7 escrow set';
       dot = practice || S.rpcState === 'ok' ? 'live' : 'off';
     }
-    /* A reading that was not cross-checked says so on the row itself: one node
-       answering is a fact about the setup, not a mistake to hide. */
-    if (!practice && S.quorum === 'single') txt += ' \u00b7 one endpoint, no cross-check';
+    /* A reading that was not cross-checked says so on the screen, in one quiet
+       line under the chain row (the row itself is too narrow for the sentence). */
     $('chainTxt').textContent = txt;
     $('chainDot').className = 'dot ' + dot;
+    var ql = $('quorumLine');
+    if (ql) {
+      ql.textContent = !practice && S.quorum === 'single'
+        ? 'One node answers, so nothing is cross-checked. Add a second RPC endpoint in Setup.' : '';
+      ql.hidden = !ql.textContent;
+    }
     if (!practice) paintSetup();
   }
 
@@ -3164,14 +3174,7 @@ contract CleanSwapHTLC {
     $('rpcIn').value = S.rpc || '';
     var c = curChain();
     var eps = endpoints().length;
-    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.'
-      : ' Only one endpoint is in use, so nothing here is cross-checked: add a second one (comma-separated) and a node that lies is caught by the disagreement.';
-    var warn = $('quorumWarn');
-    if (warn) {
-      warn.textContent = eps > 1 || S.mode === 'practice' ? ''
-        : 'One endpoint only: this phone trusts a single node for the escrow and its receipts. Add a second RPC endpoint to have them cross-checked.';
-      warn.hidden = !warn.textContent;
-    }
+    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow has code: block ' + fmt(S.block || 0) + '.'

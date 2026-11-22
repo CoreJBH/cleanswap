@@ -41,6 +41,10 @@
     <span class="chev" aria-hidden="true">›</span>
   </button>
 
+  <!-- A reading nobody else confirms is not a cross-checked one. Said here, on
+       the screen, instead of hiding it in the row's ellipsis. -->
+  <p class="hint" id="quorumLine" hidden></p>
+
   <!-- the one place an address is on screen: it belongs to the person who
        deploys the escrow, not to the swap itself -->
   <section class="setup" id="setupBox" hidden>
@@ -70,7 +74,6 @@
       <button class="pill" data-act="checkSetup" type="button">Check</button>
     </div>
     <p class="hint" id="setupHint">Deploy the escrow once, then paste its address here.</p>
-    <p class="say err" id="quorumWarn" hidden></p>
   </section>
 
   <section class="cards" aria-label="Swap amounts">

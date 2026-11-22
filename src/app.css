@@ -108,6 +108,8 @@ body[data-phase="locking"] .flip{display:none}
 .setup .row{margin:0 0 12px}
 .setup .pill{height:44px;font-size:13px}
 .hint{margin:2px 0 10px;font-size:12.5px;line-height:1.45;color:var(--dim);font-weight:500}
+/* a reading that was not cross-checked: quiet, but on the screen */
+#quorumLine{margin:7px 2px 0;color:var(--warn);font-weight:600}
 /* guidance the money depends on: a mint rule and a brighter tone, still quiet */
 #invHint,#payWarn{margin:2px 0 10px;padding-left:9px;border-left:2px solid rgba(45,212,191,.45);color:var(--ink2)}
 

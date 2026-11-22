@@ -1979,11 +1979,16 @@
       txt += practice || S.rpcState === 'ok' ? ' \u00b7 escrow ready' : ' \u00b7 escrow set';
       dot = practice || S.rpcState === 'ok' ? 'live' : 'off';
     }
-    /* A reading that was not cross-checked says so on the row itself: one node
-       answering is a fact about the setup, not a mistake to hide. */
-    if (!practice && S.quorum === 'single') txt += ' \u00b7 one endpoint, no cross-check';
+    /* A reading that was not cross-checked says so on the screen, in one quiet
+       line under the chain row (the row itself is too narrow for the sentence). */
     $('chainTxt').textContent = txt;
     $('chainDot').className = 'dot ' + dot;
+    var ql = $('quorumLine');
+    if (ql) {
+      ql.textContent = !practice && S.quorum === 'single'
+        ? 'One node answers, so nothing is cross-checked. Add a second RPC endpoint in Setup.' : '';
+      ql.hidden = !ql.textContent;
+    }
     if (!practice) paintSetup();
   }
 
@@ -2062,14 +2067,7 @@
     $('rpcIn').value = S.rpc || '';
     var c = curChain();
     var eps = endpoints().length;
-    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.'
-      : ' Only one endpoint is in use, so nothing here is cross-checked: add a second one (comma-separated) and a node that lies is caught by the disagreement.';
-    var warn = $('quorumWarn');
-    if (warn) {
-      warn.textContent = eps > 1 || S.mode === 'practice' ? ''
-        : 'One endpoint only: this phone trusts a single node for the escrow and its receipts. Add a second RPC endpoint to have them cross-checked.';
-      warn.hidden = !warn.textContent;
-    }
+    var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow has code: block ' + fmt(S.block || 0) + '.'

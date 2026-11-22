@@ -356,7 +356,7 @@ const view = (pg) => pg.evaluate(() => {
     rcNet: t('rcNet').textContent,
     chainState: window.CLEANSWAP.state.chain && window.CLEANSWAP.state.chain.state,
     codeWarn: document.getElementById('codeWarn').hidden ? '' : document.getElementById('codeWarn').textContent,
-    quorumWarn: t('quorumWarn').hidden ? '' : t('quorumWarn').textContent,
+    quorumWarn: t('quorumLine').hidden ? '' : t('quorumLine').textContent,
     back: vis('headRow'),
     gate: window.CLEANSWAP.state.gate && window.CLEANSWAP.state.gate.code
   };
@@ -1424,8 +1424,8 @@ const view = (pg) => pg.evaluate(() => {
   await p1e.waitForTimeout(1500);
   const oneW = await view(p1e);
   check('single: one endpoint can still read the chain', /escrow ready/.test(oneW.chainTxt), oneW.chainTxt);
-  check('single: the row says the reading was not cross-checked', /no cross-check/.test(oneW.chainTxt), oneW.chainTxt);
-  check('single: the setup panel carries the same warning', /One endpoint only/.test(oneW.quorumWarn), oneW.quorumWarn);
+  check('single: the screen says the reading was not cross-checked', /nothing is cross-checked/.test(oneW.quorumWarn), oneW.quorumWarn);
+  check('single: and what to do about it', /second RPC endpoint/.test(oneW.quorumWarn), oneW.quorumWarn);
   check('single: the warning is plain English', !JARGON.test(oneW.quorumWarn), oneW.quorumWarn);
   check('single: no page errors', ONE.errs.length === 0, ONE.errs.join(' | '));
   await p1e.screenshot({ path: path.join(SHOTS, 'v61-single-endpoint.png') });

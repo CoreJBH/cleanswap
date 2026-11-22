@@ -88,10 +88,10 @@ its own terms. Every item in that review is closed:
   `key=value` shape, keeps the first of two same keys, and a malformed `%` escape drops that one
   field instead of throwing out of the decoder. The QR is parsed with `DOMParser` and imported, and
   its caption is set with `textContent` - nothing from a payload is ever pasted into `innerHTML`.
-* **One endpoint is not a cross-check.** When `rpcQuorum()` falls back to a single endpoint the
-  chain line says `one endpoint, no cross-check` and the Setup panel says what that means. A receipt
-  and a transaction (`waitReceipt`, `loadTx`) are read by the same quorum as the escrow itself, and
-  hex answers are compared in one case.
+* **One endpoint is not a cross-check.** When `rpcQuorum()` falls back to a single endpoint, a quiet amber
+  line under the chain row says one node answers, so nothing is cross-checked, and asks for a second
+  RPC endpoint. A receipt and a transaction (`waitReceipt`, `loadTx`) are read by the same quorum as
+  the escrow itself, and hex answers are compared in one case.
 * **The page carries a Content-Security-Policy.** `default-src 'none'`, its own inline script and
   style as the only code allowed, `data:` images, and `connect-src` limited to the chain endpoints
   (`https:`, or a node on this machine).
@@ -394,8 +394,8 @@ The APK is uploaded as a workflow artifact.
 * The read path is the page's own JSON-RPC client against public endpoints (or the ones you set).
   With two or more endpoints the state is read by quorum, so one lying node is caught by the
   disagreement, and so are receipts and transactions. With a single endpoint that node is trusted by
-  definition: the chain line says `one endpoint, no cross-check` and Setup says the same, so the
-  screen never claims a cross-check that did not happen. Run your own node for real value.
+  definition: a line under the chain row says one node answers and nothing is cross-checked, so the
+  screen never claims a check that did not happen. Run your own node for real value.
 * The escrow guards `lock`, `claim` and `refund` against re-entry, and refuses a zero hashlock or a
   receiver that is the escrow itself. It is still not audited.
 * The page runs under its own Content-Security-Policy: no script, style or frame from another
