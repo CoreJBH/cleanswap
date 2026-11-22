@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src /*__CSPSCRIPT__*/; style-src /*__CSPSTYLE__*/; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -127,6 +127,11 @@
   <!-- A refused code says so here and stays said: the setup is never changed by
        a code, so a warning is the whole result of one -->
   <p class="say err" id="codeWarn" hidden></p>
+  <!-- The USDT address a code names is offered, never written into the field:
+       on the side that receives the USDT, an address from a stranger's code is
+       exactly the thing that must not be taken without a look -->
+  <p class="hint" id="codeAddr" hidden><span id="codeAddrTxt"></span>
+    <button class="mini" data-act="useCodeAddr" type="button">Use it</button></p>
 
   <!-- one path for both modes; the numbers swap with the direction -->
   <section class="steps" id="steps">

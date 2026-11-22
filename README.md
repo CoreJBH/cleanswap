@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-456%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-541%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.1" src="https://img.shields.io/badge/android-0.6.1-0f9d6e">
+  <img alt="android 0.6.2" src="https://img.shields.io/badge/android-0.6.2-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -86,8 +86,9 @@ its own terms. Every item in that review is closed:
   of the next swap cannot be loaded over a swap whose money has already moved.
 * **A lock code is parsed as data.** Its query string is built on `Object.create(null)`, needs a
   `key=value` shape, keeps the first of two same keys, and a malformed `%` escape drops that one
-  field instead of throwing out of the decoder. The QR is parsed with `DOMParser` and imported, and
-  its caption is set with `textContent` - nothing from a payload is ever pasted into `innerHTML`.
+  field instead of throwing out of the decoder. The QR's caption is set with `textContent` -
+  nothing from a payload is ever pasted into `innerHTML` (v0.6.2 stopped parsing the encoder's SVG
+  as a document at all and builds it element by element).
 * **One endpoint is not a cross-check.** When `rpcQuorum()` falls back to a single endpoint, a quiet amber
   line under the chain row says one node answers, so nothing is cross-checked, and asks for a second
   RPC endpoint. A receipt and a transaction (`waitReceipt`, `loadTx`) are read by the same quorum as
@@ -101,6 +102,50 @@ its own terms. Every item in that review is closed:
   is shrunk and obfuscated with `proguard-rules.pro` keeping the shell's entry points.
 * **One APK workflow, not two.** The duplicate `.github/workflows/build-apk.yml` - a broken copy
   that failed on every push - is gone; `.github/workflows/apk.yml` is the one that builds.
+
+`v0.6.2` closes the third pass, which went after the parts the first two took on trust:
+
+* **The payee's signature on a BOLT11 invoice is checked.** An invoice is a promise by the holder of
+  a key, and this page now recovers that key from the 65-byte signature and verifies it - in the
+  page, with no dependency and no network, because the app has to work off-line. An invoice that
+  names its payee in an `n` tag is verified against that key and must be low-S, as the standard says;
+  otherwise the key comes back out of the signature (high-S accepted for recovery, as the standard
+  also says). The rehearsal's own sample invoices are signed the same way, by a practice key that
+  holds nothing and belongs to no node. Checked against the BOLT #11 test vectors, and against an
+  independent verifier (secp256k1 recovery in Python + OpenSSL's ECDSA) in `test/invoice-crosscheck.py`.
+* **An invoice that states no amount is refused.** "Any amount" cannot be matched to the sats on the
+  screen, so the escrow id would have nothing to compare; and an amount finer than a satoshi is not
+  an amount this app can lock.
+* **One field, one meaning.** A BOLT11 tag may appear once and a BOLT12 TLV once (blinded paths
+  excepted): two payment hashes or two expiries would let the reader and the writer disagree about
+  what was signed. Both are refused by name.
+* **Amounts are compared as integers.** Sats, token units, msat and timelocks are parsed and
+  compared as `BigInt`, so 2^53+1 and 2^53 are not the same amount, and a code's amounts travel as
+  decimal strings so nothing is rounded on the way in. A value too large for a number is refused
+  instead of being read as a nearby one.
+* **The window is measured by the chain's clock.** The escrow's timelock is the chain's, not the
+  phone's: `eth_getBlockByNumber('latest')` gives the head's timestamp, the later of the two clocks
+  is used, and `I paid` re-reads it before it starts watching. Moving the phone's clock cannot open
+  a window that has closed, or leave one open that the chain says is closing.
+* **A USDT address from a code is never written into the field on the side that receives it.** A
+  code is a stranger's text, and an address in it could be the stranger's own; the receiving side
+  is shown the address and has to tap **Use it**. On the side that sends the USDT the address in a
+  code is the partner's own destination, and that one is filled in.
+* **Hex that cannot be read is an error.** `fromHex()` refuses an odd length or a character outside
+  hex instead of padding it to a zero byte, so nothing signs or locks on bytes nobody wrote. The
+  `approve` an `I approve` step sends now reads the current allowance through the same quorum as the
+  escrow, and when a non-zero, too-small allowance is there it is reset to zero first and the exact
+  amount approved after it - one transaction each, each waited for.
+* **The QR is built element by element.** `document.createElementNS` draws the modules straight from
+  the encoder's grid; the encoder's SVG string is never parsed, so no payload can become a node.
+* **The Content-Security-Policy names hashes instead of `'unsafe-inline'`.** `build.py` computes the
+  SHA-256 of every inline script and style block it writes and puts those hashes in the policy, so
+  the code that is in the file runs and a block added afterwards does not.
+* **The Android shell keeps the swap off other screens and hands out less.** `FLAG_SECURE` (no
+  screenshots, no recents thumbnail), the WebView cache off and cleared with the screen, exactly one
+  document served from the APK (`https`, the app's own host, `/index.html`), `https:` hand-offs
+  narrowed to a named host list (`remix.ethereum.org`, `arbiscan.io`, `sepolia.arbiscan.io`,
+  `mempool.space`), and `android:usesCleartextTraffic="false"` in the manifest.
 
 ## What it does
 
@@ -146,10 +191,11 @@ its own terms. Every item in that review is closed:
   deploy hand-off: **Copy bytecode** (solc 0.8.26 creation code, embedded in the page) and **Open
   Remix**. The setup survives in `localStorage` under one key, and nothing but this panel ever
   writes it.
-* **Only an invoice with a payment hash is accepted.** A BOLT11 hold invoice (`lnbc...`) or a BOLT12
-  invoice (`lni1...`) that carries the standard `payment_hash` field; either one names the hash the
-  swap locks to. A BOLT12 offer (`lno1...`) is refused with a sentence and an explanation, because
-  the invoice it produces gets a hash of its own (see below).
+* **Only a signed, priced invoice with a payment hash is accepted.** A BOLT11 hold invoice
+  (`lnbc...`) or a BOLT12 invoice (`lni1...`) that carries the standard `payment_hash` field; either
+  one names the hash the swap locks to. A BOLT11's signature is verified and its amount has to be
+  stated (see `v0.6.2`). A BOLT12 offer (`lno1...`) is refused with a sentence and an explanation,
+  because the invoice it produces gets a hash of its own (see below).
 * **The terms leave as a code, not as a web address.** `Share code` copies `cleanswap:...`
   (base64url JSON: both amounts, the window, the hashlock, the USDT address, and in Wallet mode the
   chain, the escrow and the address that funds it - still under the 340-byte QR budget, because the
@@ -162,7 +208,7 @@ its own terms. Every item in that review is closed:
 
 | Step | On screen | What is checked before `Approve` moves |
 | --- | --- | --- |
-| 1 | the Lightning invoice - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, a `payment_hash` present (an offer is refused: it has none), amount equal to the swap, not expired, `bc` network, an expiry at least an hour past the escrow window, and - when a code arrived first - a hash equal to the one that code pinned |
+| 1 | the Lightning invoice - `Open in wallet`, `Copy`, `QR` in both modes, `Sample` in Practice only | bech32 checksum, a `payment_hash` present and stated once (an offer is refused: it has none), the payee's signature verified, an amount stated and equal to the swap, not expired, `bc` network, an expiry at least an hour past the escrow window, and - when a code arrived first - a hash equal to the one that code pinned |
 | 2 | the USDT address | an Arbitrum `0x` address with exactly 40 hex characters, not the zero address. In Wallet mode a TRON `T` address is decoded and checked, then refused with the reason: this swap pays on Arbitrum |
 | 3 | `Approve` | the two are bound to one `H`, the window is neither too short nor too long, and in Wallet mode the chain is asked before anything else happens: endpoints alive and agreeing, contract deployed, escrow state for `swapId` |
 
@@ -314,10 +360,11 @@ test/
   headless.js                Playwright end-to-end suite, with a mock JSON-RPC endpoint on 127.0.0.1
   contract-evm.py            contract behaviour on py-evm + the page's ABI against eth_abi
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
-  invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder
+  invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder + secp256k1/OpenSSL
+  android-shell.py           the shell's own promises: FLAG_SECURE, no cache, one document, hosts
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.1, versionCode 10)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.2, versionCode 11)
 ```
 
 ## Build
@@ -338,14 +385,15 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain or a 5-minute or 8-day window refused with the setup untouched, a code refused while a swap is running, Practice walking the same road (Approve -> the waiting screen with `I paid` -> the lock alone finishing nothing -> the stand-in claim completing the swap, no Recent entry, and no request leaving the phone), and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: an invoice with no `x` tag read as expiring in an hour and refused for a two-hour window, one endpoint saying `no cross-check`, a lock code with a broken escape / `__proto__` / no `=` / a duplicate key, a QR whose caption stays text, and the page's own Content-Security-Policy blocking an outside script while its inline code still runs | **299/299 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain, a 5-minute or 8-day window, or a token amount above 2^53 refused with the setup untouched, a code refused while a swap is running, a code's USDT address offered but not written into the receiving side's field, Practice walking the same road, and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; the chain's own clock past the window -> paying refused; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), an old allowance reset to zero before the exact one, a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: BOLT #11's own invoices (a real signature recovered to the spec's key, a duplicate field and an unrecoverable signature refused, an amountless invoice refused, high-S accepted for recovery), a QR drawn element by element whose caption stays text, and a Content-Security-Policy that names the hashes of its own code and refuses a block added afterwards | **334/334 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted, a zero hashlock and a receiver that is the escrow itself refused, a token that re-enters `lock` mid-transfer refused with nothing escrowed (and the same token accepted when its call-back is harmless) - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **48/48 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
-| `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder | **45/45 pass** |
+| `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder, its signature is recovered and verified by OpenSSL (`cryptography`), all of them are signed by the one practice key, and the BOLT #11 vectors recover to the spec's key with the signed preimage equal to the hash the spec prints | **79/79 pass** |
+| `test/android-shell.py` | `FLAG_SECURE`, no WebView cache and a cleared one, one document served (`https`, the app host, `/index.html`), an `https` hand-off allowlist with no wildcard, and `usesCleartextTraffic="false"` | **16/16 pass** |
 | `test/verify-english.py` | Hangul count is 0 across every tracked text file, file name and commit message | **0 characters** |
 
 ```bash
-bash test/run-all.sh      # build + English + headless + EVM + QR + invoices
+bash test/run-all.sh      # build + English + headless + shell + EVM + QR + invoices
 ```
 
 Screenshots of the form, the wallet flow (waiting, paid, settled, refunded), the setup panel, the
@@ -366,7 +414,7 @@ suite.
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.1`, `versionCode 10`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.2`, `versionCode 11`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
@@ -398,17 +446,22 @@ The APK is uploaded as a workflow artifact.
   screen never claims a check that did not happen. Run your own node for real value.
 * The escrow guards `lock`, `claim` and `refund` against re-entry, and refuses a zero hashlock or a
   receiver that is the escrow itself. It is still not audited.
-* The page runs under its own Content-Security-Policy: no script, style or frame from another
-  origin, `data:` images only, and connections only to the chain endpoints. A code, an invoice or a
-  lock code is a stranger's text and is parsed as data - never as markup (the QR is imported as an
-  SVG document, its caption set as text).
+* The page runs under its own Content-Security-Policy: the inline script and style are allowed by
+  SHA-256 hash (no `'unsafe-inline'`), no frame or script from another origin, `data:` images only,
+  and connections only to the chain endpoints. A code, an invoice or a lock code is a stranger's
+  text and is parsed as data - never as markup (the QR is drawn with `createElementNS`, its caption
+  set as text).
 * A `cleanswap:` code carries terms only. It is not a web address, has no host, and is never built
   from the page's own URL - and it never changes the setup: the chain and the escrow in a code are
   requirements that must already match, not settings that get written.
 * A swap lives in the page: reloading it forgets it. The Setup panel is the only thing kept, in one
   `localStorage` key.
-* Minted offers and invoices carry deterministic filler signatures; they parse, checksum and hash
-  correctly, but no node will route them.
+* A BOLT11 invoice's signature is checked, but a BOLT11 invoice names no payee unless it carries an
+  `n` tag: without one, the key is recovered from the signature, which proves the invoice was not
+  edited, not who made it. The `n` tag, when present, is verified against and must be low-S.
+* Practice invoices are signed with a key that ships in the page: they are real BOLT11 strings and
+  they verify, but no node holds that key and no one can pay them. They are rehearsal material, and
+  the screen never asks anyone to pay one outside Practice.
 * The UI, code, tests and commit messages are English only, and `test/verify-english.py` enforces it.
 
 ## Contributors

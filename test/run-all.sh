@@ -30,6 +30,10 @@ echo "== headless UI + protocol suite =="
 "$NODE" test/headless.js || fail=1
 
 echo
+echo "== the Android shell: FLAG_SECURE, no cache, one document, https allowlist =="
+python3 test/android-shell.py || fail=1
+
+echo
 echo "== contract on a real EVM (py-evm) + app calldata =="
 PYTHONPATH="$PY" python3 test/contract-evm.py || fail=1
 

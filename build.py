@@ -11,6 +11,7 @@ UI are English only, and this is the last gate before a byte reaches dist/.
 """
 import base64
 import glob
+import hashlib
 import json
 import os
 import re
@@ -74,6 +75,24 @@ def sample(tag):
     return mod.build() if tag == 'bolt11' else mod.build_offer()
 
 
+def inline_hashes(html):
+    """The CSP source lists for the page's own script and style blocks.
+
+    A hash names the exact bytes of one inline block, so the policy can allow
+    the code that is in this file and nothing else: no 'unsafe-inline', and an
+    injected block - or an edited one - does not run.
+    """
+    def one(blob):
+        digest = hashlib.sha256(blob.encode('utf-8')).digest()
+        return "'sha256-" + base64.b64encode(digest).decode('ascii') + "'"
+
+    scripts = re.findall(r'<script\b[^>]*>(.*?)</script\s*>', html, re.S | re.I)
+    styles = re.findall(r'<style\b[^>]*>(.*?)</style\s*>', html, re.S | re.I)
+    if not scripts or not styles:
+        sys.exit('ERROR: the page has an inline script or style the policy would block')
+    return ' '.join(one(s) for s in scripts), ' '.join(one(s) for s in styles)
+
+
 def main():
     tpl = read(SRC, 'index.template.html')
     css = read(SRC, 'app.css')
@@ -101,6 +120,13 @@ def main():
     out = out.replace('/*__BOLT12__*/', sample('bolt12'))
     out = out.replace('__ICON64__', icon_b64('icon-64.png'))
     out = out.replace('__ICON180__', icon_b64('icon-180.png'))
+
+    script_src, style_src = inline_hashes(out)
+    out = out.replace('/*__CSPSCRIPT__*/', script_src)
+    out = out.replace('/*__CSPSTYLE__*/', style_src)
+    policy = re.search(r'Content-Security-Policy" content="([^"]*)"', out)
+    if not policy or 'unsafe-inline' in policy.group(1):
+        sys.exit('ERROR: the Content-Security-Policy still allows inline code')
 
     missing = re.findall(r'/\*__[A-Z0-9]+__\*/', out)
     if missing:

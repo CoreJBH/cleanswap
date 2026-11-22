@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-ogAwcfrRIJgRbuQqO7QpXSiTZ4bBKMyUR47FVMspY+A='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -382,6 +382,11 @@ body[data-phase="locking"] .flip{display:none}
   <!-- A refused code says so here and stays said: the setup is never changed by
        a code, so a warning is the whole result of one -->
   <p class="say err" id="codeWarn" hidden></p>
+  <!-- The USDT address a code names is offered, never written into the field:
+       on the side that receives the USDT, an address from a stranger's code is
+       exactly the thing that must not be taken without a look -->
+  <p class="hint" id="codeAddr" hidden><span id="codeAddrTxt"></span>
+    <button class="mini" data-act="useCodeAddr" type="button">Use it</button></p>
 
   <!-- one path for both modes; the numbers swap with the direction -->
   <section class="steps" id="steps">
@@ -759,7 +764,7 @@ contract CleanSwapHTLC {
         return abi.decode(ret, (bool));
     }
 }</script>
-<script type="text/plain" id="sample-bolt11">lnbc500u1pnhfpvqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsypygdkx2ctw2dmkzupqdphkcepqd9h8vmmfvdjscqypcgqtsfzdgztsndl0ucckdrqgdlz07zknppzrfhq6nagr0jtzpr5ptz4cy3x5p9cfklh7vvtx3syxl38lptfss3p5msdf75phe93q36q43gm08ga6v</script>
+<script type="text/plain" id="sample-bolt11">lnbc500u1pnhfpvqpp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsdpygdkx2ctw2dmkzupqdphkcepqd9h8vmmfvdjsxqypcgqpel34zlrwfuelaux0wkghn2u02slr0aanlkdq9cdnsq822hf8dlrqhg2faru9re70ju38pyyr7tuy8nylrjl9t0a07s2thn7up4tu7qpdzvlv3</script>
 <script type="text/plain" id="sample-bolt12">lno1pgvyxmr9v9h9xampwqsz6gzz23pjqen0wgs9256y2s8qg6ekajqpvggz6sxhy2u05vhccky82lzgz33tylddlm8xvl4qce3d4g8xmz5tt900qsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq</script>
 <script>/* Minimal QR encoder — byte mode, error correction L/M/Q/H, versions 1..13.
    No dependencies, ~250 lines. Byte mode + level M is what the offer and
@@ -1105,7 +1110,7 @@ contract CleanSwapHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CleanSwap v0.6.1 — Lightning bitcoin <-> USDT atomic swap in one file.
+<script>/* CleanSwap v0.6.2 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -1234,6 +1239,8 @@ contract CleanSwapHTLC {
     rpc: '',                        /* private endpoint(s), comma-separated, when set */
     quorum: 'idle',                 /* idle | ok | single | disagree */
     block: null,                    /* latest block read from the chain */
+    blockTs: null,                  /* that block's timestamp, the chain's clock */
+    blockTsAt: 0, blockTsFail: 0,   /* when it was read, when a read last failed */
     rpcState: 'idle',               /* idle | ok | bad */
     chain: null,                    /* the last reading: {state, why, rec} */
     chainAt: 0, simRec: null,       /* the practice stand-in for that record */
@@ -1257,6 +1264,7 @@ contract CleanSwapHTLC {
     locker: '',                     /* the address that funds the escrow (from a code) */
     expectH: null,                  /* hashlock pinned by a code from the other side */
     codeWarn: '',                   /* what a refused code said, kept on screen */
+    codeAddr: '',                   /* a USDT address a code named, offered not taken */
     log: [],
     qrInv: '',                      /* the payload whose QR is on screen */
     gate: null
@@ -1268,10 +1276,29 @@ contract CleanSwapHTLC {
     for (i = 0; i < u8.length; i++) s += (u8[i] < 16 ? '0' : '') + u8[i].toString(16);
     return s;
   }
+  /* Hex that cannot be read is an error, never a zero byte: a padded or
+     silently zeroed field would sign or lock on bytes nobody wrote. */
   function fromHex(h) {
-    var clean = String(h).replace(/^0x/i, ''), out = new Uint8Array(Math.floor(clean.length / 2)), i;
-    for (i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16) || 0;
+    var clean = String(h == null ? '' : h).replace(/^0x/i, ''), out, i;
+    if (!/^[0-9a-fA-F]*$/.test(clean)) throw new Error('not hex');
+    if (clean.length % 2) throw new Error('hex with an odd length');
+    out = new Uint8Array(clean.length / 2);
+    for (i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
     return out;
+  }
+  function catBytes(a, b) {
+    var out = new Uint8Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
+    return out;
+  }
+  /* A number taken out of a message is only a number if it survived as one:
+     2^53 is where a JS Number stops counting single units, so anything above
+     it is refused rather than quietly rounded. */
+  var SAFE = 9007199254740991n;
+  function toNum(v, what) {
+    var b = BigInt(v);
+    if (b > SAFE || b < -SAFE) throw new Error((what || 'value') + ' is out of range');
+    return Number(b);
   }
   function rndHex(n) {
     var b = new Uint8Array(n);
@@ -1391,6 +1418,21 @@ contract CleanSwapHTLC {
     if (S.units != null) return S.units;
     return S.price ? Math.round(S.sats / 1e8 * S.price * 1e6) : 0;
   }
+  /* Micro-units as money reads, done in BigInt so a large token amount is not
+     rounded on its way to the screen. */
+  function unitsTxt(v) {
+    var b = BigInt(v), neg = b < 0n;
+    if (neg) b = -b;
+    var whole = (b / 1000000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    var frac = (b % 1000000n).toString().padStart(6, '0').slice(0, 2);
+    return (neg ? '-' : '') + whole + '.' + frac;
+  }
+  /* Two amounts are the same amount only if their digits are: a comparison
+     that goes through a float would call 2^53+1 and 2^53 equal. */
+  function sameAmount(a, b) {
+    try { return BigInt(String(a == null ? '' : a).trim()) === BigInt(String(b == null ? '' : b).trim()); }
+    catch (e) { return false; }
+  }
   function clock(t) {
     var d = new Date((t || nowSec()) * 1000);
     return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
@@ -1403,7 +1445,7 @@ contract CleanSwapHTLC {
   }
   function priceNow() {
     if (!S.t2) return '—';
-    return spanTxt(S.t2 - nowSec());
+    return spanTxt(S.t2 - effNow());
   }
   function isAddr(a) { return /^0x[0-9a-fA-F]{40}$/.test(String(a || '')); }
   /* The 20 bytes an address stands for, whichever chain it came from, so the
@@ -1643,6 +1685,52 @@ contract CleanSwapHTLC {
     });
   }
 
+  /* ------------------------------------------------------ the chain clock --
+     A timelock is measured by the chain, not by a phone whose clock anyone can
+     move. The latest block's timestamp is read beside the escrow, and the later
+     of the two clocks is what the window checks use: setting the phone back can
+     only make the app more careful, never let it pay into a closing window.
+     One reading serves 45 seconds so a screen full of checks is one request, and
+     a failed read falls back to the phone's clock after a short pause instead of
+     asking again on every keystroke. */
+  var BLOCK_TS_TTL = 45000;
+  var BLOCK_TS_RETRY = 15000;
+  function effNow() {
+    var local = nowSec();
+    if (S.mode === 'practice') return local;
+    var fresh = S.blockTs && (Date.now() - S.blockTsAt) < BLOCK_TS_TTL;
+    return fresh && S.blockTs > local ? S.blockTs : local;
+  }
+  /* Every configured endpoint is asked and the latest answer wins: a node that
+     is behind the others cannot make the window look longer than it is. This is
+     not the escrow itself, so it does not go through the quorum path - a stale
+     head is a stricter answer, not a disagreement to report. */
+  function chainTimeOnce() {
+    var list = endpoints();
+    return Promise.all(list.map(function (url) {
+      return rpcOne(url, 'eth_getBlockByNumber', ['latest', false]).then(function (b) {
+        var t = parseInt(String(b && b.timestamp), 16);
+        return isFinite(t) && t > 0 ? t : null;
+      }, function () { return null; });
+    })).then(function (all) {
+      var best = null;
+      all.forEach(function (t) { if (t && (!best || t > best)) best = t; });
+      return best;
+    }, function () { return null; });
+  }
+  function syncChainTime(force) {
+    /* A rehearsal has no chain, and wallet mode without an escrow has no window
+       to measure: neither should send a request just because a field changed. */
+    if (S.mode !== 'wallet' || !isAddr(S.contract)) return Promise.resolve(nowSec());
+    if (!force && Date.now() - S.blockTsAt < BLOCK_TS_TTL) return Promise.resolve(effNow());
+    if (!force && Date.now() - S.blockTsFail < BLOCK_TS_RETRY) return Promise.resolve(effNow());
+    return chainTimeOnce().then(function (t) {
+      if (t) { S.blockTs = t; S.blockTsAt = Date.now(); }
+      else S.blockTsFail = Date.now();
+      return effNow();
+    }, function () { S.blockTsFail = Date.now(); return effNow(); });
+  }
+
   /* ------------------------------------------------------- escrow ABI ----- */
   function pad64(hex) { return ('0'.repeat(64) + hex).slice(-64); }
   function encU256(v) { return pad64(BigInt(v).toString(16)); }
@@ -1729,15 +1817,15 @@ contract CleanSwapHTLC {
     if (normHex(rec.hashlock) !== normHex(t.hashlock)) why = 'hash';
     else if (String(rec.receiver).toLowerCase() !== t.receiver.toLowerCase()) why = 'receiver';
     else if (String(rec.token).toLowerCase() !== t.token.toLowerCase()) why = 'token';
-    else if (String(rec.amount) !== t.amount) why = 'amount';
-    else if (String(rec.timelock) !== t.timelock) why = 'tl';
+    else if (!sameAmount(rec.amount, t.amount)) why = 'amount';
+    else if (!sameAmount(rec.timelock, t.timelock)) why = 'tl';
     else if (t.sender && String(rec.sender).toLowerCase() !== t.sender.toLowerCase()) why = 'sender';
     if (why) return { state: 'mismatch', why: why, rec: rec };
     if (rec.claimed) return { state: 'claimed', rec: rec };
     if (rec.refunded) return { state: 'refunded', rec: rec };
     /* A record past its timelock can no longer be claimed: paying now would
        hand the sats over with nothing left to claim. */
-    if (Number(rec.timelock) <= nowSec()) return { state: 'closed', rec: rec };
+    if (Number(rec.timelock) <= effNow()) return { state: 'closed', rec: rec };
     return { state: 'locked', rec: rec };
   }
 
@@ -2012,21 +2100,38 @@ contract CleanSwapHTLC {
 
   function runLock(p) {
     var amount = BigInt(usdtUnits());
+    /* An approval is a transaction too: the next step only exists once it is
+       mined, and a token that already allows this escrow something treats a
+       second non-zero approval as a refusal, so a stale allowance is cleared to
+       zero first and the new one is then exact. */
+    function approveTo(v, why) {
+      log('APPROVE', why);
+      return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, v), value: '0x0' }] })
+        .then(function (h) {
+          if (!h) throw new Error('the wallet sent nothing');
+          return waitReceipt(h);
+        });
+    }
     busy(true);
     ensureChain(p)
       .then(function () { return p.request({ method: 'eth_requestAccounts' }); })
       .then(function (accts) {
         S.me = accts && accts[0] ? String(accts[0]) : '';
         if (!S.me) throw new Error('the wallet shared no account');
-        return rpc('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
+        /* What the token already allows is a state the money depends on, so it
+           is read the way the escrow is: every endpoint, and two answers that
+           agree before either is believed. */
+        return rpcQuorum('eth_call', [{ to: tokenNow(), data: '0x' + SEL.allowance + encAddr(S.me) + encAddr(S.contract) }, 'latest']);
       })
       .then(function (raw) {
         var w = abiWords(raw);
-        var have = w.length ? BigInt('0x' + w[0]) : BigInt(0);
+        var have = w.length ? BigInt('0x' + w[0]) : 0n;
         if (have >= amount) return null;
-        log('APPROVE', 'the wallet is asked to allow ' + usdtTxt() + ' USDT');
-        return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: tokenNow(), data: approveCalldata(S.contract, usdtUnits()), value: '0x0' }] })
-          .then(function (h) { return h ? waitReceipt(h) : null; });
+        if (have > 0n) {
+          return approveTo(0, 'an old allowance is reset to nothing first, so the next one is exact')
+            .then(function () { return approveTo(amount, 'the wallet is asked to allow ' + usdtTxt() + ' USDT'); });
+        }
+        return approveTo(amount, 'the wallet is asked to allow ' + usdtTxt() + ' USDT');
       })
       .then(function () {
         log('LOCK', 'the wallet is asked for the lock');
@@ -2216,6 +2321,199 @@ contract CleanSwapHTLC {
     });
   }
 
+  /* --------------------------------------------------------- secp256k1 -------
+     A BOLT11 invoice is a signed promise by whoever holds the payee's key, and
+     a payer is meant to check that before the sats leave. The page carries no
+     dependencies and runs off-line, so the curve arithmetic lives here: point
+     addition in Jacobian coordinates, ECDSA recovery (an invoice names its
+     payee in an `n` tag only sometimes, so the key usually has to come back
+     out of the signature), ECDSA verification, and deterministic signing
+     (RFC 6979) for the rehearsal's own sample invoices - they have to be the
+     same shape as a real one to be read by the same code.
+
+     Checked against the BOLT #11 test vectors (test/bolt11-vectors.json) and,
+     for what the app signs itself, against an independent verifier in
+     test/invoice-crosscheck.py. */
+  var SECP = (function () {
+    var P = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
+    var N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+    var GX = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n;
+    var GY = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n;
+    var G = { x: GX, y: GY, z: 1n };
+    var HALF = N >> 1n;
+    var INF = { x: 0n, y: 1n, z: 0n };
+
+    function mod(a, m) { var r = a % m; return r < 0n ? r + m : r; }
+    function powm(b, e, m) {
+      var r = 1n, base = mod(b, m);
+      while (e > 0n) { if (e & 1n) r = r * base % m; base = base * base % m; e >>= 1n; }
+      return r;
+    }
+    function inv(a, m) {
+      var t = 0n, nt = 1n, r = m, nr = mod(a, m), q, tmp;
+      if (nr === 0n) throw new Error('not invertible');
+      while (nr !== 0n) {
+        q = r / nr; tmp = t - q * nt; t = nt; nt = tmp;
+        tmp = r - q * nr; r = nr; nr = tmp;
+      }
+      if (r !== 1n) throw new Error('not invertible');
+      return mod(t, m);
+    }
+    function dbl(p) {
+      if (p.z === 0n || p.y === 0n) return INF;
+      var A = p.x * p.x % P, B = p.y * p.y % P, C = B * B % P;
+      var t = (p.x + B) % P;
+      var D = mod(2n * (mod(t * t - A - C, P)), P);
+      var E = 3n * A % P, F = E * E % P;
+      var x = mod(F - 2n * D, P);
+      var y = mod(E * mod(D - x, P) - 8n * C, P);
+      return { x: x, y: y, z: 2n * p.y % P * p.z % P };
+    }
+    function add(p, q) {
+      if (p.z === 0n) return q;
+      if (q.z === 0n) return p;
+      var z1z1 = p.z * p.z % P, z2z2 = q.z * q.z % P;
+      var u1 = p.x * z2z2 % P, u2 = q.x * z1z1 % P;
+      var s1 = p.y * q.z % P * z2z2 % P, s2 = q.y * p.z % P * z1z1 % P;
+      if (u1 === u2) return s1 === s2 ? dbl(p) : INF;
+      var h = mod(u2 - u1, P), i = 4n * h % P * h % P, j = h * i % P;
+      var r = 2n * mod(s2 - s1, P), v = u1 * i % P;
+      var x = mod(r * r - j - 2n * v, P);
+      var y = mod(r * mod(v - x, P) - 2n * s1 % P * j % P, P);
+      var z = mod((p.z + q.z) * (p.z + q.z) - z1z1 - z2z2, P) * h % P;
+      return { x: x, y: y, z: z };
+    }
+    function mul(k, p) {
+      var e = k, r = INF, base = p;
+      while (e > 0n) { if (e & 1n) r = add(r, base); base = dbl(base); e >>= 1n; }
+      return r;
+    }
+    function affine(p) {
+      if (!p || p.z === 0n) return null;
+      var zi = inv(p.z, P), zi2 = zi * zi % P;
+      return { x: p.x * zi2 % P, y: p.y * zi2 % P * zi % P };
+    }
+    function onCurve(x, y) { return mod(y * y - (x * x % P * x % P + 7n), P) === 0n; }
+    function toBig(bytes) {
+      var v = 0n, i;
+      for (i = 0; i < bytes.length; i++) v = (v << 8n) | BigInt(bytes[i]);
+      return v;
+    }
+    function to32(v) {
+      var out = new Uint8Array(32), i, x = mod(v, 1n << 256n);
+      for (i = 31; i >= 0; i--) { out[i] = Number(x & 255n); x >>= 8n; }
+      return out;
+    }
+    function sigParts(sigHex) {
+      var h = normHex(sigHex);
+      if (h.length !== 130) throw new Error('a signature is 65 bytes');
+      var b = fromHex(h);
+      return { r: toBig(b.subarray(0, 32)), s: toBig(b.subarray(32, 64)), rec: b[64] };
+    }
+    /* A public key, compressed (02/03 + x) or whole (x + y). */
+    function pointOf(pubHex) {
+      var h = normHex(pubHex), b, x, y, y2;
+      if (h.length === 66) {
+        b = fromHex(h);
+        if (b[0] !== 2 && b[0] !== 3) return null;
+        x = toBig(b.subarray(1));
+        if (x >= P) return null;
+        y2 = mod(x * x % P * x % P + 7n, P);
+        y = powm(y2, (P + 1n) / 4n, P);
+        if (mod(y * y - y2, P) !== 0n) return null;
+        if ((y & 1n) !== (b[0] === 3 ? 1n : 0n)) y = P - y;
+        return { x: x, y: y, z: 1n };
+      }
+      if (h.length === 130) {
+        b = fromHex(h);
+        x = toBig(b.subarray(0, 32)); y = toBig(b.subarray(32, 64));
+        return onCurve(x, y) ? { x: x, y: y, z: 1n } : null;
+      }
+      return null;
+    }
+    function compress(pt) {
+      var x = hexOf(to32(pt.x));
+      return ((pt.y & 1n) ? '03' : '02') + x;
+    }
+    function hashBig(hashHex) { return toBig(fromHex(normHex(hashHex))); }
+
+    /* ECDSA verify; lowS is what BOLT requires when the invoice names its key. */
+    function verify(hashHex, sigHex, pubHex, lowS) {
+      var p = pointOf(pubHex), sg;
+      if (!p) return false;
+      try { sg = sigParts(sigHex); } catch (e) { return false; }
+      if (sg.r <= 0n || sg.r >= N || sg.s <= 0n || sg.s >= N) return false;
+      if (lowS && sg.s > HALF) return false;
+      var z = hashBig(hashHex), w = inv(sg.s, N);
+      var pt = affine(add(mul(mod(z * w, N), G), mul(mod(sg.r * w, N), p)));
+      return !!pt && mod(pt.x, N) === sg.r;
+    }
+
+    /* The payee's key, recovered from the signature itself. */
+    function recover(hashHex, sigHex) {
+      var sg;
+      try { sg = sigParts(sigHex); } catch (e) { return null; }
+      if (sg.rec > 3 || sg.r <= 0n || sg.r >= N || sg.s <= 0n || sg.s >= N) return null;
+      var x = sg.r + (sg.rec >= 2 ? N : 0n);
+      if (x >= P) return null;
+      var y2 = mod(x * x % P * x % P + 7n, P);
+      var y = powm(y2, (P + 1n) / 4n, P);
+      if (mod(y * y - y2, P) !== 0n) return null;
+      if ((y & 1n) !== (sg.rec & 1 ? 1n : 0n)) y = P - y;
+      var z = hashBig(hashHex), ri = inv(sg.r, N);
+      var Q = affine(add(mul(mod(sg.s * ri, N), { x: x, y: y, z: 1n }), mul(mod(-z * ri, N), G)));
+      return Q && onCurve(Q.x, Q.y) ? Q : null;
+    }
+
+    function hmac(key, msg) {
+      var k = new Uint8Array(64), i, ip = new Uint8Array(64), op = new Uint8Array(64);
+      k.set(key.length > 64 ? sha256Bytes(key) : key);
+      for (i = 0; i < 64; i++) { ip[i] = k[i] ^ 0x36; op[i] = k[i] ^ 0x5c; }
+      var inner = catBytes(ip, msg), outer = catBytes(op, sha256Bytes(inner));
+      return sha256Bytes(outer);
+    }
+    /* RFC 6979: the nonce is a function of the key and the message, so the same
+       invoice terms always sign to the same string. */
+    function nonce(d, hash) {
+      var x = to32(d), h1 = to32(mod(toBig(hash), N));
+      var K = new Uint8Array(32), V = new Uint8Array(32).fill(1), i;
+      K = hmac(K, catBytes(catBytes(V, new Uint8Array([0])), catBytes(x, h1)));
+      V = hmac(K, V);
+      K = hmac(K, catBytes(catBytes(V, new Uint8Array([1])), catBytes(x, h1)));
+      V = hmac(K, V);
+      for (i = 0; i < 1000; i++) {
+        V = hmac(K, V);
+        var k = toBig(V);
+        if (k > 0n && k < N) return k;
+        K = hmac(K, catBytes(V, new Uint8Array([0])));
+        V = hmac(K, V);
+      }
+      throw new Error('no nonce');
+    }
+    /* A 65-byte signature: r, s, and the recovery byte, low-S as the standard
+       asks, so a verifier that only accepts low-S reads it too. */
+    function sign(hashHex, privHex) {
+      var d = toBig(fromHex(normHex(privHex)));
+      if (d <= 0n || d >= N) throw new Error('bad key');
+      var hash = fromHex(normHex(hashHex)), z = toBig(hash);
+      var k = nonce(d, hash), R = affine(mul(k, G));
+      if (!R) throw new Error('bad nonce');
+      var r = mod(R.x, N);
+      if (r === 0n) throw new Error('bad nonce');
+      var s = mod(inv(k, N) * mod(z + r * d, N), N);
+      if (s === 0n) throw new Error('bad nonce');
+      var rec = (R.y & 1n ? 1 : 0) | (R.x >= N ? 2 : 0);
+      if (s > HALF) { s = N - s; rec = rec ^ 1; }
+      return hexOf(catBytes(catBytes(to32(r), to32(s)), new Uint8Array([rec])));
+    }
+
+    return { verify: verify, recover: recover, sign: sign, compress: compress, pointOf: pointOf };
+  })();
+  /* The rehearsal's invoices are signed with this key and no other: it holds
+     nothing, belongs to no node, and exists so a sample invoice is a real
+     BOLT11 rather than a string shaped like one. */
+  var PRACTICE_KEY = '2f1c8bd6a4e0793d5c1b8a6f47e293d0c5b8f17a26d4e9038b7c15fa6d2e4093';
+
   /* ------------------------------------------------------ bech32 / BOLT11 -- */
   var B32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   var GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
@@ -2273,6 +2571,18 @@ contract CleanSwapHTLC {
     if (bits <= 0) return true;
     return (words[words.length - 1] & ((1 << bits) - 1)) === 0;
   }
+  /* The 5-bit groups as bytes with the last group zero-padded, which is the
+     byte string BOLT11 signs (the payload groups do not have to end on a byte
+     boundary). */
+  function wordsToBytesPad(words) {
+    var acc = 0, bits = 0, out = [], i;
+    for (i = 0; i < words.length; i++) {
+      acc = (acc << 5) | words[i]; bits += 5;
+      while (bits >= 8) { bits -= 8; out.push((acc >>> bits) & 255); }
+    }
+    if (bits > 0) out.push((acc << (8 - bits)) & 255);
+    return new Uint8Array(out);
+  }
   function bytesToWords(bytes) {
     var acc = 0, bits = 0, out = [], i;
     for (i = 0; i < bytes.length; i++) {
@@ -2282,14 +2592,16 @@ contract CleanSwapHTLC {
     if (bits) out.push((acc << (5 - bits)) & 31);
     return out;
   }
+  /* Tagged integers are big-endian; a 35-bit timestamp and an expiry are read
+     as BigInt and only become a Number once they are known to fit one. */
   function wordsToInt(words) {
-    var n = 0, i;
-    for (i = 0; i < words.length; i++) n = n * 32 + words[i];
+    var n = 0n, i;
+    for (i = 0; i < words.length; i++) n = n * 32n + BigInt(words[i] | 0);
     return n;
   }
   function intWords(n, len) {
-    var out = [], i;
-    for (i = len - 1; i >= 0; i--) out.push(Math.floor(n / Math.pow(32, i)) % 32);
+    var v = BigInt(n), out = [], i;
+    for (i = len - 1; i >= 0; i--) out.push(Number((v >> BigInt(5 * i)) & 31n));
     return out;
   }
   /* minimal base-32 digits, no zero padding: tagged fields are big-endian
@@ -2311,16 +2623,32 @@ contract CleanSwapHTLC {
     var m = hrp.match(/^ln([a-z]+?)(\d+)?([munp]?)$/);
     if (!m) throw new Error('unrecognised human-readable part "' + hrp + '"');
     if (words.length < 7 + 104) throw new Error('invoice body too short');
-    var mult = { m: 1e-3, u: 1e-6, n: 1e-9, p: 1e-12, '': 1 };
-    var amtBtc = m[2] ? Number(m[2]) * mult[m[3] || ''] : null;
-    var ts = wordsToInt(words.slice(0, 7));
+    /* The amount is a decimal in the human-readable part: 1m = 1e-3 BTC and so
+       on. It is scaled in BigInt, so an invoice is never read as an amount it
+       does not state, and one finer than a satoshi is refused. */
+    var AMT = { '': 0, m: 3, u: 6, n: 9, p: 12 };
+    var sats = null;
+    if (m[2]) {
+      var scaled = BigInt(m[2]) * 100000000n, div = 10n ** BigInt(AMT[m[3] || '']);
+      if (scaled % div !== 0n) throw new Error('the amount is finer than a satoshi');
+      sats = toNum(scaled / div, 'amount');
+    }
+    var ts = toNum(wordsToInt(words.slice(0, 7)), 'timestamp');
     var body = words.slice(7, words.length - 104), fields = {}, i = 0, type, len, ch;
+    /* A tag may appear once. Two payment hashes, or two expiries, would let a
+       reader and a writer disagree about which one the signature covers. */
     while (i + 3 <= body.length) {
       type = body[i];
       len = (body[i + 1] << 5) | body[i + 2];
       if (i + 3 + len > body.length) throw new Error('truncated field');
-      ch = String.fromCharCode(96 + type);
-      if (type >= 1 && type <= 26) (fields[ch] = fields[ch] || []).push(body.slice(i + 3, i + 3 + len));
+      /* BOLT 11: the type is a 5-bit number written as the bech32 character at
+         that position (`p` is 1, `d` is 13, `x` is 6) - not the letter's place
+         in the alphabet. */
+      ch = B32.charAt(type);
+      if (type >= 1 && type <= 26 && ch) {
+        if (fields[ch]) throw new Error('the invoice carries two "' + ch + '" fields');
+        fields[ch] = [body.slice(i + 3, i + 3 + len)];
+      }
       i += 3 + len;
     }
     var ph = fields.p && fields.p[0];
@@ -2328,17 +2656,48 @@ contract CleanSwapHTLC {
        timestamp. Reading a missing tag as "never expires" would hand the
        escrow-window check an invoice that outlives every window, so the
        standard default is what a missing tag means here too. */
-    var expiry = fields.x && fields.x[0] ? wordsToInt(fields.x[0]) : 3600;
-    var desc = fields.d && fields.d[0] ? new TextDecoder().decode(wordsToBytes(fields.d[0])) : null;
+    var expiry = fields.x && fields.x[0] ? toNum(wordsToInt(fields.x[0]), 'expiry') : 3600;
+    var desc = null;
+    if (fields.d && fields.d[0]) {
+      try { desc = new TextDecoder('utf-8', { fatal: true }).decode(wordsToBytes(fields.d[0])); }
+      catch (e) { throw new Error('the description is not text'); }
+    }
+
+    /* The signature: 65 bytes over SHA-256(hrp + the data words), the last 104
+       words. The payee is named in an `n` tag only sometimes; otherwise the
+       key comes back out of the signature, which is how a payer checks that
+       the invoice was not edited or invented. */
+    var sigHex = hexOf(wordsToBytesPad(words.slice(words.length - 104)));
+    var pre = catBytes(utf8(hrp), wordsToBytesPad(words.slice(0, words.length - 104)));
+    var msg = hexOf(sha256Bytes(pre));
+    var named = fields.n && fields.n[0] && fields.n[0].length === 53 ? hexOf(wordsToBytes(fields.n[0])) : null;
+    var node = named;
+    if (named) {
+      if (!SECP.pointOf(named)) throw new Error('the invoice names a key that is not on the curve');
+      if (!SECP.verify(msg, sigHex, named, true)) throw new Error('the signature does not match the key the invoice names');
+    } else {
+      var pt = SECP.recover(msg, sigHex);
+      if (!pt) throw new Error('the signature cannot be recovered');
+      node = SECP.compress(pt);
+      if (!SECP.verify(msg, sigHex, node, false)) throw new Error('the signature does not verify');
+    }
+    /* An invoice with no amount asks the payer to choose one: nothing here can
+       bind a swap to it, so it is refused rather than read as "any amount".
+       Read last, so a broken signature or a doubled field is what it says it is
+       - an invoice is judged field by field before its amount matters. */
+    if (sats == null || sats <= 0) throw new Error('the invoice states no amount');
+
     return {
       kind: 'bolt11',
       network: m[1],
-      sats: amtBtc == null ? null : Math.round(amtBtc * 1e8),
+      sats: sats,
       paymentHash: ph && ph.length === 52 ? '0x' + hexOf(wordsToBytes(ph)) : null,
       timestamp: ts,
       expiry: expiry,
       expiresAt: ts + expiry,
       description: desc,
+      nodeId: node,
+      signed: true,
       tags: Object.keys(fields).sort().join('')
     };
   }
@@ -2346,17 +2705,19 @@ contract CleanSwapHTLC {
   /* BOLT11 encoder — a hold invoice whose payment_hash the payer cannot choose.
 
      Field order follows the spec: 35-bit timestamp, then tagged fields, then a
-     65-byte signature slot (104 words, exactly). The slot is deterministic
-     filler derived from the payment hash: this app parses and checks the
-     checksum and the fields, it does not do secp256k1, and every minted invoice
-     says so in the log. */
+     65-byte signature slot (104 words, exactly). The slot is a real secp256k1
+     signature by the practice key over SHA-256(hrp + the data words), so a
+     sample invoice passes the same check a partner's real invoice has to pass
+     - the key belongs to no node and signs nothing anyone can pay. */
   function amountPart(sats) {
     if (!sats) return '';
     if (sats % 100 === 0) return (sats / 100) + 'u';   /* 1u = 100 sats */
     return (sats * 10) + 'n';                          /* 1n = 0.1 sats */
   }
   function tagField(ch, words) {
-    return [ch.charCodeAt(0) - 96, words.length >> 5, words.length & 31].concat(words);
+    var type = B32.indexOf(ch);
+    if (type < 1) throw new Error('bad invoice tag "' + ch + '"');
+    return [type, words.length >> 5, words.length & 31].concat(words);
   }
   function bech32Checksum(hrp, words) {
     var p = polymod(hrpExpand(hrp).concat(words).concat([0, 0, 0, 0, 0, 0])) ^ 1, out = [], i;
@@ -2379,19 +2740,18 @@ contract CleanSwapHTLC {
     var hrp = 'ln' + net + amountPart(o.sats);
     var ts = o.timestamp || nowSec();
     var x = o.expiry == null ? T2_SPAN : o.expiry;
-    var seed = fromHex(o.paymentHash), filler = new Uint8Array(65), i;
-    for (i = 0; i < 65; i++) filler[i] = seed[i % 32] ^ ((i * 37 + 11) & 255);
-    filler[64] = 27;
-    function build(desc) {
+    var seed = fromHex(o.paymentHash);
+    function build(desc, expiry) {
       var body = intWords(ts, 7).concat(tagField('p', bytesToWords(seed)));
       if (desc) body = body.concat(tagField('d', bytesToWords(utf8(desc))));
-      body = body.concat(tagField('x', intToVec(x)));
-      body = body.concat(bytesToWords(filler));
-      return assembleBech32(hrp, body);
+      if (expiry != null) body = body.concat(tagField('x', intToVec(expiry)));
+      var msg = hexOf(sha256Bytes(catBytes(utf8(hrp), wordsToBytesPad(body))));
+      var sig = bytesToWords(fromHex(SECP.sign(msg, PRACTICE_KEY)));
+      return assembleBech32(hrp, body.concat(sig));
     }
-    var out = build(null);
+    var out = build(null, o.noExpiry ? null : x);
     if (o.description) {
-      var withDesc = build(o.description);
+      var withDesc = build(o.description, o.noExpiry ? null : x);
       if (withDesc.length <= QR_M) out = withDesc;
     }
     return out;
@@ -2413,12 +2773,12 @@ contract CleanSwapHTLC {
     }
     if (b === 0xfe) {
       if (i + 4 >= u8.length) throw new Error('truncated BigSize');
-      return { value: ((u8[i + 1] << 24) >>> 0) + (u8[i + 2] << 16) + (u8[i + 3] << 8) + u8[i + 4], next: i + 5 };
+      return { value: (u8[i + 1] * 0x1000000) + (u8[i + 2] << 16) + (u8[i + 3] << 8) + u8[i + 4], next: i + 5 };
     }
     if (i + 8 >= u8.length) throw new Error('truncated BigSize');
     v = 0n;
     for (j = 1; j <= 8; j++) v = (v << 8n) | BigInt(u8[i + j]);
-    return { value: Number(v), next: i + 9 };
+    return { value: toNum(v, 'length'), next: i + 9 };
   }
   var OFFER_TYPES = {
     2: 'offer_chains', 4: 'offer_metadata', 6: 'offer_currency', 8: 'offer_amount',
@@ -2428,6 +2788,10 @@ contract CleanSwapHTLC {
   };
   /* type 80 is this app's own tag for a hashlock carried on an offer string. */
   var SWAP_HASH_TYPE = 80;
+  /* Blinded paths arrive as one TLV per path, so 16 (offer_paths) and 160
+     (invoice_paths) may repeat; every other field appears once, and a second
+     copy of one would let a reader and a writer see different terms. */
+  var REPEATABLE_TLV = { 16: 1, 160: 1 };
   function decodeSwapOffer(raw) {
     var o = String(raw).trim().replace(/^lightning:/i, '');
     if (!/^ln[io]1/i.test(o)) throw new Error('not a BOLT12 string');
@@ -2441,17 +2805,23 @@ contract CleanSwapHTLC {
       if (!l) break;
       i = l.next;
       if (i + l.value > bytes.length) throw new Error('truncated TLV');
+      if (fields[t.value] !== undefined && !REPEATABLE_TLV[t.value]) {
+        throw new Error('two "' + t.value + '" fields');
+      }
       fields[t.value] = bytes.slice(i, i + l.value);
       order.push(t.value);
       i += l.value;
     }
     var dec = new TextDecoder();
+    /* Amounts and times are read as BigInt and only become a Number when they
+       fit one: a u64 millisatoshi amount does not fit 2^53. */
     function beUint(u8) {
       var v = 0n, j;
       for (j = 0; j < u8.length; j++) v = (v << 8n) | BigInt(u8[j]);
-      return Number(v);
+      return v;
     }
-    function num(type) { return fields[type] ? beUint(fields[type]) : null; }
+    function num(type) { return fields[type] == null ? null : toNum(beUint(fields[type]), 'field ' + type); }
+    function msat(type) { return fields[type] == null ? null : toNum(beUint(fields[type]) / 1000n, 'amount'); }
     function txt(type) { return fields[type] ? dec.decode(fields[type]) : null; }
     var form = /^lni1/i.test(o) ? 'invoice' : 'offer';
     /* Random text that happens to sit inside the bech32 alphabet still has to
@@ -2473,13 +2843,12 @@ contract CleanSwapHTLC {
          that also carries type 80 does not get to choose a different one */
       paymentHash: form === 'invoice' && fields[168] && fields[168].length === 32 ? '0x' + hexOf(fields[168]) : null,
       hashlockTag: hash && hash.length === 32 ? '0x' + hexOf(hash) : null,
-      sats: fields[170] ? Math.round(beUint(fields[170]) / 1000)
-        : (fields[8] && !fields[6] ? Math.round(beUint(fields[8]) / 1000) : null),
+      sats: fields[170] ? msat(170) : (fields[8] && !fields[6] ? msat(8) : null),
       amount: num(8),
       currency: txt(6),
       description: txt(10),
       issuer: txt(18),
-      absoluteExpiry: fields[164] ? beUint(fields[164]) + (fields[166] ? beUint(fields[166]) : 7200)
+      absoluteExpiry: fields[164] ? toNum(beUint(fields[164]) + (fields[166] ? beUint(fields[166]) : 7200n), 'expiry')
         : (num(14) || null),
       createdAt: num(164),
       relativeExpiry: num(166),
@@ -2593,11 +2962,14 @@ contract CleanSwapHTLC {
      takes the other side, so the same code reads correctly from both ends. */
   function swapCode() {
     if (!S.t2) { S.t2 = nowSec() + T2_SPAN; S.t1 = curHeight() + T1_BLOCKS; }
-    var body = { v: 1, d: S.direction, s: S.sats, u: usdtUnits(), t2: S.t2 };
+    /* Amounts and times travel as decimal text: JSON numbers are doubles, and a
+       token amount above 2^53 would be rounded by the encoder before the other
+       phone ever reads it. */
+    var body = { v: 1, d: S.direction, s: String(S.sats), u: String(usdtUnits()), t2: String(S.t2) };
     /* A wallet code also names the chain and the escrow, which is what the QR
        budget is spent on; the bitcoin block height it used to carry is the one
        field nobody reads on the other side. */
-    if (!(S.mode === 'wallet' && isAddr(S.contract))) body.t1 = S.t1;
+    if (!(S.mode === 'wallet' && isAddr(S.contract))) body.t1 = String(S.t1);
     var inv = readInvoice(pasted());
     if (inv.ok) body.h = b64field(normHex(inv.H));
     var ad = readAddress(addrIn());
@@ -2618,11 +2990,24 @@ contract CleanSwapHTLC {
     return CODE_PREFIX + b64urlEncode(JSON.stringify(body));
   }
 
+  /* A code's amounts are decimal text and are parsed in BigInt; a value that
+     does not fit a Number is refused, never rounded into a neighbour. A code
+     written by an older version carries JSON numbers, and one that survived
+     JSON as an integer is read the same way. */
+  function codeBig(v) {
+    if (typeof v === 'string') return /^\d+$/.test(v) ? BigInt(v) : null;
+    if (typeof v === 'number' && Number.isSafeInteger(v)) return BigInt(v);
+    return null;
+  }
   function readCodeBody(json) {
     if (!json || Number(json.v) !== 1) return null;
-    var sats = Number(json.s), units = Number(json.u), t2 = Number(json.t2), t1 = Number(json.t1 || 0);
-    if (!isFinite(sats) || !isFinite(units) || !isFinite(t2) || !isFinite(t1)) return null;
-    if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
+    var satsB = codeBig(json.s), unitsB = codeBig(json.u), t2B = codeBig(json.t2);
+    var t1B = codeBig(json.t1 == null ? 0 : json.t1);
+    if (satsB == null || unitsB == null || t2B == null || t1B == null) return null;
+    if (satsB <= 0n || unitsB <= 0n || t2B <= 0n) return null;
+    /* 21 million BTC is the most sats that can exist; a token amount that does
+       not fit a Number could not be locked on this screen anyway. */
+    if (satsB > 2100000000000000n || unitsB > SAFE || t2B > SAFE || t1B > SAFE) return null;
     var hRaw = String(json.h || ''), aRaw = String(json.a || '');
     var cRaw = String(json.c || ''), lRaw = String(json.l || '');
     var h = hRaw.charAt(0) === '~' ? unB64field(hRaw) : normHex(hRaw);
@@ -2631,7 +3016,7 @@ contract CleanSwapHTLC {
     var l = lRaw.charAt(0) === '~' ? '0x' + unB64field(lRaw) : lRaw;
     return {
       direction: json.d === 'u2b' ? 'u2b' : 'btc2u',
-      sats: Math.round(sats), units: Math.round(units), t2: Math.round(t2), t1: Math.round(t1),
+      sats: Number(satsB), units: Number(unitsB), t2: Number(t2B), t1: Number(t1B),
       H: /^([0-9a-f]{2}){32}$/.test(h) ? '0x' + h : null,
       address: chainOf(a) ? a : null,
       net: json.n === 'm' ? 'mainnet' : (json.n === 't' ? 'testnet' : null),
@@ -2658,11 +3043,13 @@ contract CleanSwapHTLC {
     var p = m[1].split('.');
     if (p.length < 5 || p[0] !== '1') return null;
     if (!/^[0-9a-f]{64}$/i.test(p[1])) return null;
-    var sats = Number(p[2]), units = Number(p[3]), t2 = Number(p[4]), t1 = Number(p[5] || 0);
-    if (!(sats > 0) || !(units > 0) || !(t2 > 0)) return null;
+    var satsB = codeBig(p[2]), unitsB = codeBig(p[3]), t2B = codeBig(p[4]);
+    var t1B = codeBig(p[5] == null ? 0 : p[5]);
+    if (satsB == null || unitsB == null || t2B == null || t1B == null) return null;
+    if (satsB <= 0n || unitsB <= 0n || t2B <= 0n || unitsB > SAFE) return null;
     return {
-      direction: 'btc2u', sats: Math.round(sats), units: Math.round(units),
-      t2: Math.round(t2), t1: Math.round(t1),
+      direction: 'btc2u', sats: Number(satsB), units: Number(unitsB),
+      t2: Number(t2B), t1: Number(t1B),
       H: '0x' + p[1].toLowerCase(), address: null
     };
   }
@@ -2681,11 +3068,24 @@ contract CleanSwapHTLC {
   function pasted() { var el = invIn(); return String(el ? el.value : '').trim(); }
   function addrIn() { var el = addrEl(); return String(el ? el.value : '').trim(); }
 
+  /* Decoding an invoice verifies a signature, and the screen asks for the same
+     invoice several times per keystroke; the last answer is kept. */
+  var invMemo = { raw: null, dec: null, err: null };
   function parseLightning(raw) {
     var t = String(raw || '').trim().replace(/^lightning:/i, '');
     if (!t) return null;
-    if (/^ln[io]1/i.test(t)) return decodeSwapOffer(t);
-    return decodeBolt11(t);
+    if (invMemo.raw === t) {
+      if (invMemo.err) throw invMemo.err;
+      return invMemo.dec;
+    }
+    try {
+      var d = /^ln[io]1/i.test(t) ? decodeSwapOffer(t) : decodeBolt11(t);
+      invMemo = { raw: t, dec: d, err: null };
+      return d;
+    } catch (e) {
+      invMemo = { raw: t, dec: null, err: e };
+      throw e;
+    }
   }
 
   /* The Lightning half of the swap. Its payment hash IS the swap: the same H
@@ -2701,21 +3101,39 @@ contract CleanSwapHTLC {
     var t = String(raw || '').trim();
     if (!t) return bad('empty', 'Paste the invoice for this swap.');
     var d;
-    try { d = parseLightning(t); } catch (e) { return bad('format', 'That invoice cannot be read. Paste the whole thing.'); }
+    try { d = parseLightning(t); } catch (e) {
+      var why = String((e && e.message) || '');
+      /* A signature that does not check out is a different sentence from a
+         string that is not an invoice at all: one may have been edited on the
+         way here, and the answer is to ask for a fresh invoice. */
+      if (/signature|recover/.test(why)) {
+        return bad('signature', 'That invoice does not check out, so it may have been changed. Ask your partner for a new one.');
+      }
+      if (/states no amount|finer than a satoshi/.test(why)) {
+        return bad('amount', 'That invoice does not state an amount, so it cannot be the one for this swap. Ask for one made for ' + fmt(S.sats) + ' sats.');
+      }
+      return bad('format', 'That invoice cannot be read. Paste the whole thing.');
+    }
     if (!d) return bad('format', 'That invoice cannot be read. Paste the whole thing.');
     if (d.kind === 'bolt12' && d.form === 'offer') {
       return bad('offer', 'An offer cannot hold a swap: the invoice your wallet gets for it carries its own payment hash. Ask your partner for a hold invoice made for this swap.');
+    }
+    /* An invoice that names no amount asks the payer to pick one, so it cannot
+       be tied to the sats on this screen: the escrow id would have nothing to
+       match. */
+    if (d.sats == null || !(Number(d.sats) > 0)) {
+      return bad('amount', 'That invoice does not state an amount, so it cannot be the one for this swap. Ask for one made for ' + fmt(S.sats) + ' sats.');
     }
     var H = d.paymentHash ? '0x' + normHex(d.paymentHash) : null;
     if (!H) return bad('hash', 'That invoice carries no payment hash to lock on.');
     if (S.expectH && normHex(H) !== normHex(S.expectH)) {
       return bad('mismatch', 'That invoice is for a different swap. Ask for the one made from this code.');
     }
-    if (d.sats != null && Number(d.sats) !== Number(S.sats)) {
+    if (Number(d.sats) !== Number(S.sats)) {
       return bad('amount', 'That invoice is for ' + fmt(d.sats) + ' sats, not ' + fmt(S.sats) + '.');
     }
     var exp = invoiceExpiry(d);
-    if (exp != null && nowSec() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
+    if (exp != null && effNow() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
     if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
     var w = windowProblem(d, S.t2);
     if (w) return bad('window', w);
@@ -2735,9 +3153,9 @@ contract CleanSwapHTLC {
      invoice does. A partner who names a window five minutes out is betting that
      the sats land after it; a window years out leaves the funding side's money
      stuck. Both are refused before anything can be approved. */
-  function windowProblem(dec, t2) {
+  function windowProblem(dec, t2, now) {
     if (!t2) return '';
-    var left = Number(t2) - nowSec();
+    var left = Number(t2) - (now == null ? effNow() : Number(now));
     if (!(left > 0)) return 'Those terms have run out. Ask for a new code.';
     if (left < T2_MIN) return 'Those terms close too soon to pay and claim. Ask for a new code.';
     if (left > T2_MAX) return 'Those terms would lock the money for too long. Ask for a new code.';
@@ -2838,10 +3256,11 @@ contract CleanSwapHTLC {
     var locked = String(p.hashlock || '').toLowerCase();
     if (!/^0x[0-9a-f]{64}$/.test(locked)) return bad('format', 'That lock code cannot be read.');
     if (normHex(locked) !== normHex(S.H)) return bad('mismatch', 'That lock is for a different swap.');
-    if (String(p.timelock) !== String(S.t2)) return bad('timelock', 'That lock ends at the wrong time.');
-    var held = Number(p.amount), want = Number(usdtUnits());
-    if (!(held > 0)) return bad('amount', 'That lock has no amount.');
-    if (held !== want) return bad('amount', 'That lock holds ' + (held / 1e6).toFixed(2) + ' USDT, not ' + usdtTxt() + '.');
+    if (!sameAmount(p.timelock, S.t2)) return bad('timelock', 'That lock ends at the wrong time.');
+    var held, want = BigInt(usdtUnits());
+    try { held = BigInt(String(p.amount == null ? '' : p.amount).trim()); } catch (e) { held = -1n; }
+    if (held <= 0n) return bad('amount', 'That lock has no amount.');
+    if (held !== want) return bad('amount', 'That lock holds ' + unitsTxt(held) + ' USDT, not ' + usdtTxt() + '.');
     return good('The USDT side is locked.', { dec: p });
   }
 
@@ -2851,7 +3270,13 @@ contract CleanSwapHTLC {
   }
 
   /* ----------------------------------------------------------- one gate --- */
+  /* The gate runs on the chain's clock as well as the phone's: a window the
+     chain says has run out has run out, whatever this phone believes the time
+     to be. One reading serves every check for 45 seconds. */
   function validate() {
+    return syncChainTime().then(validateNow);
+  }
+  function validateNow() {
     if (S.phase === 'settled') {
       return Promise.resolve(good(S.direction === 'btc2u'
         ? 'You received ' + usdtTxt() + ' USDT' + (S.mode === 'wallet' ? ' on ' + curChain().label : '') + '.'
@@ -3148,7 +3573,7 @@ contract CleanSwapHTLC {
     var claimable = c && c.state === 'locked' && S.phase === 'paid';
     $('payRowClaim').hidden = !open;
     $('claimBtn').hidden = !claimable;
-    $('refundBtn').hidden = !(open && S.direction === 'u2b' && (!claimable || (S.t2 && nowSec() >= S.t2)));
+    $('refundBtn').hidden = !(open && S.direction === 'u2b' && (!claimable || (S.t2 && effNow() >= S.t2)));
     $('secretRow').hidden = !$('secretRow').dataset.open || $('secretRow').dataset.open === '0';
 
     // The payer has to be able to claim if the partner goes quiet: that takes
@@ -3378,30 +3803,35 @@ contract CleanSwapHTLC {
   function paid() {
     if (S.phase !== 'paying') return;
     /* Paying into the last minutes of the window is how a payer loses: the
-       escrow can be refunded before the claim lands. */
-    if (S.t2 && S.t2 - nowSec() <= PAY_MARGIN) {
-      var m = 'The escrow window is closing. Do not pay; ask for a new code.';
-      S.note = m;
-      log('BLOCK', m, 'c-err');
-      render();
-      toast(m);
-      return;
-    }
-    log('PAID', S.direction === 'btc2u'
-      ? 'the sats have been sent \u00b7 waiting for the escrow to pay out on ' + curChain().label
-      : 'the USDT has been sent');
-    S.phase = 'paid';
-    S.note = '';
-    render();
-    refreshGate();
-    refreshChain().then(function (c) {
-      if (!c) return;
-      if (c.state === 'claimed') { settleByChain(c); return; }
-      if (c.state === 'refunded') { wentBack(c); return; }
-      startWatch();
+       escrow can be refunded before the claim lands. The clock that counts is
+       the chain's, read fresh on the tap, because a phone's clock is something
+       its owner can move. */
+    syncChainTime(true).then(function (now) {
+      if (S.phase !== 'paying') return;
+      if (S.t2 && S.t2 - now <= PAY_MARGIN) {
+        var m = 'The escrow window is closing. Do not pay; ask for a new code.';
+        S.note = m;
+        log('BLOCK', m, 'c-err');
+        render();
+        toast(m);
+        return;
+      }
+      log('PAID', S.direction === 'btc2u'
+        ? 'the sats have been sent \u00b7 waiting for the escrow to pay out on ' + curChain().label
+        : 'the USDT has been sent');
+      S.phase = 'paid';
+      S.note = '';
       render();
       refreshGate();
-      toast('Watching the chain. Nothing else to tap.');
+      refreshChain().then(function (c) {
+        if (!c) return;
+        if (c.state === 'claimed') { settleByChain(c); return; }
+        if (c.state === 'refunded') { wentBack(c); return; }
+        startWatch();
+        render();
+        refreshGate();
+        toast('Watching the chain. Nothing else to tap.');
+      });
     });
   }
 
@@ -3439,7 +3869,7 @@ contract CleanSwapHTLC {
     S.t1 = null; S.t2 = null;
     S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null; S.basis = null;
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
-    S.locker = ''; S.codeWarn = '';
+    S.locker = ''; S.codeWarn = ''; S.codeAddr = '';
     S.lockTx = ''; S.claimTx = ''; S.secret = '';
     S.busy = false;
     var s = $('secretIn'); if (s) { s.value = ''; }
@@ -3485,15 +3915,23 @@ contract CleanSwapHTLC {
 
   function renderCodeWarn() {
     var el = $('codeWarn');
-    if (!el) return;
-    el.textContent = S.codeWarn || '';
-    el.hidden = !S.codeWarn;
+    if (el) { el.textContent = S.codeWarn || ''; el.hidden = !S.codeWarn; }
+    var row = $('codeAddr'), txt = $('codeAddrTxt');
+    if (!row || !txt) return;
+    if (S.codeAddr) {
+      txt.textContent = 'This code names a USDT address (' + short(S.codeAddr, 6) +
+        '). Use it only if it is yours.';
+      row.hidden = false;
+    } else {
+      txt.textContent = '';
+      row.hidden = true;
+    }
   }
 
   function applyCode(text) {
     var c = parseSwapLink(text);
     if (!c) { toast('That is not a swap code'); return false; }
-    var now = nowSec();
+    var now = effNow();
     if (S.phase === 'settled' || S.phase === 'refunded') { toast('Tap Done first, then use the code.'); return false; }
     /* A code names the terms of the next swap. Loading one into a swap that is
        already running would put different numbers under money that has moved,
@@ -3542,8 +3980,19 @@ contract CleanSwapHTLC {
     /* The id is the terms plus the funding address: when the other side funds
        the escrow, their code is where that address comes from. */
     S.locker = S.direction === 'btc2u' ? (c.locker || '') : '';
-    if (c.address) addrEl().value = c.address;
+    /* Where the USDT lands is the one field a code must not set on the side that
+       receives it: whoever wrote the code could name their own address, and the
+       sats would buy USDT paid to them. On the side that sends the USDT the
+       address in a code is the partner's own destination, which is theirs to
+       name - that one is filled in. On the receiving side it is only offered,
+       for a tap that says it is this phone's address. */
+    S.codeAddr = '';
+    if (c.address) {
+      if (S.direction === 'u2b') addrEl().value = c.address;
+      else S.codeAddr = c.address;
+    }
     S.codeWarn = '';
+    renderCodeWarn();
     $('codeRow').hidden = true;
     presetsOn();
     log('CODE', 'terms from the other side \u00b7 ' + fmt(S.sats) + ' sats \u00b7 ' + usdtTxt() + ' USDT');
@@ -3560,7 +4009,7 @@ contract CleanSwapHTLC {
      gate asks for, so a rehearsal exercises the same rule a real invoice has
      to pass. */
   function sampleExpiry() {
-    var left = S.t2 ? Math.max(S.t2 - nowSec(), T2_MIN) : T2_SPAN;
+    var left = S.t2 ? Math.max(S.t2 - effNow(), T2_MIN) : T2_SPAN;
     return left + T1_MARGIN + 900;
   }
 
@@ -3593,32 +4042,45 @@ contract CleanSwapHTLC {
   function qrClear(box) {
     while (box.firstChild) box.removeChild(box.firstChild);
   }
-  /* The encoder's own SVG, parsed as a document and imported rather than pasted
-     into the page: the payload is a stranger's text, and markup assembled from
-     strings would run whatever it happened to carry. */
-  function qrNode(svg) {
-    try {
-      var doc = new DOMParser().parseFromString(String(svg), 'image/svg+xml');
-      if (!doc || doc.getElementsByTagName('parsererror').length) return null;
-      var node = doc.documentElement;
-      if (!node || String(node.nodeName).toLowerCase() !== 'svg') return null;
-      return document.importNode(node, true);
-    } catch (e) { return null; }
+  /* The QR is drawn here, element by element, from the encoder's module grid:
+     the payload is a stranger's text and markup built out of strings is markup a
+     stranger can write. Nothing is parsed, so nothing in the payload can turn
+     into a node. */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function qrNode(q, quiet) {
+    var dim = q.size + quiet * 2, path = '', y, x;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + dim + ' ' + dim);
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'QR');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    for (y = 0; y < q.size; y++) {
+      for (x = 0; x < q.size; x++) {
+        if (q.modules[y][x]) path += 'M' + (x + quiet) + ' ' + (y + quiet) + 'h1v1h-1z';
+      }
+    }
+    var el = document.createElementNS(SVG_NS, 'path');
+    el.setAttribute('d', path);
+    el.setAttribute('fill', '#040e09');
+    svg.appendChild(el);
+    return svg;
   }
   function showQr(payload, caption, reveal) {
     var box = $('qrBox');
     if (!box) return;
     if (!payload) { qrClear(box); toast('Nothing to show yet'); return; }
     var bytes = utf8(payload).length;
-    var svg = null;
+    var q = null, quiet = 2;
     if (bytes <= QR_MAX) {
       ['M', 'L'].forEach(function (level) {
-        if (svg) return;
-        try { svg = window.QR.svg(payload, { level: level, quiet: 2 }); } catch (e) { svg = null; }
+        if (q) return;
+        try { q = window.QR.encode(payload, { level: level }); } catch (e) { q = null; }
       });
     }
     qrClear(box);
-    var node = svg ? qrNode(svg) : null;
+    var node = q ? qrNode(q, quiet) : null;
     if (!node) {
       box.appendChild(qrLine('Too long for a QR: use Copy instead.'));
       return;
@@ -3793,6 +4255,16 @@ contract CleanSwapHTLC {
         }, function () { /* typing it in is fine too */ });
       }
     },
+    useCodeAddr: function () {
+      if (!S.codeAddr) return;
+      addrEl().value = S.codeAddr;
+      addrEl().dataset.state = '';
+      S.codeAddr = '';
+      log('CODE', 'the USDT address the code named was used, after a tap');
+      renderCodeWarn();
+      render();
+      refreshGate();
+    },
     useCode: function () {
       var v = String($('codeIn').value || '').trim();
       if (!v) { toast('Paste the code first'); return; }
@@ -3904,6 +4376,8 @@ contract CleanSwapHTLC {
     BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
     invoiceExpiry: invoiceExpiry, windowProblem: windowProblem, rpcQuorum: rpcQuorum, endpoints: endpoints,
     sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
+    SECP: SECP, wordsToInt: wordsToInt, fromHex: fromHex, effNow: effNow, syncChainTime: syncChainTime,
+    unitsTxt: unitsTxt,
     base58Bytes: base58Bytes, tronAddressBytes: tronAddressBytes, chainOf: chainOf,
     decodeBolt11: decodeBolt11, decodeBolt12: decodeSwapOffer, decodeSwapOffer: decodeSwapOffer,
     mintInvoice: mintInvoice, mintOffer: mintOffer,

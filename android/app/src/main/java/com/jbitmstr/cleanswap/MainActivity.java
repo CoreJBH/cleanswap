@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -58,6 +59,10 @@ public class MainActivity extends Activity {
         Window window = getWindow();
         window.setStatusBarColor(BG);
         window.setNavigationBarColor(BG);
+        /* Nothing on this screen belongs in a screenshot, a screen recording or
+           the thumbnail the recent-apps switcher keeps: an invoice, a USDT
+           address and a running swap are all on it. */
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
@@ -85,7 +90,10 @@ public class MainActivity extends Activity {
         s.setLoadWithOverviewMode(true);
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        /* The page is one file in the APK and its bytes are the app: a cached
+           copy is a stale swap screen at best. Nothing is read from a cache. */
+        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        s.setSaveFormData(false);
 
         setContentView(web);
         if (state != null) {
@@ -177,6 +185,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (web != null) {
+            // Whatever the WebView held of a swap goes when the screen does.
+            web.clearCache(true);
+            web.clearHistory();
             web.destroy();
             web = null;
         }
@@ -206,7 +217,14 @@ public class MainActivity extends Activity {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             Uri uri = request == null ? null : request.getUrl();
-            if (uri == null || !APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))) {
+            /* Exactly one document is answered from the APK: https, this app's
+               own host, and the one path the shell loads. Another scheme, or
+               another path on the same host, is not a page of this app and is
+               not served - it falls through to a normal request that fails. */
+            if (uri == null
+                    || !"https".equalsIgnoreCase(String.valueOf(uri.getScheme()))
+                    || !APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))
+                    || !"/index.html".equals(String.valueOf(uri.getPath()))) {
                 return null;
             }
             try {
@@ -258,9 +276,27 @@ public class MainActivity extends Activity {
         cannot use an intent to reach an app the person never asked for. */
     private static final String[] HANDOFF_SCHEMES = {"lightning", "bitcoin", "ethereum", "https"};
 
+    /** https is the one scheme that could reach anything at all, so it is narrowed to the
+        hosts this app actually offers: the deploy page, the two block explorers and the
+        price feed. Any other https address is refused here and stays something the person
+        can open in their own browser. */
+    private static final String[] HTTPS_HOSTS = {
+            "remix.ethereum.org", "arbiscan.io", "sepolia.arbiscan.io", "mempool.space"
+    };
+
     private static boolean isHandoffScheme(String scheme) {
         for (String allowed : HANDOFF_SCHEMES) {
             if (allowed.equals(scheme)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAllowedHttpsHost(String host) {
+        String h = host == null ? "" : host.toLowerCase(Locale.ROOT);
+        for (String allowed : HTTPS_HOSTS) {
+            if (allowed.equals(h)) {
                 return true;
             }
         }
@@ -272,6 +308,11 @@ public class MainActivity extends Activity {
         String scheme = raw.toLowerCase(Locale.ROOT);
         if (!isHandoffScheme(scheme)) {
             Toast.makeText(this, "This app does not open " + label(scheme) + ".", Toast.LENGTH_LONG).show();
+            return true;
+        }
+        if (scheme.equals("https") && !isAllowedHttpsHost(uri.getHost())) {
+            String host = uri.getHost() == null ? "that address" : uri.getHost();
+            Toast.makeText(this, "This app does not open " + host + ".", Toast.LENGTH_LONG).show();
             return true;
         }
         // Intent filters match the scheme case-sensitively, and a pasted or QR-read link may

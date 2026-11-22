@@ -2,8 +2,9 @@
    decoder (test/invoice-crosscheck.py).
 
    The fixtures carry a fixed timestamp so the output is reproducible; the app
-   derives the 65-byte signature slot from the payment hash, which means the
-   string is stable for a given (hash, amount, expiry). */
+   signs each one with its practice key by RFC 6979, a nonce derived from the key
+   and the message, so the same (hash, amount, expiry) always gives the same
+   string - and the signature is checked against the curve in the Python suite. */
 const path = require('path');
 const fs = require('fs');
 const { chromium } = require(process.env.PLAYWRIGHT_PKG || 'playwright');
@@ -31,7 +32,7 @@ const CASES = [
     const invoice = await page.evaluate(f => window.CLEANSWAP.mintInvoice(f), c);
     const decoded = await page.evaluate(inv => {
       const d = window.CLEANSWAP.decodeBolt11(inv);
-      return { sats: d.sats, paymentHash: d.paymentHash, network: d.network, expiresAt: d.expiresAt, description: d.description };
+      return { sats: d.sats, paymentHash: d.paymentHash, network: d.network, expiresAt: d.expiresAt, description: d.description, nodeId: d.nodeId };
     }, invoice);
     out.push({ case: c, invoice, length: invoice.length, selfDecoded: decoded });
     console.log(c.label.padEnd(10) + ' ' + invoice.length + ' chars  ' + invoice.slice(0, 28) + '…');

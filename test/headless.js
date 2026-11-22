@@ -32,6 +32,10 @@ const { chromium } = require(PKG);
 const APP = path.resolve(__dirname, '..', '..', '..', 'ln-usdt-swap.html');
 const SHOTS = path.resolve(__dirname, '..', 'shots');
 const BUILD = path.resolve(__dirname, '..', 'build');
+/* BOLT #11's own test vectors: real invoices signed by the spec's key, so the
+   app's signature check is measured against something it did not make. */
+const VECTORS = JSON.parse(fs.readFileSync(path.join(__dirname, 'bolt11-vectors.json'), 'utf8'));
+const vector = (name) => VECTORS.cases.find(c => c.name === name).invoice;
 const URL = 'file://' + APP;
 const HANGUL = /[\uac00-\ud7af]/;
 /* words that must never reach the screen: symbol names, hashes, raw payloads */
@@ -124,19 +128,14 @@ function intWords(n, len) {
 function tagField(ch, words) {
   return [ch.charCodeAt(0) - 96, words.length >> 5, words.length & 31, ...words];
 }
-/* A BOLT11 invoice with the payment hash and the timestamp and no `x` tag: the
-   standard says such an invoice expires 3600 seconds after its timestamp. */
-function bolt11NoExpiry(hashHex, sats, ts) {
-  const hrp = 'lnbc' + (sats % 100 === 0 ? (sats / 100) + 'u' : (sats * 10) + 'n');
-  const words = [
-    ...intWords(ts, 7),
-    ...tagField('p', fiveBits(Buffer.from(hashHex.slice(2), 'hex'))),
-    ...new Array(104).fill(0)
-  ];
-  const p = b32Polymod([...b32Hrp(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
-  const sum = [];
-  for (let i = 0; i < 6; i++) sum.push((p >>> (5 * (5 - i))) & 31);
-  return hrp + '1' + [...words, ...sum].map(i => B32C[i]).join('');
+/* An invoice with the payment hash and the timestamp and no `x` tag: the
+   standard says such an invoice expires 3600 seconds after its timestamp. It is
+   minted by the app because a hand-built one would now carry an unverifiable
+   signature - the point of the case is the missing tag, not the signature. */
+async function bolt11NoExpiry(page, hashHex, sats, ts) {
+  return page.evaluate((o) => window.CLEANSWAP.mintInvoice({
+    paymentHash: o.h, sats: o.sats, timestamp: o.ts, noExpiry: true
+  }), { h: hashHex, sats: sats, ts: ts });
 }
 
 /* A binary field of a swap code: `~` plus base64url of the bytes, the way the
@@ -182,6 +181,8 @@ const PARTNER = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
 const CHAIN = {
   chainId: '0x66eee',                 /* Arbitrum Sepolia */
   block: 0x2f0000,
+  blockTs: Math.floor(Date.now() / 1000),  /* the chain's own clock */
+  allowance: 0,                       /* what the token answers for allowance(...) */
   records: {},                        /* swapId (lower-case) -> record */
   receipts: {},                       /* tx hash -> {status, blockNumber} */
   txs: {},                            /* tx hash -> transaction (from, to, input) */
@@ -203,6 +204,11 @@ function chainJson(j) {
   switch (j && j.method) {
     case 'eth_chainId': return CHAIN.chainId;
     case 'eth_blockNumber': return '0x' + CHAIN.block.toString(16);
+    case 'eth_getBlockByNumber': return {
+      number: '0x' + CHAIN.block.toString(16),
+      timestamp: '0x' + CHAIN.blockTs.toString(16),
+      hash: '0x' + '11'.repeat(32)
+    };
     case 'eth_getCode': return '0x6080604052348015600e575f80fd5b50';
     case 'eth_call': {
       const data = String((p[0] && p[0].data) || '');
@@ -212,7 +218,7 @@ function chainJson(j) {
         return rec ? recordHex(rec) : '0x' + '0'.repeat(64 * 8);
       }
       if (data.toLowerCase().startsWith('0x70a08231')) return '0x' + hexWord(32500000);
-      if (data.toLowerCase().startsWith('0xdd62ed3e')) return '0x' + hexWord(0);
+      if (data.toLowerCase().startsWith('0xdd62ed3e')) return '0x' + hexWord(CHAIN.allowance);
       return '0x';
     }
     case 'eth_getTransactionReceipt': {
@@ -272,6 +278,9 @@ const lieServer = http.createServer((req, res) => {
     let result = null;
     if (j.method === 'eth_chainId') result = CHAIN.chainId;
     else if (j.method === 'eth_blockNumber') result = '0x' + CHAIN.block.toString(16);
+    else if (j.method === 'eth_getBlockByNumber') result = {
+      number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + CHAIN.blockTs.toString(16)
+    };
     else if (j.method === 'eth_getCode') result = '0x6080604052348015600e575f80fd5b50';
     else if (j.method === 'eth_call') result = recordHex(LIE.record);
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
@@ -430,6 +439,8 @@ const view = (pg) => pg.evaluate(() => {
   check('content: no key, no seed and no password field anywhere',
     !/privateKey|mnemonic|seed ?phrase|type="password"/i.test(html));
   check('content: no WebLN hand-off', !/webln/i.test(html));
+  check('content: no markup is parsed into the page (DOMParser/innerHTML of strangers)',
+    !/DOMParser/.test(html) && !/insertAdjacentHTML/.test(html) && !/document\.write/.test(html));
   check('content: contract source embedded (sha256 hashlock)', /sha256\(abi\.encodePacked\(preimage\)\)/.test(html));
   check('content: no remote scripts or styles', !/<script[^>]+src=/i.test(html) && !/<link[^>]+rel="stylesheet"/i.test(html));
   check('content: the page holds no file:// path of its own', !/file:\/\//.test(html),
@@ -657,8 +668,20 @@ const view = (pg) => pg.evaluate(() => {
   });
   await page.click('[data-act="pasteCode"]');
   await page.fill('#codeIn', partnerCode);
+  await page.fill('#addrIn', '');        /* the field starts empty, as a new phone's would */
   await page.click('[data-act="useCode"]');
   await page.waitForTimeout(400);
+  /* The code names this phone's address, and on the receiving side that is
+     exactly what is not taken on faith: it is offered, and typed here. */
+  check('code: the address a code names is offered, not written into the field',
+    (await page.inputValue('#addrIn')) === '' &&
+    /Use it only if it is yours/.test(await page.textContent('#codeAddr')),
+    await page.inputValue('#addrIn'));
+  await page.click('[data-act="useCodeAddr"]');
+  await page.waitForTimeout(200);
+  check('code: one tap on "Use it" puts the address in',
+    (await page.inputValue('#addrIn')) === USER_ADDR && !(await page.isVisible('#codeAddr')),
+    await page.inputValue('#addrIn'));
   await page.fill('#invIn', realInv);
   await page.waitForTimeout(350);
   w = await view(page);
@@ -721,6 +744,26 @@ const view = (pg) => pg.evaluate(() => {
   check('locked: Back is offered while waiting', w.back, String(w.back));
   check('locked: the two steps fold away while waiting', !w.steps && !w.presets && !w.terms, String(w.steps));
   await page.screenshot({ path: path.join(SHOTS, 'v50-paying.png') });
+
+  /* The escrow window is measured by the chain as well as by the phone: a node
+     that has moved on says the window is closing even while this phone's clock
+     still shows minutes left, and paying then is how a payer loses. */
+  const realChainTs = CHAIN.blockTs;
+  CHAIN.blockTs = Math.floor(Date.now() / 1000) + 7200 - 300;
+  const clockCalls = CHAIN.calls.length;
+  await page.click('#primary');                 /* I paid */
+  await page.waitForTimeout(900);
+  w = await view(page);
+  check('clock: a chain past the window refuses to pay, though the phone says there is time',
+    w.phase === 'paying' && /window is closing/.test(w.toast), w.phase + ' · ' + w.toast);
+  check('clock: the block time was read from the chain for that answer',
+    CHAIN.calls.slice(clockCalls).some(c => c.method === 'eth_getBlockByNumber'),
+    CHAIN.calls.slice(clockCalls).map(c => c.method).join(','));
+  check('clock: moving the phone back does not reopen the window',
+    await page.evaluate(() => { const s = window.CLEANSWAP.state; s.sim = -7200; const t = window.CLEANSWAP.effNow(); s.sim = 0; return t; })
+      >= CHAIN.blockTs, String(CHAIN.blockTs));
+  CHAIN.blockTs = realChainTs;
+  await page.waitForTimeout(200);
 
   await page.click('[data-act="payQrInv"]');
   await page.waitForTimeout(350);
@@ -1326,9 +1369,67 @@ const view = (pg) => pg.evaluate(() => {
   check('timelock: neither refusal changed the terms on screen',
     await ps.evaluate(() => window.CLEANSWAP.state.t2) === t2Before,
     String(t2Before));
+  /* Amounts in a code are decimal text, read in BigInt: a token amount above
+     2^53 is refused rather than rounded into a different swap. */
+  const hugeUnits = swapCodeOf({ dir: 'u2b', sats: 50000, units: '9007199254740993',
+    t2: Math.floor(Date.now() / 1000) + 7200, h: H2, a: USER_ADDR, net: 't', contract: OFFICIAL, locker: PARTNER });
+  const tookHuge = await ps.evaluate((c) => window.CLEANSWAP.applyCode(c), hugeUnits);
+  const textUnits = swapCodeOf({ dir: 'u2b', sats: '50000', units: String(unitsS),
+    t2: String(Math.floor(Date.now() / 1000) + 7200), h: H2, a: USER_ADDR });
+  const tookText = await ps.evaluate((c) => window.CLEANSWAP.applyCode(c), textUnits);
+  check('amounts: a code whose token amount does not fit a number is refused',
+    tookHuge === false && await ps.evaluate(() => window.CLEANSWAP.state.units) === Number(unitsS),
+    String(tookHuge));
+  check('amounts: a code that writes its amounts as text is read the same way',
+    tookText === true && await ps.evaluate(() => window.CLEANSWAP.state.sats) === 50000,
+    String(tookText));
+  const codeText = await ps.evaluate(() => window.CLEANSWAP.swapCode());
+  const codeJson = Buffer.from(codeText.replace('cleanswap:', ''), 'base64url').toString();
+  check('amounts: the app writes its own code amounts as text',
+    /"s":"?50000"?/.test(codeJson) && /"u":"\d+"/.test(codeJson), codeJson.slice(0, 60));
+
   await ps.screenshot({ path: path.join(SHOTS, 'v60-code-refused.png') });
   check('security: no page errors on the refusal paths', SEC.errs.length === 0, SEC.errs.join(' | '));
   await SEC.c.close();
+
+  /* ------------------------------- 7c2. a code never redirects the USDT -------- */
+  /* Where the USDT lands is the one field a stranger's code must not set on the
+     side that receives it: a code could name its author's own address, and the
+     sats would buy USDT paid to them. On the side that sends the USDT the
+     address is the partner's own destination, so it is filled in. */
+  const ADDRC = await freshPage(390, 844);
+  const pac = ADDRC.p;
+  const attacker = '0x' + 'ee'.repeat(20);
+  const mine = '0x' + '7a'.repeat(20);
+  const takeCode = await pac.evaluate((c) => window.CLEANSWAP.applyCode(c), swapCodeOf({
+    dir: 'u2b', sats: 50000, units: unitsS, t2: Math.floor(Date.now() / 1000) + 7200, a: attacker
+  }));
+  const afterTake = await pac.evaluate(() => ({
+    dir: document.body.dataset.dir,
+    field: document.getElementById('addrIn').value,
+    row: !document.getElementById('codeAddr').hidden,
+    text: document.getElementById('codeAddrTxt').textContent
+  }));
+  check('address: a code that sends the USDT somewhere is taken, its address is not',
+    takeCode === true && afterTake.dir === 'btc2u' && afterTake.field === '', JSON.stringify(afterTake.field));
+  check('address: the code\'s address is shown, and needs a tap to be used',
+    afterTake.row && afterTake.text.includes(attacker.slice(0, 8)) && /Use it only if it is yours/.test(afterTake.text),
+    afterTake.text);
+  check('address: the refusal is plain English', !JARGON.test(afterTake.text), afterTake.text);
+
+  /* the other direction: the code's address is the partner's own destination */
+  const sendSide = await pac.evaluate((c) => window.CLEANSWAP.applyCode(c), swapCodeOf({
+    dir: 'btc2u', sats: 50000, units: unitsS, t2: Math.floor(Date.now() / 1000) + 7200, a: mine
+  }));
+  const afterSend = await pac.evaluate(() => ({
+    dir: document.body.dataset.dir, field: document.getElementById('addrIn').value,
+    row: !document.getElementById('codeAddr').hidden
+  }));
+  check('address: on the side that sends the USDT the code\'s address is filled in',
+    sendSide === true && afterSend.dir === 'u2b' && afterSend.field === mine && afterSend.row === false,
+    afterSend.dir + ' ' + afterSend.field);
+  check('address: no page errors while loading codes', ADDRC.errs.length === 0, ADDRC.errs.join(' | '));
+  await ADDRC.c.close();
 
   /* ------------------------------- 7d. the invoice has to outlive the window --- */
   const WIN = await freshPage(390, 844);
@@ -1380,6 +1481,7 @@ const view = (pg) => pg.evaluate(() => {
   const codeQ = swapCodeOf({ dir: 'u2b', sats: 50000, units: unitsS, t2: t2w, h: '0x' + '5e'.repeat(32),
     a: USER_ADDR, net: 't', contract: CONTRACT, locker: PARTNER });
   await pq.evaluate((c) => window.CLEANSWAP.applyCode(c), codeQ);
+  await pq.fill('#addrIn', USER_ADDR);
   const invQ = await pq.evaluate(() => window.CLEANSWAP.mintInvoice({
     paymentHash: window.CLEANSWAP.state.expectH, sats: 50000, expiry: 14400
   }));
@@ -1408,6 +1510,77 @@ const view = (pg) => pg.evaluate(() => {
   await pg.waitForTimeout(250);
   check('secret: sending USDT does not ask for it', !(await pg.evaluate(() => !document.getElementById('invHint').hidden)));
   await PG.c.close();
+
+  /* ----------------------- 7f2. an old allowance is cleared, not topped up -- */
+  /* A token that already allows the escrow something refuses a second non-zero
+     approval, so the app resets the allowance to zero first and only then asks
+     for the exact amount - both as real transactions, each waited for. */
+  const ACCOUNT = '0xc0ffee0000000000000000000000000000000001';
+  const ALW = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await ALW.addInitScript((acct) => {
+    window.__walletCalls = [];
+    window.ethereum = {
+      request: function (o) {
+        const p = o.params || [];
+        if (o.method === 'eth_chainId') return Promise.resolve('0x66eee');
+        if (o.method === 'eth_accounts' || o.method === 'eth_requestAccounts') return Promise.resolve([acct]);
+        if (o.method === 'eth_sendTransaction') {
+          const h = '0x' + String(window.__walletCalls.length + 1).padStart(64, '0');
+          window.__walletCalls.push({ to: p[0].to, data: p[0].data, hash: h });
+          return Promise.resolve(h);
+        }
+        return Promise.reject(new Error('unexpected ' + o.method));
+      }
+    };
+  }, ACCOUNT);
+  const alp = await ALW.newPage();
+  const alErrs = [];
+  alp.on('pageerror', e => alErrs.push(e.message));
+  alp.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) alErrs.push(m.text()); });
+  await alp.goto(URL, { waitUntil: 'load' });
+  await alp.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await alp.click('#modeWallet');
+  await alp.click('#swapDir');
+  await alp.waitForTimeout(250);
+  const alInv = await alp.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '5d'.repeat(32), sats: 50000, expiry: 6 * 3600 }));
+  await alp.fill('#addrIn', PARTNER);
+  await alp.fill('#invIn', alInv);
+  await alp.click('#chainRow');
+  await alp.fill('#contractIn', CONTRACT);
+  await alp.fill('#tokenIn', TOKEN);
+  await alp.fill('#rpcIn', RPC);
+  await alp.click('[data-act="saveSetup"]');
+  await alp.waitForTimeout(900);
+  await alp.click('#chainRow');
+  await alp.waitForTimeout(200);
+  const approveHashes = ['0x' + '01'.padStart(64, '0'), '0x' + '02'.padStart(64, '0'), '0x' + '03'.padStart(64, '0')];
+  approveHashes.forEach(h => { CHAIN.receipts[h] = { status: '0x1' }; });
+  CHAIN.allowance = 5000000;                    /* 5 USDT already allowed */
+  const alUnits = await alp.evaluate(() => window.CLEANSWAP.usdtUnits());
+  await alp.click('#primary');
+  await alp.waitForTimeout(2500);
+  const walletCalls = await alp.evaluate(() => window.__walletCalls);
+  const approveCalls = walletCalls.filter(c => String(c.data).toLowerCase().startsWith('0x095ea7b3'));
+  const lockCalls = walletCalls.filter(c => String(c.data).toLowerCase().startsWith('0x91644b2b'));
+  const word = (data, i) => String(data).replace(/^0x/, '').slice(8 + i * 64, 8 + (i + 1) * 64);
+  check('allowance: an old allowance is reset to zero before the new one',
+    approveCalls.length === 2 && /^0+$/.test(word(approveCalls[0].data, 1)),
+    approveCalls.map(c => BigInt('0x' + word(c.data, 1)).toString()).join(','));
+  check('allowance: the second approval is exactly the swap amount',
+    approveCalls.length === 2 && BigInt('0x' + word(approveCalls[1].data, 1)) === BigInt(alUnits),
+    approveCalls.length === 2 ? BigInt('0x' + word(approveCalls[1].data, 1)).toString() : 'none');
+  check('allowance: both approvals name the escrow as the spender',
+    approveCalls.every(c => ('0x' + word(c.data, 0).slice(24)) === CONTRACT), approveCalls.length + ' approvals');
+  check('allowance: the lock is sent only after both approvals are mined',
+    lockCalls.length === 1 && walletCalls.indexOf(lockCalls[0]) === walletCalls.length - 1,
+    walletCalls.length + ' calls');
+  check('allowance: the allowance was read before any approval',
+    CHAIN.calls.some(c => String((c.params[0] || {}).data || '').toLowerCase().startsWith('0xdd62ed3e')),
+    String(CHAIN.calls.length) + ' rpc calls');
+  check('allowance: no page errors while approving', alErrs.length === 0, alErrs.join(' | '));
+  await alp.screenshot({ path: path.join(SHOTS, 'v62-allowance.png') });
+  await ALW.close();
+  CHAIN.allowance = 0;
 
   /* ------------------------------ 7g. one endpoint is not a cross-check --- */
   /* A private node is its own answer, but a reading nobody else confirms is not
@@ -1441,7 +1614,7 @@ const view = (pg) => pg.evaluate(() => {
   const hx = '0x' + crypto.createHash('sha256').update(Buffer.from('a7'.repeat(32), 'hex')).digest('hex');
   await pex.evaluate((c) => window.CLEANSWAP.applyCode(c),
     swapCodeOf({ dir: 'u2b', sats: 50000, units: unitsS, t2: t2x, h: hx, a: USER_ADDR }));
-  const noXInv = bolt11NoExpiry(hx, 50000, Math.floor(Date.now() / 1000));
+  const noXInv = await bolt11NoExpiry(pex, hx, 50000, Math.floor(Date.now() / 1000));
   const noX = await pex.evaluate((inv) => {
     const d = window.CLEANSWAP.decodeBolt11(inv);
     return { expiry: d.expiry, expiresAt: d.expiresAt, ts: d.timestamp, sats: d.sats, hash: d.paymentHash };
@@ -1534,12 +1707,29 @@ const view = (pg) => pg.evaluate(() => {
   const csp = await LC.p.evaluate(() => {
     const m = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
     const icon = document.querySelector('img.mark');
-    return { policy: m ? m.getAttribute('content') : '', icon: icon ? icon.naturalWidth : 0 };
+    return {
+      policy: m ? m.getAttribute('content') : '',
+      icon: icon ? icon.naturalWidth : 0,
+      scripts: Array.from(document.querySelectorAll('script')).map(s => s.textContent),
+      style: (document.querySelector('style') || {}).textContent || ''
+    };
   });
+  /* The hashes in the policy are recomputed here from the blocks the page holds:
+     a policy that names a hash nobody can reproduce allows nothing, and one that
+     says 'unsafe-inline' allows anything. */
+  const sha = (text) => 'sha256-' + crypto.createHash('sha256').update(text, 'utf8').digest('base64');
+  const scriptHashes = (csp.policy.match(/script-src([^;]*)/) || ['', ''])[1];
+  const styleHash = (csp.policy.match(/style-src([^;]*)/) || ['', ''])[1];
   check('csp: the page carries a Content-Security-Policy', /default-src 'none'/.test(csp.policy), csp.policy.slice(0, 70));
-  check('csp: its own inline script and style are the only code allowed',
-    /script-src 'unsafe-inline'/.test(csp.policy) && /style-src 'unsafe-inline'/.test(csp.policy) &&
-    /object-src 'none'/.test(csp.policy) && !/unsafe-eval/.test(csp.policy), csp.policy);
+  check('csp: its own inline code is allowed by hash, never by "unsafe-inline"',
+    scriptHashes.includes("'sha256-") && styleHash.includes("'sha256-") &&
+    !/unsafe-inline/.test(csp.policy) && !/unsafe-eval/.test(csp.policy) &&
+    /object-src 'none'/.test(csp.policy), csp.policy.slice(0, 110));
+  check('csp: every script block on the page matches its hash in the policy',
+    csp.scripts.length > 0 && csp.scripts.every(t => scriptHashes.includes("'" + sha(t) + "'")),
+    csp.scripts.length + ' blocks');
+  check('csp: the style block matches its hash in the policy',
+    csp.style.length > 0 && styleHash.includes("'" + sha(csp.style) + "'"), String(csp.style.length) + ' chars');
   check('csp: images come from the page itself, connections from the chain',
     /img-src data:/.test(csp.policy) && /connect-src https:/.test(csp.policy), csp.policy);
   check("csp: the page's own icon still renders", csp.icon > 0, String(csp.icon));
@@ -1552,7 +1742,21 @@ const view = (pg) => pg.evaluate(() => {
   await LC.p.waitForTimeout(800);
   const cspErrs = LC.errs.slice(errsBefore).filter((m) => /Content Security Policy/.test(m));
   check('csp: a script from outside the page is refused by the policy',
-    cspErrs.length === 1 && /script-src 'unsafe-inline'/.test(cspErrs[0]), String(cspErrs.join(' | ')).slice(0, 110));
+    cspErrs.length === 1 && /script-src/.test(cspErrs[0]), String(cspErrs.join(' | ')).slice(0, 110));
+
+  /* An injected block runs only if its bytes are one of the hashes: the same
+     policy that allows this page's code refuses code added afterwards. */
+  const errsBefore2 = LC.errs.length;
+  await LC.p.evaluate(() => {
+    const s = document.createElement('script');
+    s.textContent = 'window.__injected = 1';
+    document.body.appendChild(s);
+  });
+  await LC.p.waitForTimeout(400);
+  const injected = await LC.p.evaluate(() => !!window.__injected);
+  const injectedErrs = LC.errs.slice(errsBefore2).filter((m) => /Content Security Policy/.test(m));
+  check('csp: a script block added to the page afterwards does not run',
+    injected === false && injectedErrs.length === 1, 'ran=' + injected + ' ' + injectedErrs.join(' | ').slice(0, 80));
   await LC.c.close();
 
   /* ------------------------------------------------- 8. protocol vectors --- */
@@ -1590,6 +1794,124 @@ const view = (pg) => pg.evaluate(() => {
   check('BOLT11 sample: payment_hash decoded', b11.hash === BOLT11_SAMPLE_HASH, b11.hash);
   check('BOLT11 sample: 50,000 sats decoded', b11.sats === 50000, b11.sats);
   check('BOLT11 sample: network bc', b11.net === 'bc', b11.net);
+
+  /* BOLT #11's own invoices, signed by the spec's key: the signature check is
+     measured against invoices this app did not make. */
+  const spec = await p9.evaluate((v) => {
+    const dec = (inv) => { try { return { ok: true, d: window.CLEANSWAP.decodeBolt11(inv) }; } catch (e) { return { ok: false, err: e.message }; } };
+    const read = (inv) => { const r = window.CLEANSWAP.readInvoice(inv); return { ok: r.ok, code: r.code, msg: r.msg, H: r.H }; };
+    const saved = window.CLEANSWAP.state.sats;
+    const out = {};
+    window.CLEANSWAP.state.sats = 250000;          /* the coffee invoice's amount */
+    out.coffee = dec(v.coffee);
+    out.coffeeRead = read(v.coffee);
+    window.CLEANSWAP.state.sats = saved;
+    out.amountless = dec(v.amountless);
+    out.amountlessRead = read(v.amountless);
+    out.missingP = read(v.missingP);
+    out.twoP = dec(v.twoP);
+    out.twoPRead = read(v.twoP);
+    out.sameP = read(v.sameP);
+    out.badChecksum = read(v.badChecksum);
+    out.unrecoverable = read(v.unrecoverable);
+    return out;
+  }, {
+    coffee: vector('coffee'), amountless: vector('amountless'), missingP: vector('missing-p'),
+    twoP: vector('two-p'), sameP: vector('same-p-twice'), badChecksum: vector('bad-checksum'),
+    unrecoverable: vector('unrecoverable')
+  });
+  check('BOLT11 vector: the coffee invoice reads with its amount and its signature',
+    spec.coffee.ok && spec.coffee.d.sats === 250000 && spec.coffee.d.signed === true,
+    String(spec.coffee.err || spec.coffee.d && spec.coffee.d.sats));
+  check('BOLT11 vector: the payee key comes back out of the signature',
+    spec.coffee.d.nodeId === VECTORS.node_id, String(spec.coffee.d && spec.coffee.d.nodeId));
+  check('BOLT11 vector: its payment hash is the one the spec prints',
+    spec.coffee.d.paymentHash === '0x0001020304050607080900010203040506070809000102030405060708090102',
+    String(spec.coffee.d.paymentHash));
+  check('BOLT11 vector: the gate reads the same invoice and refuses only its 2017 expiry',
+    spec.coffeeRead.code === 'expired', spec.coffeeRead.code + ' · ' + spec.coffeeRead.msg);
+  check('BOLT11 vector: an amountless invoice is refused, not read as any amount',
+    !spec.amountless.ok && /states no amount/.test(spec.amountless.err) &&
+    spec.amountlessRead.code === 'amount', spec.amountlessRead.code + ' · ' + spec.amountlessRead.msg);
+  check('BOLT11 vector: two p fields are refused, so two readers cannot disagree',
+    !spec.twoP.ok && /two "p" fields/.test(spec.twoP.err) && spec.twoPRead.code === 'format',
+    spec.twoPRead.code + ' · ' + String(spec.twoP.err));
+  check('BOLT11 vector: the same p field twice is refused too', spec.sameP.code === 'format', spec.sameP.code);
+  check('BOLT11 vector: an invoice with no p field has no hash to lock on',
+    spec.missingP.code === 'hash', spec.missingP.code + ' · ' + spec.missingP.msg);
+  check('BOLT11 vector: a bad checksum is refused', spec.badChecksum.code === 'format', spec.badChecksum.code);
+  check('BOLT11 vector: an unrecoverable signature is refused as a signature, not as gibberish',
+    spec.unrecoverable.code === 'signature' && /does not check out/.test(spec.unrecoverable.msg),
+    spec.unrecoverable.code + ' · ' + spec.unrecoverable.msg);
+  check('BOLT11 vector: every refusal is plain English',
+    !JARGON.test([spec.amountlessRead.msg, spec.twoPRead.msg, spec.unrecoverable.msg].join(' ')),
+    (JARGON.exec([spec.amountlessRead.msg, spec.unrecoverable.msg].join(' ')) || [''])[0]);
+
+  /* BOLT 11 says a reader that recovers the key must accept a high-S signature:
+     the same invoice, re-signed mathematically (s -> N-s, recovery byte flipped)
+     by the test, has to read exactly the same. */
+  const hiS = await p9.evaluate((inv) => {
+    const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+    const toBytes = (ws) => {
+      let acc = 0, bits = 0; const out = [];
+      for (const w of ws) {
+        acc = (acc << 5) | w; bits += 5;
+        while (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+      }
+      if (bits) out.push((acc << (8 - bits)) & 255);
+      return new Uint8Array(out);
+    };
+    const pos = inv.lastIndexOf('1');
+    const hrp = inv.slice(0, pos);
+    const all = Array.from(inv.slice(pos + 1)).map(c => 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'.indexOf(c));
+    const body = all.slice(0, -6);
+    const sig = toBytes(body.slice(-104));
+    const hex = (u8) => Array.from(u8).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const s = N - BigInt('0x' + hex(sig.subarray(32, 64)));
+    const hi = new Uint8Array(65);
+    hi.set(sig.subarray(0, 32), 0);
+    const sHex = s.toString(16).padStart(64, '0');
+    for (let i = 0; i < 32; i++) hi[32 + i] = parseInt(sHex.slice(i * 2, i * 2 + 2), 16);
+    hi[64] = sig[64] ^ 1;
+    const toWords = (bytes) => {
+      let acc = 0, bits = 0; const out = [];
+      for (const b of bytes) {
+        acc = (acc << 8) | b; bits += 8;
+        while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); }
+      }
+      if (bits) out.push((acc << (5 - bits)) & 31);
+      return out;
+    };
+    const sigWords = toWords(hi);
+    const rebuilt = body.slice(0, -104).concat(sigWords);
+    const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    const polymod = (vals) => {
+      let chk = 1;
+      for (const v of vals) {
+        const top = chk >>> 25;
+        chk = ((chk & 0x1ffffff) << 5) ^ v;
+        for (let j = 0; j < 5; j++) if ((top >>> j) & 1) chk ^= GEN[j];
+      }
+      return chk >>> 0;
+    };
+    const hrpExpand = (h) => {
+      const o = [];
+      for (const c of h) o.push(c.charCodeAt(0) >>> 5);
+      o.push(0);
+      for (const c of h) o.push(c.charCodeAt(0) & 31);
+      return o;
+    };
+    const p = polymod([...hrpExpand(hrp), ...rebuilt, 0, 0, 0, 0, 0, 0]) ^ 1;
+    const sum = []; for (let i = 0; i < 6; i++) sum.push((p >>> (5 * (5 - i))) & 31);
+    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const text = hrp + '1' + [...rebuilt, ...sum].map(i => CHARSET[i]).join('');
+    const base = window.CLEANSWAP.decodeBolt11(inv);
+    let now = null, err = '';
+    try { now = window.CLEANSWAP.decodeBolt11(text); } catch (e) { err = e.message; }
+    return { highS: s > N / 2n, sameKey: now && now.nodeId === base.nodeId, sats: now && now.sats, err, len: text.length };
+  }, await p9.evaluate(() => window.CLEANSWAP.mintInvoice({ paymentHash: '0x' + '77'.repeat(32), sats: 50000 })));
+  check('BOLT11: a high-S signature is accepted when the key is recovered (BOLT 11 rule)',
+    hiS.highS && hiS.sameKey && hiS.sats === 50000, JSON.stringify(hiS).slice(0, 120));
 
   const R0 = 'ab'.repeat(32);
   const expected = crypto.createHash('sha256').update(Buffer.from(R0, 'hex')).digest('hex');

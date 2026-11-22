@@ -2,15 +2,24 @@
 """Generate the BOLT11 sample invoice embedded in the app (test fixture).
 
 The invoice is built from the BOLT 11 spec's construction by hand (bech32 HRP,
-35-bit timestamp, tagged 'p'/'d'/'x' fields, 104-word signature slot) so that
-`test/headless.js` can decode it in the app and compare `payment_hash` against
-the value printed here. The signature slot is filled with deterministic filler:
-the app's decoder parses fields and checksum, it does not verify secp256k1.
+35-bit timestamp, tagged 'p'/'d'/'x' fields, a 65-byte secp256k1 signature) so
+that `test/headless.js` can decode it in the app and compare `payment_hash`
+against the value printed here. It is signed with the app's practice key, the
+same one src/app.js uses for its own sample invoices: the app verifies every
+invoice it reads, so a fixture with a made-up signature would be refused.
 """
 import hashlib
+import hmac
 
 CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+
+# The practice key, in src/app.js as PRACTICE_KEY. It holds nothing.
+PRACTICE_KEY = bytes.fromhex('2f1c8bd6a4e0793d5c1b8a6f47e293d0c5b8f17a26d4e9038b7c15fa6d2e4093')
+P = 2 ** 256 - 2 ** 32 - 977
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
 
 PAYMENT_HASH = bytes.fromhex('11' * 32)
 TIMESTAMP = 1735689600           # 2025-01-01T00:00:00Z
@@ -52,19 +61,92 @@ def to_words(raw, pad=True):
 
 
 def tag(char, words):
-    return [ord(char) - 97 + 1, len(words) >> 5, len(words) & 31] + words
+    # BOLT 11: the type is the 5-bit number written as the bech32 character at
+    # that position (`p` = 1, `d` = 13, `x` = 6), not the letter's place in the
+    # alphabet.
+    return [CHARSET.index(char), len(words) >> 5, len(words) & 31] + words
+
+
+def point_add(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    if a[0] == b[0] and (a[1] + b[1]) % P == 0:
+        return None
+    if a == b:
+        lam = 3 * a[0] * a[0] * pow(2 * a[1], P - 2, P) % P
+    else:
+        lam = (b[1] - a[1]) * pow(b[0] - a[0], P - 2, P) % P
+    x = (lam * lam - a[0] - b[0]) % P
+    return (x, (lam * (a[0] - x) - a[1]) % P)
+
+
+def point_mul(k, p):
+    r = None
+    while k:
+        if k & 1:
+            r = point_add(r, p)
+        p = point_add(p, p)
+        k >>= 1
+    return r
+
+
+def words_to_bytes_pad(words):
+    acc, bits, out = 0, 0, []
+    for w in words:
+        acc = (acc << 5) | w
+        bits += 5
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 255)
+    if bits:
+        out.append((acc << (8 - bits)) & 255)
+    return bytes(out)
+
+
+def sign(words, hrp):
+    """RFC 6979 with HMAC-SHA-256, low-S, 65 bytes with the recovery byte."""
+    msg = hashlib.sha256(hrp.encode() + words_to_bytes_pad(words)).digest()
+    d = int.from_bytes(PRACTICE_KEY, 'big')
+    z = int.from_bytes(msg, 'big')
+    x = d.to_bytes(32, 'big')
+    h1 = (z % N).to_bytes(32, 'big')
+
+    def mac(key, data):
+        return hmac.new(key, data, hashlib.sha256).digest()
+
+    k, v = bytes(32), b'\x01' * 32
+    k = mac(k, v + b'\x00' + x + h1)
+    v = mac(k, v)
+    k = mac(k, v + b'\x01' + x + h1)
+    v = mac(k, v)
+    while True:
+        v = mac(k, v)
+        nonce = int.from_bytes(v, 'big')
+        if 0 < nonce < N:
+            break
+        k = mac(k, v + b'\x00')
+        v = mac(k, v)
+    point = point_mul(nonce, G)
+    r = point[0] % N
+    s = pow(nonce, N - 2, N) * (z + r * d) % N
+    rec = (point[1] & 1) | (2 if point[0] >= N else 0)
+    if s > N // 2:
+        s = N - s
+        rec ^= 1
+    return r.to_bytes(32, 'big') + s.to_bytes(32, 'big') + bytes([rec])
 
 
 def build():
+    hrp = 'lnbc' + AMOUNT_HRP
     body = []
     ts = TIMESTAMP
     body += [(ts >> 5 * (6 - i)) & 31 for i in range(7)]
     body += tag('p', to_words(PAYMENT_HASH))
     body += tag('d', to_words(DESCRIPTION.encode()))
     body += tag('x', to_words(EXPIRY.to_bytes(2, 'big')))
-    filler = hashlib.sha256(b'cleanswap-filler').digest() * 2 + b'\x1b'
-    body += to_words(filler)                       # 104 words: 65-byte sig slot
-    hrp = 'lnbc' + AMOUNT_HRP
+    body += to_words(sign(body, hrp))               # 104 words: 65-byte signature
     data = body + checksum(hrp, body)
     return hrp + '1' + ''.join(CHARSET[d] for d in data)
 
