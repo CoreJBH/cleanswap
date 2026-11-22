@@ -76,8 +76,12 @@ contract CleanSwapHTLC {
         guardState = NOT_ENTERED;
     }
 
-    /// @notice Refuse timelocks so short a refund could race the claim.
-    uint256 public constant MIN_TIMELOCK_DELTA = 5 minutes;
+    /// @notice Refuse timelocks so short a refund could race the claim. This is
+    ///         the same floor the app applies to a code's window (`T2_MIN`), so
+    ///         no window that reaches a wallet is one the escrow would refuse
+    ///         at the door: 30 minutes is the shortest that leaves the bitcoin
+    ///         side room to settle before the escrow can be taken back.
+    uint256 public constant MIN_TIMELOCK_DELTA = 30 minutes;
     /// @notice Refuse timelocks so long the funding side's money is stuck for
     ///         a season if the other side goes quiet. 7 days is the ceiling the
     ///         app also enforces before it lets anyone approve a swap.

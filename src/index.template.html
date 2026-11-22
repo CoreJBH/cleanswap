@@ -133,6 +133,17 @@
   <p class="hint" id="codeAddr" hidden><span id="codeAddrTxt"></span>
     <button class="mini" data-act="useCodeAddr" type="button">Use it</button></p>
 
+  <!-- A code that arrives from another app lands on a screen that may already
+       be set up. It waits here, with what it would replace, until the person
+       says which one this swap is: nothing on the screen moves before that. -->
+  <div class="ask" id="codeAsk" hidden>
+    <p class="ask-line" id="codeAskTxt"></p>
+    <div class="row">
+      <button class="pill ask-yes" data-act="codeAskYes" type="button">Load the code</button>
+      <button class="pill" data-act="codeAskNo" type="button">Keep this one</button>
+    </div>
+  </div>
+
   <!-- one path for both modes; the numbers swap with the direction -->
   <section class="steps" id="steps">
     <div class="step" id="stepInv">
@@ -215,6 +226,11 @@
     <div class="row" id="payRowClaim" hidden>
       <button class="pill" id="claimBtn" data-act="claimOpen" type="button">Claim USDT</button>
       <button class="pill" id="refundBtn" data-act="sendRefund" type="button" hidden>Refund</button>
+      <!-- A phone with no wallet inside this page still has a wallet app: the
+           same call goes to it as an ethereum: link (EIP-681), and the hash
+           comes back the way every hand-off does. -->
+      <a class="pill" id="claimLink" href="#" hidden>Claim in wallet</a>
+      <a class="pill" id="refundLink" href="#" hidden>Refund in wallet</a>
     </div>
     <div class="field code" id="txRow" hidden>
       <div class="field-in">

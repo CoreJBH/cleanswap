@@ -312,6 +312,9 @@ const LIE = {
      blocks: that is the shape of two working nodes, and the head check uses
      it to show a few blocks of skew is not a disagreement. */
   escrowLie: true,
+  /* How far this node's head timestamp sits from the honest one: a node that
+     lies about the time, which is what a clock read has to survive. */
+  tsSkew: 0,
   record: {
     hashlock: '0x' + '31'.repeat(32), amount: 32500000, timelock: 1999999999,
     token: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
@@ -340,7 +343,7 @@ const lieServer = http.createServer((req, res) => {
        instead of calling the chain broken. */
     else if (j.method === 'eth_blockNumber') result = '0x' + (CHAIN.block + CHAIN.headSkew).toString(16);
     else if (j.method === 'eth_getBlockByNumber') result = {
-      number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + CHAIN.blockTs.toString(16)
+      number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + (CHAIN.blockTs + LIE.tsSkew).toString(16)
     };
     else if (j.method === 'eth_getCode') result = '0x6080604052348015600e575f80fd5b50';
     else if (j.method === 'eth_call') {
@@ -3912,6 +3915,432 @@ const view = (pg) => pg.evaluate(() => {
     sh.held === false && sh.field === '' && sh.phase === 'idle', sh.held + ' / ' + sh.field.length + ' / ' + sh.phase);
   check('secret: no page errors through the settle and Back', SECRET.errs.length === 0, SECRET.errs.join(' | '));
   await SECRET.c.close();
+
+  /* ------------- 14. v0.6.10: the two deadlines in the right order, a code
+     that asks before it replaces anything, a clock no single node owns, and the
+     two calls that close a swap handed to a wallet ------------------------- */
+
+  const nowSecT = () => Math.floor(Date.now() / 1000);
+  /* The Setup panel toggles: it is opened only when it is not already open,
+     because a second tap on the chain row would close it again. */
+  const openSetupOn = async (pg) => {
+    if (await pg.isVisible('#setupBox')) return;
+    await pg.click('#chainRow');
+    await pg.waitForTimeout(250);
+  };
+  /* Something the page will get to by itself - a second wallet send - rather
+     than a fixed guess at how long the chain reads take. */
+  const until = async (pg, fn, ms) => {
+    const end = Date.now() + (ms || 8000);
+    while (Date.now() < end) {
+      const v = await pg.evaluate(fn);
+      if (v) return v;
+      await pg.waitForTimeout(250);
+    }
+    return null;
+  };
+  const dig = (hex) => crypto.createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
+
+  /* (a) The bitcoin payment has to outlive the escrow window. The invoice
+     states the final delta its payee wants (the `c` tag); read without it, the
+     window could close long after the sats were able to come back, and one
+     secret would open both legs. */
+  const DL2 = await freshPage(390, 844);
+  const dl2 = DL2.p;
+  const hD = '0x' + dig('d5'.repeat(32));
+  const plainInv = await dl2.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hD);
+  const plainDec = await dl2.evaluate(inv => {
+    const d = window.CLEANSWAP.decodeBolt11(inv);
+    return { c: d.minFinalCltv, route: d.routeCltv, span: window.CLEANSWAP.lnHtlcSpan(d) };
+  }, plainInv);
+  check('deadline: an invoice with no final-delta tag reads as 18 blocks',
+    plainDec.c === 18, String(plainDec.c));
+  check('deadline: its payment runs those blocks plus the routing margin',
+    plainDec.span === (18 + 3) * 600, String(plainDec.span));
+
+  const shortInvD = await dl2.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600, cltv: 6 }), hD);
+  const shortDec = await dl2.evaluate(inv => {
+    const d = window.CLEANSWAP.decodeBolt11(inv);
+    return { c: d.minFinalCltv, span: window.CLEANSWAP.lnHtlcSpan(d) };
+  }, shortInvD);
+  check('deadline: the c tag is read as the payee\'s own final delta', shortDec.c === 6, String(shortDec.c));
+  check('deadline: a six-block invoice runs an hour and a half', shortDec.span === (6 + 3) * 600, String(shortDec.span));
+
+  const hintedInv = await dl2.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600, cltv: 18, hintCltv: 144 }), hD);
+  const hintedDec = await dl2.evaluate(inv => {
+    const d = window.CLEANSWAP.decodeBolt11(inv);
+    return { route: d.routeCltv, hops: d.routeHints.length, hopCltv: d.routeHints[0] && d.routeHints[0].cltv, span: window.CLEANSWAP.lnHtlcSpan(d) };
+  }, hintedInv);
+  check('deadline: a route hint is read hop by hop, with its delta',
+    hintedDec.hops === 1 && hintedDec.hopCltv === 144 && hintedDec.route === 144,
+    hintedDec.hops + ' hop(s) / ' + hintedDec.hopCltv);
+  check('deadline: a hint\'s delta is the payer\'s funds, not the payee\'s deadline',
+    hintedDec.span === (18 + 3) * 600, String(hintedDec.span));
+
+  /* the same two-hour window against both invoices */
+  const t2D = nowSecT() + 7200;
+  await dl2.evaluate((c) => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 50000, units: 60000000, t2: t2D }));
+  await dl2.fill('#addrIn', PARTNER);
+  await dl2.fill('#invIn', shortInvD);
+  await dl2.waitForTimeout(400);
+  let dW = await view(dl2);
+  check('deadline: an invoice whose payment ends before the window is refused',
+    dW.ready === '0' && dW.gate === 'window' && /sats could come back while the USDT is still claimable/.test(dW.say),
+    dW.gate + ' / ' + dW.say);
+  check('deadline: that refusal is plain English', !JARGON.test(dW.say), dW.say);
+  await dl2.fill('#invIn', plainInv);
+  await dl2.waitForTimeout(400);
+  dW = await view(dl2);
+  check('deadline: an ordinary invoice passes the same two-hour window',
+    dW.ready === '1', dW.gate + ' / ' + dW.say);
+
+  /* The tap that says paid reads the invoice's own deadline again: whatever
+     moved the window after approval, nothing is marked paid on a payment that
+     would outlive it by too little. */
+  const paidTap = await dl2.evaluate((t) => {
+    const C = window.CLEANSWAP;
+    C.state.phase = 'paying';
+    C.state.t2 = t;
+    C.paid();
+    return new Promise(r => setTimeout(() => r({ phase: C.state.phase, note: C.state.note }), 700));
+  }, nowSecT() + 6 * 3600);
+  check('deadline: the I paid tap refuses a window the payment cannot outlive',
+    paidTap.phase === 'paying' && /sats could come back/.test(paidTap.note), paidTap.phase + ' / ' + paidTap.note);
+  check('deadline: no page errors through the deadline checks', DL2.errs.length === 0, DL2.errs.join(' | '));
+  await DL2.c.close();
+
+  /* (b) A code from another app does not replace the screen by itself. */
+  const ASK = await freshPage(390, 844);
+  const ak = ASK.p;
+  const hA = '0x' + dig('d6'.repeat(32));
+  const codeAddrA = '0x' + 'a1'.repeat(20);
+  const codeA = swapCodeOf({ dir: 'btc2u', sats: 250000, units: 120000000, t2: nowSecT() + 7200, h: hA, a: codeAddrA });
+  await ak.click('#swapDir');                        /* sending USDT: the code has an address for it */
+  await ak.fill('#addrIn', PARTNER);
+  await ak.waitForTimeout(250);
+  const askFirst = await ak.evaluate((c) => ({ applied: window.CLEANSWAP.acceptCode(c) }), codeA);
+  await ak.waitForTimeout(250);
+  const askState = await ak.evaluate(() => ({
+    ask: !document.getElementById('codeAsk').hidden,
+    say: document.getElementById('codeAskTxt').textContent,
+    addr: document.getElementById('addrIn').value,
+    sats: window.CLEANSWAP.state.sats,
+    terms: window.CLEANSWAP.state.codeTerms
+  }));
+  check('ask: a code from another app is held, not applied', askFirst.applied === false && askState.ask === true,
+    String(askFirst.applied) + ' / ' + askState.ask);
+  check('ask: the address on the screen is still the one that was there', askState.addr === PARTNER, askState.addr);
+  check('ask: the terms on the screen did not change', askState.sats === 50000 && !askState.terms,
+    askState.sats + ' / ' + String(askState.terms));
+  check('ask: the sentence says what the code would put here, and what it replaces',
+    /250,000 sats/.test(askState.say) && /its own USDT address/.test(askState.say) &&
+    /replaces what is on this screen/.test(askState.say), askState.say);
+  check('ask: that sentence is plain English', !JARGON.test(askState.say), askState.say);
+  await ak.click('[data-act="codeAskNo"]');
+  await ak.waitForTimeout(300);
+  const kept = await ak.evaluate(() => ({
+    ask: !document.getElementById('codeAsk').hidden,
+    addr: document.getElementById('addrIn').value,
+    sats: window.CLEANSWAP.state.sats
+  }));
+  check('ask: keeping this one leaves the screen exactly as it was',
+    !kept.ask && kept.addr === PARTNER && kept.sats === 50000, JSON.stringify(kept));
+  await ak.evaluate((c) => window.CLEANSWAP.acceptCode(c), codeA);
+  await ak.waitForTimeout(200);
+  await ak.click('[data-act="codeAskYes"]');
+  await ak.waitForTimeout(350);
+  const loadedC = await ak.evaluate(() => ({
+    ask: !document.getElementById('codeAsk').hidden,
+    addr: document.getElementById('addrIn').value,
+    sats: window.CLEANSWAP.state.sats,
+    terms: !!window.CLEANSWAP.state.codeTerms,
+    dir: window.CLEANSWAP.state.direction
+  }));
+  check('ask: loading the code applies it, and only after the tap',
+    !loadedC.ask && loadedC.terms === true && loadedC.sats === 250000 && loadedC.dir === 'u2b',
+    loadedC.sats + ' / ' + loadedC.dir);
+  check('ask: the code\'s own USDT address is the one in the field now',
+    loadedC.addr.toLowerCase() === codeAddrA, loadedC.addr);
+  check('ask: no page errors through the ask', ASK.errs.length === 0, ASK.errs.join(' | '));
+  await ASK.c.close();
+
+  const EMPTY = await freshPage(390, 844);
+  const emptyTake = await EMPTY.p.evaluate((c) => ({
+    applied: window.CLEANSWAP.acceptCode(c),
+    ask: !document.getElementById('codeAsk').hidden
+  }), swapCodeOf({ dir: 'u2b', sats: 10000, units: 1000000, t2: nowSecT() + 7200 }));
+  check('ask: a screen with nothing on it takes the code straight away',
+    emptyTake.applied === true && emptyTake.ask === false, String(emptyTake.applied) + ' / ' + emptyTake.ask);
+  check('ask: no page errors on the empty screen', EMPTY.errs.length === 0, EMPTY.errs.join(' | '));
+  await EMPTY.c.close();
+
+  /* (c) The clock is what the endpoints agree on, not the highest answer any
+     one of them gives. A node a decade ahead is not the chain. */
+  const CK = await freshPage(390, 844);
+  const ck = CK.p;
+  await ck.click('#modeWallet');
+  await ck.waitForTimeout(200);
+  await openSetupOn(ck);
+  await ck.fill('#contractIn', CONTRACT);
+  await ck.fill('#tokenIn', TOKEN);
+  await ck.fill('#rpcIn', RPC + ',' + RPC_LIE + ',' + RPC_TWIN);
+  await ck.click('[data-act="saveSetup"]');
+  await ck.waitForTimeout(1600);
+  let clockOut = await ck.evaluate(async () => {
+    const C = window.CLEANSWAP;
+    C.state.blockTs = null; C.state.blockTsAt = 0; C.state.blockTsFail = 0;
+    await C.syncChainTime(true);
+    return { ts: C.state.blockTs, eff: C.effNow(), local: Math.floor(Date.now() / 1000),
+      disagree: C.state.log.some(e => /do not agree on the time/.test(e.text)) };
+  });
+  check('clock: three endpoints that agree give the chain\'s own time',
+    Math.abs(clockOut.ts - clockOut.local) <= 600 && !clockOut.disagree,
+    String(clockOut.ts) + ' vs ' + clockOut.local);
+
+  LIE.tsSkew = 10 * 365 * 24 * 3600;                 /* this node says the year is 2036 */
+  clockOut = await ck.evaluate(async () => {
+    const C = window.CLEANSWAP;
+    C.state.blockTs = null; C.state.blockTsAt = 0; C.state.blockTsFail = 0;
+    await C.syncChainTime(true);
+    return { ts: C.state.blockTs, eff: C.effNow(), local: Math.floor(Date.now() / 1000) };
+  });
+  check('clock: one node a decade ahead does not become the clock',
+    Math.abs(clockOut.ts - clockOut.local) <= 600, String(clockOut.ts) + ' vs ' + clockOut.local);
+  check('clock: and the window it would have closed stays open',
+    Math.abs(clockOut.eff - clockOut.local) <= 600, String(clockOut.eff) + ' vs ' + clockOut.local);
+
+  /* With only that node configured, its reading is not a clock at all: a
+     timestamp a decade out is a mistake or a lie, and the phone's clock stands. */
+  await openSetupOn(ck);
+  await ck.fill('#rpcIn', RPC_LIE);
+  await ck.click('[data-act="saveSetup"]');
+  await ck.waitForTimeout(1300);
+  const alone = await ck.evaluate(async () => {
+    const C = window.CLEANSWAP;
+    C.state.blockTs = null; C.state.blockTsAt = 0; C.state.blockTsFail = 0;
+    await C.syncChainTime(true);
+    return { ts: C.state.blockTs, local: Math.floor(Date.now() / 1000) };
+  });
+  check('clock: a lone reading a decade out is dropped, not obeyed',
+    alone.ts === null, String(alone.ts) + ' vs ' + alone.local);
+  LIE.tsSkew = 0;
+  check('clock: no page errors through the clock checks', CK.errs.length === 0, CK.errs.join(' | '));
+  await CK.c.close();
+
+  /* (d) The terms of a swap that sends the USDT stay shareable while the USDT
+     sits in the escrow, the mode cannot be switched out of a real swap, and the
+     two calls that close it also open in a wallet app. */
+  const V = await freshPage(390, 844);
+  const v = V.p;
+  await v.click('#modeWallet');
+  await v.click('#swapDir');
+  await v.waitForTimeout(250);
+  const preV = '0x' + 'd9'.repeat(32);
+  const hV = '0x' + dig('d9'.repeat(32));
+  const invV = await v.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hV);
+  await v.fill('#addrIn', PARTNER);
+  await v.fill('#invIn', invV);
+  await openSetupOn(v);
+  await v.fill('#contractIn', CONTRACT);
+  await v.fill('#tokenIn', TOKEN);
+  await v.fill('#rpcIn', RPC);
+  await v.click('[data-act="saveSetup"]');
+  await v.waitForTimeout(1300);
+  await v.click('#primary');
+  await v.waitForTimeout(1600);
+  const lockView = await v.evaluate(() => ({
+    phase: document.body.dataset.phase,
+    terms: !document.getElementById('terms').hidden,
+    useCode: !document.querySelector('#terms [data-act="pasteCode"]').hidden,
+    shareCode: !document.querySelector('#terms [data-act="copyCode"]').hidden,
+    qr: !document.querySelector('#terms [data-act="qrCode"]').hidden
+  }));
+  check('share: while the USDT is being locked, the terms can still be shared',
+    lockView.phase === 'locking' && lockView.terms && lockView.shareCode && lockView.qr,
+    JSON.stringify(lockView));
+  check('share: a code cannot land on the running swap, so Use code is gone',
+    lockView.useCode === false, String(lockView.useCode));
+  const shareCode = await v.evaluate(() => window.CLEANSWAP.swapCode());
+  const shareBack = await v.evaluate((c) => {
+    const p = window.CLEANSWAP.parseSwapCode(c);
+    return p ? { sats: p.sats, H: p.H } : null;
+  }, shareCode);
+  check('share: the code it hands over is the same swap',
+    /^cleanswap:/.test(shareCode) && !!shareBack && shareBack.sats === 50000,
+    String(shareCode).slice(0, 18) + '...');
+
+  await v.click('#modePractice');
+  await v.waitForTimeout(300);
+  const modeKept = await v.evaluate(() => ({
+    mode: window.CLEANSWAP.state.mode, phase: window.CLEANSWAP.state.phase,
+    toast: document.getElementById('toast').textContent
+  }));
+  check('mode: a real swap is not switched out of',
+    modeKept.mode === 'wallet' && modeKept.phase === 'locking' && /A real swap is running/.test(modeKept.toast),
+    JSON.stringify(modeKept));
+
+  /* the lock lands in another wallet; its hash comes back and the swap waits */
+  const lockTxV = '0x' + 'ba'.repeat(32);
+  const LOCKERV = '0x5c1d3f8a92b04e67d1a8c3f5027be64d89a0c1f3';
+  const tV = await v.evaluate(() => ({
+    H: window.CLEANSWAP.state.H, units: window.CLEANSWAP.state.units,
+    t2: window.CLEANSWAP.state.t2, addr: window.CLEANSWAP.state.addr, token: window.CLEANSWAP.tokenNow()
+  }));
+  const idV = swapIdOf({ hashlock: tV.H, sender: LOCKERV, receiver: tV.addr, token: tV.token, amount: tV.units, timelock: tV.t2 });
+  CHAIN.records[idV.toLowerCase()] = {
+    hashlock: tV.H, amount: tV.units, timelock: tV.t2, token: TOKEN,
+    sender: LOCKERV, receiver: tV.addr, claimed: false, refunded: false
+  };
+  CHAIN.receipts[lockTxV] = { status: '0x1' };
+  CHAIN.txs[lockTxV] = {
+    from: LOCKERV, to: CONTRACT,
+    input: '0x91644b2b' + hexB32(tV.H) + hexWord(tV.t2) + hexAddr(tV.addr) + hexAddr(tV.token) + hexWord(tV.units)
+  };
+  await v.click('[data-act="openTx"]');
+  await v.fill('#txIn', lockTxV);
+  await v.click('[data-act="loadTx"]');
+  await v.waitForTimeout(2400);
+  const paidV = await v.evaluate(() => ({
+    phase: document.body.dataset.phase,
+    terms: !document.getElementById('terms').hidden,
+    claimRow: !document.getElementById('payRowClaim').hidden,
+    claimLink: !document.getElementById('claimLink').hidden
+  }));
+  check('share: the terms stay shareable while the USDT is locked',
+    paidV.phase === 'paid' && paidV.terms, JSON.stringify(paidV));
+  check('call: no claim link before its secret is in the field', paidV.claimRow && !paidV.claimLink,
+    JSON.stringify(paidV));
+  await v.click('[data-act="claimOpen"]');
+  await v.fill('#secretIn', preV);
+  await v.waitForTimeout(600);
+  const claimHref = await v.getAttribute('#claimLink', 'href');
+  const idNow = await v.evaluate(() => window.CLEANSWAP.swapIdNow());
+  check('call: the claim opens in a wallet as an EIP-681 link on this chain and contract',
+    String(claimHref).startsWith('ethereum:' + CONTRACT + '@421614/claim?bytes32=0x') &&
+    String(claimHref).includes('&bytes32=0x' + preV.slice(2)), String(claimHref).slice(0, 72) + '...');
+  check('call: the claim link names this swap\'s id',
+    String(claimHref).includes('bytes32=0x' + String(idNow).slice(2).toLowerCase()), String(claimHref).slice(0, 22) + '...');
+
+  /* the chain's clock runs past the window: the refund is what is left */
+  CHAIN.blockTs = tV.t2 + 30;
+  await v.evaluate(async () => {
+    const C = window.CLEANSWAP;
+    C.state.blockTsAt = 0; C.state.blockTsFail = 0;
+    await C.syncChainTime(true);            /* the chain's clock, read on the tap */
+  });
+  await v.click('#primary');
+  await v.waitForTimeout(2000);
+  const refundView = await v.evaluate(() => ({
+    refund: !document.getElementById('refundBtn').hidden,
+    refundLink: !document.getElementById('refundLink').hidden,
+    href: document.getElementById('refundLink').getAttribute('href')
+  }));
+  check('call: a window that has closed offers the refund in a wallet too',
+    refundView.refund && refundView.refundLink &&
+    String(refundView.href).startsWith('ethereum:' + CONTRACT + '@421614/refund?bytes32=0x'),
+    JSON.stringify(refundView).slice(0, 130));
+  check('call: the refund link names the same swap',
+    String(refundView.href).endsWith(String(idV).slice(2).toLowerCase()), String(refundView.href).slice(-16));
+  CHAIN.blockTs = Math.floor(Date.now() / 1000);
+
+  await v.click('#backBtn');
+  await v.waitForTimeout(500);
+  const afterBack = await v.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return { phase: s.phase, H: s.H, units: s.units, locker: s.locker, t2: s.t2 };
+  });
+  check('back: the pinned hash, the agreed amount and the funding address go with the swap',
+    afterBack.phase === 'idle' && !afterBack.H && afterBack.units === null && afterBack.locker === '',
+    JSON.stringify(afterBack));
+  check('share: no page errors through the share and call checks', V.errs.length === 0, V.errs.join(' | '));
+  await V.c.close();
+
+  /* (e) A claim's lock holds until the transaction answers: a second tap of
+     anything is refused while the wallet is still sending. */
+  const OPC = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await OPC.addInitScript((acct) => {
+    window.__op = [];
+    window.ethereum = {
+      request: function (o) {
+        const p = o.params || [];
+        if (o.method === 'eth_chainId') return Promise.resolve('0x66eee');
+        if (o.method === 'eth_accounts' || o.method === 'eth_requestAccounts') return Promise.resolve([acct]);
+        if (o.method === 'eth_sendTransaction') {
+          const h = '0xfade' + String(window.__op.length + 1).padStart(60, '0');
+          window.__op.push({ to: p[0].to, data: p[0].data, hash: h });
+          return Promise.resolve(h);
+        }
+        return Promise.reject(new Error('unexpected ' + o.method));
+      }
+    };
+  }, '0x' + 'c1'.repeat(20));
+  const op = await OPC.newPage();
+  const opErrs = [];
+  op.on('pageerror', e => opErrs.push(e.message));
+  op.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) opErrs.push(m.text()); });
+  await quoteMock(op);
+  await op.goto(URL, { waitUntil: 'load' });
+  await op.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await op.click('#modeWallet');
+  await op.click('#swapDir');
+  await op.waitForTimeout(250);
+  const preO = '0x' + 'da'.repeat(32);
+  const hO = '0x' + dig('da'.repeat(32));
+  const invO = await op.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hO);
+  await op.fill('#addrIn', PARTNER);
+  await op.fill('#invIn', invO);
+  await openSetupOn(op);
+  await op.fill('#contractIn', CONTRACT);
+  await op.fill('#tokenIn', TOKEN);
+  await op.fill('#rpcIn', RPC);
+  await op.click('[data-act="saveSetup"]');
+  await op.waitForTimeout(1300);
+  await op.click('#primary');
+  await op.waitForTimeout(1000);
+  const opTerms = await op.evaluate(() => ({
+    units: window.CLEANSWAP.state.units, t2: window.CLEANSWAP.state.t2, H: window.CLEANSWAP.state.H
+  }));
+  const OPACCT = '0x' + 'c1'.repeat(20);
+  const idO = swapIdOf({ hashlock: opTerms.H, sender: OPACCT, receiver: PARTNER, token: TOKEN, amount: opTerms.units, timelock: opTerms.t2 });
+  CHAIN.records[idO.toLowerCase()] = {
+    hashlock: opTerms.H, amount: opTerms.units, timelock: opTerms.t2, token: TOKEN,
+    sender: OPACCT, receiver: PARTNER, claimed: false, refunded: false
+  };
+  const approveHash = await until(op, () => window.__op[0] && window.__op[0].hash, 6000);
+  if (approveHash) CHAIN.receipts[approveHash] = { status: '0x1' };
+  const lockHash = await until(op, () => window.__op[1] && window.__op[1].hash, 12000);
+  if (lockHash) CHAIN.receipts[lockHash] = { status: '0x1' };
+  const opPaid = await until(op, () => (document.body.dataset.phase === 'paid' ? 'paid' : null), 15000);
+  check('lock: the wallet\'s own approve and lock take the swap to the wait',
+    opPaid === 'paid', opPaid + ' / ' + String(lockHash));
+
+  await op.click('[data-act="claimOpen"]');
+  await op.fill('#secretIn', preO);
+  await op.click('[data-act="sendClaim"]');
+  await op.waitForTimeout(900);
+  const claimWait = await op.evaluate(() => ({
+    op: window.CLEANSWAP.state.op, sends: window.__op.length,
+    claimSends: window.__op.filter(c => String(c.data).toLowerCase().startsWith('0x84cc9dfb')).length
+  }));
+  check('lock: the claim is one send, and the page still holds that operation',
+    claimWait.claimSends === 1 && claimWait.op === 'claim', JSON.stringify(claimWait));
+  await op.evaluate(() => document.querySelector('[data-act="sendRefund"]').click());
+  await op.waitForTimeout(400);
+  const secondTap = await op.evaluate(() => ({
+    toast: document.getElementById('toast').textContent, sends: window.__op.length
+  }));
+  check('lock: a refund tapped while the claim is in flight sends nothing',
+    secondTap.sends === claimWait.sends && /still on its way/.test(secondTap.toast), JSON.stringify(secondTap));
+  const claimHashO = await op.evaluate(() => window.__op[window.__op.length - 1].hash);
+  CHAIN.receipts[claimHashO] = { status: '0x1' };
+  CHAIN.records[idO.toLowerCase()].claimed = true;
+  await op.waitForTimeout(4000);
+  const opDone = await op.evaluate(() => ({ phase: document.body.dataset.phase, op: window.CLEANSWAP.state.op }));
+  check('lock: once the claim answers, the swap settles and the lock is released',
+    opDone.phase === 'settled' && opDone.op === '', JSON.stringify(opDone));
+  check('lock: no page errors through the claim', opErrs.length === 0, opErrs.join(' | '));
+  await OPC.close();
 
   await browser.close();
 

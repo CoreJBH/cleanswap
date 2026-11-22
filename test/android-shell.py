@@ -105,6 +105,19 @@ def main():
     check('shell: only the app host is answered', 'APP_HOST.equalsIgnoreCase' in intercept)
     check('shell: only the /index.html path is answered',
           '"/index.html".equals' in intercept and 'getPath()' in intercept)
+    check('shell: any other path on that host is refused with an empty 404',
+          'setStatusCodeAndReasonPhrase(404' in intercept and 'ByteArrayInputStream' in intercept,
+          intercept.count('404'))
+    check('shell: the 404 is answered inside the app host, not left to the network',
+          'if (!"/index.html".equals' in intercept
+          and intercept.index('setStatusCodeAndReasonPhrase(404') > intercept.index('getPath()'),
+          'the deny answers after the host check')
+    # --- the page is ready when the app document, not any page, finishes ---
+    finished = body_of(java, 'public void onPageFinished(')
+    check('shell: the page is marked ready only for the app document',
+          'APP_URL.equals(url)' in finished, finished.count('pageReady'))
+    check('shell: and a code is delivered only on that page',
+          'deliverCode();' in finished and 'pageReady = true' in finished)
 
     # --- https hand-offs go to named hosts ---------------------------------
     hosts = re.search(r'HTTPS_HOSTS\s*=\s*\{([^}]*)\}', java)

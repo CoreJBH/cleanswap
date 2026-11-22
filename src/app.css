@@ -189,6 +189,14 @@ body[data-phase="locking"] .flip{display:none}
 .mini:focus-visible{outline:2px solid var(--em);outline-offset:2px}
 .field.code{margin:10px 0 0}
 
+/* a code from another app, waiting for the person to say which swap this is */
+.ask{margin:10px 0 0;padding:13px 14px 5px;border:1px solid var(--line2);border-radius:16px;
+  background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.ask-line{margin:0 0 10px;font-size:13.5px;line-height:1.45;color:var(--ink2);font-weight:600}
+.ask .row{margin:0 0 8px}
+.ask .pill{height:44px;font-size:13px}
+.ask .ask-yes{border-color:rgba(80,210,193,.45);background:var(--em-soft);color:var(--em-ink)}
+
 /* a field with its one-tap sample: the same row in both modes, the button in practice only */
 .field-in{display:flex;gap:8px}
 .field-in input{flex:1 1 0;width:auto;min-width:0}

@@ -1,4 +1,4 @@
-/* CleanSwap v0.6.4 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.10 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -49,10 +49,13 @@
 
    A swap id is the terms plus the address that funds the escrow, so a code
    from the other side is checked before anything is adopted from it: the chain
-   is never switched and an escrow address is never written over by a code.
-   The escrow window has a floor and a ceiling, and the Lightning invoice has to
-   outlive the window by an hour, so a short or endless window cannot race the
-   payer.
+   is never switched and an escrow address is never written over by a code, and
+   a code that arrives from another app while this screen holds terms of its own
+   is held with a sentence and two buttons until the person says which swap this
+   is. The escrow window has a floor, a ceiling, and two deadlines that have to
+   fall in this order: the window closes first, and the bitcoin payment it is
+   paid against runs past it - the invoice's own final delta (`c`) plus an hour
+   of room - so the sats can never come back while the USDT is still claimable.
 
    The USDT address is an Arbitrum one (`0x` + 40 hex). A TRON `T` address is
    still decoded so a pasted one gets a straight answer, but Wallet mode says
@@ -144,6 +147,24 @@
   var PAY_MARGIN = 600;             /* stop paying once this little of the window is left */
   var T1_BLOCKS = 40;               /* ~6h40m of bitcoin blocks */
   var BLOCK_SECS = 600;
+  /* The two legs have to expire in the right order. The bitcoin side's payment
+     lives in a Lightning HTLC at the payee, and the payee's node states how
+     many blocks it keeps it: the invoice's `c` tag (BOLT 11's 18 blocks when the
+     tag is absent). The USDT escrow closes at T2, the claim publishes the
+     secret, and the payee settles with it after that - so the sats must not be
+     able to come back before the escrow is over, or one secret would collect
+     both legs: the payment returns at its expiry while the USDT is still
+     claimable. A window that does not clear the payment's own deadline by
+     LN_SAFETY_SECS is refused before anything is approved.
+
+     The deltas a route hint states are not added here: they say how long the
+     payer's own funds are held by the hops before the payee, while the deadline
+     that matters is the payee's incoming HTLC, which the final delta sets. A few
+     blocks on top of that cover the last hop's own hold, which is the routing
+     margin this check keeps. */
+  var LN_CLTV_DEFAULT = 18;         /* min_final_cltv_expiry when the invoice carries no c tag */
+  var LN_ROUTE_MARGIN_CLTV = 3;     /* blocks kept for the last hop's own hold */
+  var LN_SAFETY_SECS = 3600;        /* the claim side keeps this long after the escrow closes */
 
   var S = {
     mode: 'practice',               /* practice | wallet */
@@ -193,6 +214,8 @@
     codeAddr: '',                   /* a USDT address a code named, offered not taken */
     codeAddrFilled: '',             /* an address a code wrote into the field itself */
     codeTerms: null,                /* the amounts a code put on screen: {units, sats} */
+    codeAsk: null,                  /* a code from another app, waiting for a tap: {text, say} */
+    codeAsk: null,                  /* a code from another app, waiting for a tap: {text, say} */
     codeRateWarn: false,            /* whether the sentence on screen is the rate warning */
     tokenState: '',                 /* '' (not read) | ok | unread | wrong: what the chain said
                                        about the token set in Setup */
@@ -922,10 +945,19 @@
     var fresh = S.blockTs && (Date.now() - S.blockTsAt) < BLOCK_TS_TTL;
     return fresh && S.blockTs > local ? S.blockTs : local;
   }
-  /* Every configured endpoint is asked and the latest answer wins: a node that
-     is behind the others cannot make the window look longer than it is. This is
-     not the escrow itself, so it does not go through the quorum path - a stale
+  /* Every configured endpoint is asked, and the reading is the one they agree
+     on: the median of their answers, with any answer further than CLOCK_TOL
+     from it left out. Taking the highest answer instead let one node - behind
+     by an hour, or lying about the head by a year - decide that a window had
+     closed while an honest clock said it had not. Two honest heads are always
+     within a few seconds of each other, so a majority is a real majority; a
+     single endpoint is its own answer, as it is for the escrow. A reading
+     further than CLOCK_SKEW_MAX from this phone's clock is not a clock anyone
+     can vouch for (a year 3000 head, a zero), so it is not used either. This is
+     not the escrow itself, so it does not go through the quorum path: a stale
      head is a stricter answer, not a disagreement to report. */
+  var CLOCK_TOL = 300;              /* seconds: two honest heads agree this closely */
+  var CLOCK_SKEW_MAX = 24 * 3600;   /* beyond this a "head" is a mistake, not a clock */
   function chainTimeOnce() {
     var list = endpoints();
     return Promise.all(list.map(function (url) {
@@ -934,9 +966,19 @@
         return isFinite(t) && t > 0 ? t : null;
       }, function () { return null; });
     })).then(function (all) {
-      var best = null;
-      all.forEach(function (t) { if (t && (!best || t > best)) best = t; });
-      return best;
+      var local = nowSec();
+      var seen = all.filter(function (t) { return t && Math.abs(t - local) <= CLOCK_SKEW_MAX; })
+        .sort(function (a, b) { return a - b; });
+      if (!seen.length) return null;
+      var median = seen[Math.floor((seen.length - 1) / 2)];
+      var near = seen.filter(function (t) { return Math.abs(t - median) <= CLOCK_TOL; });
+      /* A majority of the answers have to sit together. With one endpoint that
+         is its own answer; with two or more, one node alone is not the clock. */
+      if (seen.length > 1 && near.length * 2 < seen.length) {
+        log('BLOCK', 'the endpoints do not agree on the time, so the phone\u2019s clock is what this screen uses', 'c-err');
+        return null;
+      }
+      return near[Math.floor((near.length - 1) / 2)];
     }, function () { return null; });
   }
   function syncChainTime(force) {
@@ -1417,6 +1459,36 @@
     var q = params && params.length ? '?' + params.join('&') : '';
     return 'ethereum:' + call.to + '@' + curChain().chainId + '/' + fn + q;
   }
+  /* The two calls that close a swap, as the links a wallet app can take: the
+     claim carries the id and the secret, the refund only the id. They are what
+     a phone without `window.ethereum` uses - the copy button says the same
+     call, this one hands it over, and the transaction hash comes back the way
+     every hand-off in this app does. */
+  function claimWalletLink(pre, id) {
+    return callLink({ to: escrowNow(), data: claimCalldata(id, '0x' + normHex(pre)) }, 'claim', [
+      'bytes32=0x' + normHex(id), 'bytes32=0x' + normHex(pre)
+    ]);
+  }
+  function refundWalletLink(id) {
+    return callLink({ to: escrowNow(), data: refundCalldata(id) }, 'refund', [
+      'bytes32=0x' + normHex(id)
+    ]);
+  }
+  /* Written again whenever the waiting screen is painted: the id is computed
+     from the terms, and the claim cannot be written until its secret is in the
+     field, so a link that is on screen is always the call those words describe. */
+  function paintCallLinks() {
+    var cl = $('claimLink'), rl = $('refundLink');
+    if ((!cl || cl.hidden) && (!rl || rl.hidden)) return;
+    if (!isAddr(escrowNow())) return;
+    swapIdNow().then(function (id) {
+      if (rl && !rl.hidden) rl.setAttribute('href', refundWalletLink(id));
+      if (cl && !cl.hidden) {
+        var pre = normHex($('secretIn').value || '');
+        cl.setAttribute('href', claimWalletLink(pre, id));
+      }
+    }, function () { /* no complete terms yet: nothing to open */ });
+  }
 
   function blockChain(c) {
     var msg = chainSay(c);
@@ -1730,7 +1802,10 @@
         var p = provider();
         if (!p) { render(); copy(callPacket(call, 'claim'), 'Claim call copied'); return; }
         busy(true);
-        walletSend(call.to, call.data)
+        /* Returned, so this tap's operation is still held while the wallet and
+           the chain work: the promise the lock was taken around is the one that
+           ends with the receipt, not the one that built the call. */
+        return walletSend(call.to, call.data)
           .then(function (h) { if (!h) throw new Error('the wallet sent nothing'); busy(true); return waitReceipt(h); })
           .then(function () { busy(false); return refreshChain(); })
           .then(function (c) { if (c && c.state === 'claimed') settleByChain(c); else blockChain(c); })
@@ -1756,7 +1831,9 @@
       var p = provider();
       if (!p) { render(); copy(callPacket(call, 'refund'), 'Refund call copied'); return; }
       busy(true);
-      walletSend(call.to, call.data)
+      /* Returned for the same reason as a claim: the lock this tap took is let
+         go when the transaction has an answer, not when its call was built. */
+      return walletSend(call.to, call.data)
         .then(function (h) { if (!h) throw new Error('the wallet sent nothing'); busy(true); return waitReceipt(h); })
         .then(function () { busy(false); return refreshChain(); })
         .then(function (c) {
@@ -2229,18 +2306,23 @@
     /* Every route hint, hop by hop: a node id, the short channel id, the base
        fee, the proportional fee and the delta. Nothing is decided from them
        here; an invoice that carries them is simply not refused for it. */
-    var routeHints = [], fallbacks = [];
+    var routeHints = [], fallbacks = [], routeCltv = 0;
     (fields.r || []).forEach(function (f) {
-      var b = wordsToBytes(f), j;
+      var b = wordsToBytes(f), j, sum = 0;
       for (j = 0; j + 51 <= b.length; j += 51) {
-        routeHints.push({
+        var hop = {
           nodeId: hexOf(b.subarray(j, j + 33)),
           shortChannelId: hexOf(b.subarray(j + 33, j + 41)),
           baseMsat: beNum(b.subarray(j + 41, j + 45)),
           ppm: beNum(b.subarray(j + 45, j + 49)),
           cltv: beNum(b.subarray(j + 49, j + 51))
-        });
+        };
+        sum += hop.cltv;
+        routeHints.push(hop);
       }
+      /* What the deepest hint adds to the payment's own deadline: every hop
+         holds the HTLC a little longer than the one after it. */
+      if (sum > routeCltv) routeCltv = sum;
     });
     /* A fallback address is a 5-bit version and the address itself; more than
        one is allowed, and each is kept as it was written. */
@@ -2254,6 +2336,12 @@
        escrow-window check an invoice that outlives every window, so the
        standard default is what a missing tag means here too. */
     var expiry = fields.x && fields.x[0] ? toNum(wordsToInt(fields.x[0]), 'expiry') : 3600;
+    /* `c` is min_final_cltv_expiry: how many blocks the payee's node keeps the
+       incoming payment before letting it come back. It is read here with the
+       rest of the terms, and BOLT 11 says a missing tag means 18 blocks - the
+       same default its `x` tag has in this decoder, so neither a missing
+       expiry nor a missing final delta can be read as "no deadline at all". */
+    var minFinalCltv = fields.c && fields.c[0] ? toNum(wordsToInt(fields.c[0]), 'cltv') : LN_CLTV_DEFAULT;
     var desc = null;
     if (fields.d && fields.d[0]) {
       try { desc = new TextDecoder('utf-8', { fatal: true }).decode(wordsToBytes(fields.d[0])); }
@@ -2292,6 +2380,8 @@
       timestamp: ts,
       expiry: expiry,
       expiresAt: ts + expiry,
+      minFinalCltv: minFinalCltv,
+      routeCltv: routeCltv,
       description: desc,
       nodeId: node,
       signed: true,
@@ -2334,6 +2424,17 @@
     for (i = 0; i < words.length; i++) out += B32.charAt(words[i]);
     return out;
   }
+  /* One hop of a route hint, as BOLT 11 packs it: a 33-byte node id, the short
+     channel id, the base fee, the proportional fee and the delta. The delta is
+     the only field this app reads, so the rest is a shape, not a claim. */
+  function routeHintBytes(cltv) {
+    var b = new Uint8Array(51), i;
+    b[0] = 2;
+    for (i = 1; i < 33; i++) b[i] = (i * 7) & 255;
+    b[49] = (cltv >> 8) & 255;
+    b[50] = cltv & 255;
+    return b;
+  }
   function mintInvoice(o) {
     var net = o.network || NET;
     var hrp = 'ln' + net + amountPart(o.sats);
@@ -2344,6 +2445,11 @@
       var body = intWords(ts, 7).concat(tagField('p', bytesToWords(seed)));
       if (desc) body = body.concat(tagField('d', bytesToWords(utf8(desc))));
       if (expiry != null) body = body.concat(tagField('x', intToVec(expiry)));
+      /* The final delta the payee's node asks for (the `c` tag) and the route
+         hint a private channel arrives with: both are terms the window check
+         reads, so a sample can state them the way a real invoice does. */
+      if (o.cltv != null) body = body.concat(tagField('c', intToVec(o.cltv)));
+      if (o.hintCltv) body = body.concat(tagField('r', bytesToWords(routeHintBytes(o.hintCltv))));
       var msg = hexOf(sha256Bytes(catBytes(utf8(hrp), wordsToBytesPad(body))));
       var sig = bytesToWords(fromHex(SECP.sign(msg, PRACTICE_KEY)));
       return assembleBech32(hrp, body.concat(sig));
@@ -2859,6 +2965,40 @@
     return null;
   }
 
+  /* How long the bitcoin side's own payment runs, in seconds, from the moment
+     it starts: the payee's final delta, which is the minimum its node keeps the
+     incoming payment, plus the few blocks of routing margin above. */
+  function lnHtlcSpan(dec) {
+    if (!dec || dec.kind !== 'bolt11') return null;
+    var blocks = (dec.minFinalCltv == null ? LN_CLTV_DEFAULT : Number(dec.minFinalCltv)) + LN_ROUTE_MARGIN_CLTV;
+    if (!isFinite(blocks) || blocks < 0) return null;
+    return blocks * BLOCK_SECS;
+  }
+  /* The earliest the sats could come back: a payment that starts now, over the
+     longest route the invoice allows. Every later payment gives a later one, so
+     this is the reading a window has to clear. */
+  function lnDeadline(dec, now) {
+    var span = lnHtlcSpan(dec);
+    if (span == null) return null;
+    return (now == null ? effNow() : Number(now)) + span;
+  }
+  /* The two legs, in the order they have to expire: the escrow window closes
+     first, the payment after it with room for the side that settles with the
+     revealed secret. Empty when the window is not known or the invoice says
+     nothing about its own deadline. */
+  function lnProblem(dec, t2, now) {
+    if (!t2) return '';
+    var n = now == null ? effNow() : Number(now);
+    var span = lnHtlcSpan(dec);
+    if (span == null) return '';
+    var room = Number(t2) - n;
+    if (span < room + LN_SAFETY_SECS) {
+      return 'That invoice keeps the payment open for ' + spanTxt(span) +
+        ', and the window closes ' + spanTxt(room) + ' from now: the sats could come back while the USDT is still claimable. Ask for an invoice that stays open an hour past the window.';
+    }
+    return '';
+  }
+
   /* The escrow window has a floor, a ceiling, and has to close before the
      invoice does. A partner who names a window five minutes out is betting that
      the sats land after it; a window years out leaves the funding side's money
@@ -2873,6 +3013,11 @@
     if (exp != null && exp < Number(t2) + T1_MARGIN) {
       return 'That invoice ends before the escrow window closes. Ask for one that stays payable at least an hour longer.';
     }
+    /* The payment has to outlive the escrow, not the other way round: the
+       window closing first is what leaves the bitcoin side time to settle
+       with the secret the claim has just published. */
+    var ln = lnProblem(dec, t2, now);
+    if (ln) return ln;
     return '';
   }
 
@@ -3176,7 +3321,16 @@
     // the finished swap says it once, in the title and on the receipt
     $('stateTxt').hidden = done;
     $('presets').hidden = done || waiting;
-    $('terms').hidden = done || waiting;
+    /* A swap that sends the USDT is the one whose terms the other side still
+       needs: the partner pays bitcoin against a code, and on a phone with this
+       app that code leaves as a QR or a paste while the USDT is already locked.
+       Hiding the row the moment the swap starts would strand that hand-off, so
+       Share code and QR stay for the two stages the USDT sits in the escrow.
+       A code cannot land on a running swap, so `Use code` goes. */
+    var shareLocked = !done && S.mode === 'wallet' && S.direction === 'u2b' && (locking || held);
+    $('terms').hidden = (done || waiting) && !shareLocked;
+    var pasteBtn = $('terms') && $('terms').querySelector('[data-act="pasteCode"]');
+    if (pasteBtn) pasteBtn.hidden = waiting;
     $('codeRow').hidden = done || waiting || $('codeRow').hidden;
     $('steps').hidden = done || waiting;
     $('payBox').hidden = !waiting;
@@ -3218,6 +3372,7 @@
 
     renderChain();
     renderLog();
+    renderCodeAsk();
   }
 
   /* The chain line under the rate: which Arbitrum, and whether the escrow
@@ -3338,6 +3493,17 @@
     $('payRowClaim').hidden = !open;
     $('claimBtn').hidden = !claimable;
     $('refundBtn').hidden = !(open && S.direction === 'u2b' && (!claimable || (S.t2 && effNow() >= S.t2)));
+    /* A phone whose wallet is not inside this page still has a wallet app, so
+       each of the two calls is offered as an `ethereum:` link beside the button
+       that copies it. The claim's link needs the secret checked here first, so
+       it appears once a secret is in the field - and it is the same call the
+       Claim button would send, never a different one. */
+    var noWallet = !practice && !provider();
+    var preField = normHex(($('secretIn') || {}).value || '');
+    var cl = $('claimLink'), rl = $('refundLink');
+    if (cl) cl.hidden = !(noWallet && claimable && /^[0-9a-f]{64}$/.test(preField));
+    if (rl) rl.hidden = !(noWallet && !$('refundBtn').hidden);
+    paintCallLinks();
     $('secretRow').hidden = !$('secretRow').dataset.open || $('secretRow').dataset.open === '0';
 
     // The payer has to be able to claim if the partner goes quiet: that takes
@@ -3631,6 +3797,26 @@
         toast(m);
         return;
       }
+      /* And the payment has to outlive the window from this moment on: a
+         payment made now runs for the invoice's own delta, and if that lands
+         before the escrow can be claimed the same secret would open both legs.
+         Read again here, on the tap, against the same fresh clock - from the
+         invoice this side approved, or the one on the screen when it approved
+         nothing yet. The invoice is decoded here rather than through the gate's
+         reader: the gate already refused the ones it could, and the question
+         now is one the gate never asks. */
+      var decNow = S.invDec;
+      if (!decNow && pasted()) {
+        try { decNow = parseLightning(pasted()); } catch (e) { decNow = null; }
+      }
+      var ln = lnProblem(decNow, S.t2, now);
+      if (ln) {
+        S.note = ln;
+        log('BLOCK', ln, 'c-err');
+        render();
+        toast(ln);
+        return;
+      }
       log('PAID', S.direction === 'btc2u'
         ? 'the sats have been sent \u00b7 waiting for the escrow to pay out on ' + curChain().label
         : 'the USDT has been sent');
@@ -3686,6 +3872,7 @@
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
     S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
     S.codeTerms = null; S.codeRateWarn = false; S.codeAddrFilled = '';
+    S.codeAsk = null;
     S.lockTx = ''; S.claimTx = '';
     clearSecret();
     S.busy = false;
@@ -3697,6 +3884,7 @@
     var c = $('codeIn'); if (c) c.value = '';
     var lt = $('lockTxIn'); if (lt) lt.value = '';
     renderCodeWarn();
+    renderCodeAsk();
     var box = $('qrBox'); if (box) box.innerHTML = '';
     var cx = $('codeRow'); if (cx) cx.hidden = true;
     log('RESET', 'state cleared');
@@ -3719,6 +3907,12 @@
     S.expectH = null;
     S.funder = '';
     S.lockTx = '';
+    /* The terms the last swap was locked under go with it: the hash it pinned,
+       the amount both sides agreed and the funding address a code named. Carried
+       into the next one they would approve against another swap's terms. */
+    S.H = null;
+    S.units = null;
+    S.locker = '';
     /* A new swap starts without the last one's secret, on the screen and in
        this page, whatever state the last one ended in. */
     clearSecret();
@@ -3775,8 +3969,7 @@
     var el = $('codeWarn');
     if (el) { el.textContent = S.codeWarn || ''; el.hidden = !S.codeWarn; }
     var row = $('codeAddr'), txt = $('codeAddrTxt');
-    if (!row || !txt) return;
-    if (S.codeAddr) {
+    if (!row || !txt) return;    if (S.codeAddr) {
       txt.textContent = 'This code names a USDT address (' + short(S.codeAddr, 6) +
         '). Use it only if it is yours.';
       row.hidden = false;
@@ -3786,9 +3979,57 @@
     }
   }
 
+  /* ------------------------------------------------------ a code arriving --
+     A code from another app (a scanner, a message, the camera) lands on a
+     screen that may already be set up. Applying it writes the terms, the
+     direction and - on the side that sends the USDT - the partner's address
+     over what is here, so it is not done on arrival: the code waits with one
+     sentence and two buttons, and the screen keeps what it had until one is
+     pressed. A screen with nothing on it has nothing to lose and takes the
+     code straight away, which is what a link tapped on a fresh screen is. */
+  function codeWouldReplace(c) {
+    var addr = String(addrEl() && addrEl().value || '').trim();
+    if (String(pasted()).trim()) return true;
+    if (S.expectH || S.codeTerms || S.t2) return true;
+    if (addr && (!c.address || String(c.address).toLowerCase() !== addr.toLowerCase())) return true;
+    return false;
+  }
+  function codeAskText(c) {
+    var dir = opposite(c.direction);
+    var addr = String(addrEl() && addrEl().value || '').trim();
+    var say = 'A swap code from another app would put ' + fmt(c.sats) + ' sats ' +
+      (dir === 'btc2u' ? 'paid in bitcoin' : 'paid in USDT') + ' here';
+    if (addr && c.address && String(c.address).toLowerCase() !== addr.toLowerCase()) {
+      say += ', with its own USDT address';
+    }
+    return say + '. Loading it replaces what is on this screen.';
+  }
+  function renderCodeAsk() {
+    var box = $('codeAsk'), txt = $('codeAskTxt');
+    if (!box || !txt) return;
+    if (!S.codeAsk) { box.hidden = true; txt.textContent = ''; return; }
+    txt.textContent = S.codeAsk.say;
+    box.hidden = false;
+  }
+  function acceptCode(text) {
+    var c = parseSwapLink(text);
+    if (!c) { toast('That is not a swap code'); return false; }
+    /* A swap that is already running refuses the code for its own reason, and
+       saying so is what the screen should do rather than asking a question
+       whose answer could not change anything. */
+    if (S.phase !== 'idle' || !codeWouldReplace(c)) return applyCode(text);
+    S.codeAsk = { text: String(text), say: codeAskText(c) };
+    log('CODE', 'a code from another app was held until this screen says so');
+    renderCodeAsk();
+    toast('A swap code is waiting: load it, or keep this one');
+    return false;
+  }
+
   function applyCode(text) {
     var c = parseSwapLink(text);
     if (!c) { toast('That is not a swap code'); return false; }
+    S.codeAsk = null;
+    renderCodeAsk();
     var now = effNow();
     if (S.phase === 'settled' || S.phase === 'refunded') { toast('Tap Done first, then use the code.'); return false; }
     /* A code names the terms of the next swap. Loading one into a swap that is
@@ -4125,7 +4366,21 @@
 
   var ACT = {
     mode: function (b) {
-      S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      var want = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      /* A real swap is not a rehearsal to switch out of. Changing the mode
+         mid-swap would put the screen on the other escrow while the USDT of
+         this one is still locked - the claim, the refund and the reading that
+         closes it would all be asked of the wrong chain. It is refused until
+         the swap is done or left behind. */
+      if (want !== S.mode && S.phase !== 'idle' && S.mode === 'wallet') {
+        var m = 'A real swap is running. Finish it, or tap Back, before switching modes.';
+        log('BLOCK', 'the mode was not switched while a wallet swap was ' + S.phase, 'c-err');
+        toast(m);
+        if (S.phase === 'paying') { S.note = m; }
+        render();
+        return;
+      }
+      S.mode = want;
       if (S.phase !== 'idle') backToForm();
       /* the two escrows are not each other's: a rehearsal's stand-in record
          never carries into a real swap, and a chain reading never into one */
@@ -4288,6 +4543,22 @@
       if (!v) { toast('Paste the code first'); return; }
       applyCode(v);
     },
+    /* The two answers to a code that arrived from another app. Yes loads it
+       with every gate a typed code walks; no leaves the screen exactly as it
+       was, address and terms included. */
+    codeAskYes: function () {
+      var ask = S.codeAsk;
+      if (!ask) return;
+      applyCode(ask.text);
+    },
+    codeAskNo: function () {
+      if (!S.codeAsk) return;
+      S.codeAsk = null;
+      renderCodeAsk();
+      log('CODE', 'the code that arrived was left alone; this screen kept its own');
+      render();
+      toast('Kept what was on this screen');
+    },
     copyInvoice: function () {
       var inv = readInvoice(pasted());
       if (!inv.ok) { needInvoice(); return; }
@@ -4378,7 +4649,7 @@
     if (el) el.addEventListener('click', walletHandoff);
   });
 
-  [invIn(), addrEl(), $('codeIn')].forEach(function (el) {
+  [invIn(), addrEl(), $('codeIn'), $('secretIn')].forEach(function (el) {
     if (!el) return;
     el.addEventListener('input', function () { render(); refreshGate(); });
   });
@@ -4392,8 +4663,8 @@
 
   // A code can arrive in the address bar of a hosted copy, or from the app
   // shell when another app hands it over. Nothing here is ever generated.
-  var fromUrl = parseSwapCode(String(location.search) + ' ' + String(location.hash));
-  if (fromUrl) applyCode(String(location.search) + ' ' + String(location.hash));
+  var fromUrl = parseSwapLink(String(location.search) + ' ' + String(location.hash));
+  if (fromUrl) acceptCode(String(location.search) + ' ' + String(location.hash));
 
   /* What this page leaves on the window. The host shell needs one entry -
      `acceptCode`, to hand a swap code over from another app - and the page's
@@ -4434,12 +4705,15 @@
   }
 
   window.CLEANSWAP = {
-    state: guardedState(), acceptCode: function (t) { return applyCode(t); }, applyCode: applyCode,
+    state: guardedState(), acceptCode: acceptCode, applyCode: applyCode,
     SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
     T2_MIN: T2_MIN, T2_MAX: T2_MAX, T1_MARGIN: T1_MARGIN, PAY_MARGIN: PAY_MARGIN,
     b64field: b64field, unB64field: unB64field,
     BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
     invoiceExpiry: invoiceExpiry, windowProblem: windowProblem, rpcQuorum: rpcQuorum, endpoints: endpoints,
+    lnHtlcSpan: lnHtlcSpan, lnDeadline: lnDeadline, lnProblem: lnProblem, chainTimeOnce: chainTimeOnce,
+    CLOCK_TOL: CLOCK_TOL, CLOCK_SKEW_MAX: CLOCK_SKEW_MAX, LN_SAFETY_SECS: LN_SAFETY_SECS,
+    claimWalletLink: claimWalletLink, refundWalletLink: refundWalletLink, callLink: callLink,
     sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
     SECP: SECP, wordsToInt: wordsToInt, fromHex: fromHex, effNow: effNow, syncChainTime: syncChainTime,
     unitsTxt: unitsTxt,

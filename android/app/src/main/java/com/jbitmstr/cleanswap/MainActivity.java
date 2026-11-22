@@ -20,6 +20,7 @@ import android.widget.Toast;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Locale;
@@ -205,8 +206,14 @@ public class MainActivity extends Activity {
 
         @Override
         public void onPageFinished(WebView view, String url) {
-            pageReady = true;
-            deliverCode();
+            /* Ready means the one document that is this app has finished, not
+               any page that happened to finish: a code is only handed to the
+               page when the page is the app, so a failed or foreign finish
+               cannot consume a pending code. */
+            if (APP_URL.equals(url)) {
+                pageReady = true;
+                deliverCode();
+            }
         }
 
         /**
@@ -219,19 +226,29 @@ public class MainActivity extends Activity {
             Uri uri = request == null ? null : request.getUrl();
             /* Exactly one document is answered from the APK: https, this app's
                own host, and the one path the shell loads. Another scheme, or
-               another path on the same host, is not a page of this app and is
-               not served - it falls through to a normal request that fails. */
+               another path on the same host, is not a page of this app: it is
+               answered with an empty 404 here, inside the app's own origin,
+               rather than left to fall through to the network - nothing on a
+               real host can be pulled in under this origin. */
             if (uri == null
                     || !"https".equalsIgnoreCase(String.valueOf(uri.getScheme()))
-                    || !APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))
-                    || !"/index.html".equals(String.valueOf(uri.getPath()))) {
+                    || !APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))) {
                 return null;
+            }
+            if (!"/index.html".equals(String.valueOf(uri.getPath()))) {
+                WebResourceResponse notFound = new WebResourceResponse(
+                        "text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                notFound.setStatusCodeAndReasonPhrase(404, "Not Found");
+                return notFound;
             }
             try {
                 InputStream in = getAssets().open("index.html");
                 return new WebResourceResponse("text/html", "utf-8", in);
             } catch (IOException missing) {
-                return null;
+                WebResourceResponse gone = new WebResourceResponse(
+                        "text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                gone.setStatusCodeAndReasonPhrase(404, "Not Found");
+                return gone;
             }
         }
 

@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E9Qzqfcl+2ne/q1Z3sHjijcRi7LfIk72npshXS/ppWM=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-Ugclr0dk1jinrj2AyuyO67WuHM0NPmNqB1xOZdIutyA='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YIz2EASs4tZ0i4tOwvqYV9Q//t8+9w94Q1nlSZLrDT0=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-h35FtdEW75jjwsdghCXbuLbQ4S0n8duNW8PDnPMSmNI='; style-src 'sha256-wN79ETnkhmajihYoVzAayh15bTpx/VtY8vq38JTGmXw='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -209,6 +209,14 @@ body[data-phase="locking"] .flip{display:none}
 .mini:focus-visible{outline:2px solid var(--em);outline-offset:2px}
 .field.code{margin:10px 0 0}
 
+/* a code from another app, waiting for the person to say which swap this is */
+.ask{margin:10px 0 0;padding:13px 14px 5px;border:1px solid var(--line2);border-radius:16px;
+  background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.ask-line{margin:0 0 10px;font-size:13.5px;line-height:1.45;color:var(--ink2);font-weight:600}
+.ask .row{margin:0 0 8px}
+.ask .pill{height:44px;font-size:13px}
+.ask .ask-yes{border-color:rgba(80,210,193,.45);background:var(--em-soft);color:var(--em-ink)}
+
 /* a field with its one-tap sample: the same row in both modes, the button in practice only */
 .field-in{display:flex;gap:8px}
 .field-in input{flex:1 1 0;width:auto;min-width:0}
@@ -388,6 +396,17 @@ body[data-phase="locking"] .flip{display:none}
   <p class="hint" id="codeAddr" hidden><span id="codeAddrTxt"></span>
     <button class="mini" data-act="useCodeAddr" type="button">Use it</button></p>
 
+  <!-- A code that arrives from another app lands on a screen that may already
+       be set up. It waits here, with what it would replace, until the person
+       says which one this swap is: nothing on the screen moves before that. -->
+  <div class="ask" id="codeAsk" hidden>
+    <p class="ask-line" id="codeAskTxt"></p>
+    <div class="row">
+      <button class="pill ask-yes" data-act="codeAskYes" type="button">Load the code</button>
+      <button class="pill" data-act="codeAskNo" type="button">Keep this one</button>
+    </div>
+  </div>
+
   <!-- one path for both modes; the numbers swap with the direction -->
   <section class="steps" id="steps">
     <div class="step" id="stepInv">
@@ -470,6 +489,11 @@ body[data-phase="locking"] .flip{display:none}
     <div class="row" id="payRowClaim" hidden>
       <button class="pill" id="claimBtn" data-act="claimOpen" type="button">Claim USDT</button>
       <button class="pill" id="refundBtn" data-act="sendRefund" type="button" hidden>Refund</button>
+      <!-- A phone with no wallet inside this page still has a wallet app: the
+           same call goes to it as an ethereum: link (EIP-681), and the hash
+           comes back the way every hand-off does. -->
+      <a class="pill" id="claimLink" href="#" hidden>Claim in wallet</a>
+      <a class="pill" id="refundLink" href="#" hidden>Refund in wallet</a>
     </div>
     <div class="field code" id="txRow" hidden>
       <div class="field-in">
@@ -591,8 +615,12 @@ contract CleanSwapHTLC {
         guardState = NOT_ENTERED;
     }
 
-    /// @notice Refuse timelocks so short a refund could race the claim.
-    uint256 public constant MIN_TIMELOCK_DELTA = 5 minutes;
+    /// @notice Refuse timelocks so short a refund could race the claim. This is
+    ///         the same floor the app applies to a code's window (`T2_MIN`), so
+    ///         no window that reaches a wallet is one the escrow would refuse
+    ///         at the door: 30 minutes is the shortest that leaves the bitcoin
+    ///         side room to settle before the escrow can be taken back.
+    uint256 public constant MIN_TIMELOCK_DELTA = 30 minutes;
     /// @notice Refuse timelocks so long the funding side's money is stuck for
     ///         a season if the other side goes quiet. 7 days is the ceiling the
     ///         app also enforces before it lets anyone approve a swap.
@@ -1152,7 +1180,7 @@ contract CleanSwapHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CleanSwap v0.6.4 — Lightning bitcoin <-> USDT atomic swap in one file.
+<script>/* CleanSwap v0.6.10 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -1203,10 +1231,13 @@ contract CleanSwapHTLC {
 
    A swap id is the terms plus the address that funds the escrow, so a code
    from the other side is checked before anything is adopted from it: the chain
-   is never switched and an escrow address is never written over by a code.
-   The escrow window has a floor and a ceiling, and the Lightning invoice has to
-   outlive the window by an hour, so a short or endless window cannot race the
-   payer.
+   is never switched and an escrow address is never written over by a code, and
+   a code that arrives from another app while this screen holds terms of its own
+   is held with a sentence and two buttons until the person says which swap this
+   is. The escrow window has a floor, a ceiling, and two deadlines that have to
+   fall in this order: the window closes first, and the bitcoin payment it is
+   paid against runs past it - the invoice's own final delta (`c`) plus an hour
+   of room - so the sats can never come back while the USDT is still claimable.
 
    The USDT address is an Arbitrum one (`0x` + 40 hex). A TRON `T` address is
    still decoded so a pasted one gets a straight answer, but Wallet mode says
@@ -1281,7 +1312,7 @@ contract CleanSwapHTLC {
   /* The escrow's creation bytecode, compiled by build.py from
      contracts/CleanSwapHTLC.sol with solc 0.8.26. It is what the Setup panel
      hands over to a deploy, so a swap can exist before any escrow does. */
-  var BYTECODE = '6080604052600180553480156012575f80fd5b5061102c806100205f395ff3fe608060405234801561000f575f80fd5b50600436106100a6575f3560e01c80638d9fba101161006e5780638d9fba101461020557806391644b2b1461020e578063bde40a0114610221578063eaaa98fa14610234578063eb84e7f214610247578063f3192c08146102f9575f80fd5b80633da0e66e146100aa5780637249fbb61461019957806384cc9dfb146101ae5780638bfa6f18146101c15780638c8c2003146101e2575b5f80fd5b6101836100b8366004610dfc565b60408051610100810182525f80825260208201819052918101829052606081018290526080810182905260a0810182905260c0810182905260e0810191909152505f90815260208181526040918290208251610100810184528154815260018201549281019290925260028101549282019290925260038201546001600160a01b03908116606083015260048301548116608083015260059092015491821660a082015260ff600160a01b83048116151560c0830152600160a81b909204909116151560e082015290565b6040516101909190610e13565b60405180910390f35b6101ac6101a7366004610dfc565b610303565b005b6101ac6101bc366004610e90565b610452565b6101d46101cf366004610ecb565b610649565b604051908152602001610190565b6101f56101f0366004610dfc565b6106f9565b6040519015158152602001610190565b6101d461012c81565b6101d461021c366004610f26565b61075d565b6101d461022f366004610dfc565b6109e7565b6101f5610242366004610dfc565b610a5b565b6102ae610255366004610dfc565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501549394929391926001600160a01b03918216929082169181169060ff600160a01b8204811691600160a81b90041688565b604080519889526020890197909752958701949094526001600160a01b03928316606087015290821660808601521660a0840152151560c0830152151560e082015261010001610190565b6101d462093a8081565b600260015403610326576040516306fda65d60e31b815260040160405180910390fd5b60026001555f81815260208190526040902060048101546001600160a01b031661036b57604051634e86cc8760e11b8152600481018390526024015b60405180910390fd5b6005810154600160a01b900460ff168061039057506005810154600160a81b900460ff165b156103b1576040516358cb522560e11b815260048101839052602401610362565b80600201544210156103e557600281015460405163126b74dd60e11b81526004810191909152426024820152604401610362565b60058101805460ff60a81b1916600160a81b179055600381015460048201546001830154610420926001600160a01b03908116921690610abb565b60405182907ffe509803c09416b28ff3d8f690c8b0c61462a892c46d5430c8fb20abe472daf0905f90a2505060018055565b600260015403610475576040516306fda65d60e31b815260040160405180910390fd5b60026001555f82815260208190526040902060048101546001600160a01b03166104b557604051634e86cc8760e11b815260048101849052602401610362565b6005810154600160a01b900460ff16806104da57506005810154600160a81b900460ff165b156104fb576040516358cb522560e11b815260048101849052602401610362565b8060020154421061052e57600281015460405163301b1fcd60e01b81526004810191909152426024820152604401610362565b5f60028360405160200161054491815260200190565b60408051601f198184030181529082905261055e91610f70565b602060405180830381855afa158015610579573d5f803e3d5ffd5b5050506040513d601f19601f8201168201806040525081019061059c9190610f86565b825490915081146105cd5781546040516305ea586160e51b8152600481019190915260248101829052604401610362565b60058201805460ff60a01b198116600160a01b1790915560038301546001840154610605926001600160a01b03928316921690610abb565b837f38d6042dbdae8e73a7f6afbabd3fbe0873f9f5ed3cd71294591c3908c2e65fee8460405161063791815260200190565b60405180910390a25050600180555050565b60408051602081018890526bffffffffffffffffffffffff19606088811b82168385015287811b8216605484015286901b166068820152607c8101849052609c8082018490528251808303909101815260bc909101918290525f916002916106b091610f70565b602060405180830381855afa1580156106cb573d5f803e3d5ffd5b5050506040513d601f19601f820116820180604052508101906106ee9190610f86565b979650505050505050565b5f81815260208190526040812060048101546001600160a01b03161580159061072e57506005810154600160a01b900460ff16155b801561074657506005810154600160a81b900460ff16155b8015610756575080600201544210155b9392505050565b5f600260015403610781576040516306fda65d60e31b815260040160405180910390fd5b60026001555f8290036107a757604051631f2a200560e01b815260040160405180910390fd5b856107c557604051637550078560e01b815260040160405180910390fd5b6001600160a01b03841615806107e257506001600160a01b038316155b156108005760405163d92e233d60e01b815260040160405180910390fd5b306001600160a01b03851603610829576040516303fe161d60e21b815260040160405180910390fd5b826001600160a01b03163b5f0361085e5760405163d0b1b2a760e01b81526001600160a01b0384166004820152602401610362565b5f61086b61012c42610fb1565b9050808610156108985760405163dfb9368360e01b81526004810187905260248101829052604401610362565b5f6108a662093a8042610fb1565b9050808711156108d357604051630748617d60e01b81526004810188905260248101829052604401610362565b6108e188338888888c610649565b5f818152602081905260409020600401549093506001600160a01b03161561091f5760405163afa955b960e01b815260048101849052602401610362565b61092a853386610bcb565b5f83815260208181526040918290208a815560018101879055600281018a90556003810180546001600160a01b03808b166001600160a01b03199283168117909355600484018054831633908117909155600585018054928e1692909316821790925585519283529382018990529381018c9052606081018b905290929086907f14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf9060800160405180910390a45050600180555095945050505050565b5f6002826040516020016109fd91815260200190565b60408051601f1981840301815290829052610a1791610f70565b602060405180830381855afa158015610a32573d5f803e3d5ffd5b5050506040513d601f19601f82011682018060405250810190610a559190610f86565b92915050565b5f81815260208190526040812060048101546001600160a01b031615801590610a9057506005810154600160a01b900460ff16155b8015610aa857506005810154600160a81b900460ff16155b8015610756575060020154421092915050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f91908516906370a0823190602401602060405180830381865afa158015610b02573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b269190610f86565b6040516001600160a01b038516602482015260448101849052909150610b8c90859063a9059cbb60e01b906064015b60408051601f198184030181529190526020810180516001600160e01b03166001600160e01b031990931692909217909152610c78565b5f610b98858584610d0c565b9050828114610bc457604051632daa6d9560e21b81526004810184905260248101829052604401610362565b5050505050565b6040516370a0823160e01b81523060048201525f906001600160a01b038516906370a0823190602401602060405180830381865afa158015610c0f573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c339190610f86565b6040516001600160a01b038516602482015230604482015260648101849052909150610c6c9085906323b872dd60e01b90608401610b55565b5f610b98853084610d0c565b5f80836001600160a01b031683604051610c929190610f70565b5f604051808303815f865af19150503d805f8114610ccb576040519150601f19603f3d011682016040523d82523d5f602084013e610cd0565b606091505b5091509150811580610ce85750610ce681610dc7565b155b15610d06576040516312171d8360e31b815260040160405180910390fd5b50505050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f9182918616906370a0823190602401602060405180830381865afa158015610d54573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610d789190610f86565b905082811015610db45760405163d35f6edb60e01b81526001600160a01b03861660048201526024810184905260448101829052606401610362565b610dbe8382610fc4565b95945050505050565b5f81515f03610dd857506001919050565b8151602014610de857505f919050565b81806020019051810190610a559190610fd7565b5f60208284031215610e0c575f80fd5b5035919050565b8151815260208083015190820152604080830151908201526060808301516001600160a01b039081169183019190915260808084015182169083015260a0808401519091169082015260c080830151610100830191610e759084018215159052565b5060e0830151610e8960e084018215159052565b5092915050565b5f8060408385031215610ea1575f80fd5b50508035926020909101359150565b80356001600160a01b0381168114610ec6575f80fd5b919050565b5f805f805f8060c08789031215610ee0575f80fd5b86359550610ef060208801610eb0565b9450610efe60408801610eb0565b9350610f0c60608801610eb0565b9598949750929560808101359460a0909101359350915050565b5f805f805f60a08688031215610f3a575f80fd5b8535945060208601359350610f5160408701610eb0565b9250610f5f60608701610eb0565b949793965091946080013592915050565b5f82518060208501845e5f920191825250919050565b5f60208284031215610f96575f80fd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b80820180821115610a5557610a55610f9d565b81810381811115610a5557610a55610f9d565b5f60208284031215610fe7575f80fd5b81518015158114610756575f80fdfea2646970667358221220b81355a2c470583e44cd6a369e858da232642d74448611e9df61cbc08b37b90564736f6c634300081a0033';
+  var BYTECODE = '6080604052600180553480156012575f80fd5b5061102c806100205f395ff3fe608060405234801561000f575f80fd5b50600436106100a6575f3560e01c80638d9fba101161006e5780638d9fba101461020557806391644b2b1461020e578063bde40a0114610221578063eaaa98fa14610234578063eb84e7f214610247578063f3192c08146102f9575f80fd5b80633da0e66e146100aa5780637249fbb61461019957806384cc9dfb146101ae5780638bfa6f18146101c15780638c8c2003146101e2575b5f80fd5b6101836100b8366004610dfc565b60408051610100810182525f80825260208201819052918101829052606081018290526080810182905260a0810182905260c0810182905260e0810191909152505f90815260208181526040918290208251610100810184528154815260018201549281019290925260028101549282019290925260038201546001600160a01b03908116606083015260048301548116608083015260059092015491821660a082015260ff600160a01b83048116151560c0830152600160a81b909204909116151560e082015290565b6040516101909190610e13565b60405180910390f35b6101ac6101a7366004610dfc565b610303565b005b6101ac6101bc366004610e90565b610452565b6101d46101cf366004610ecb565b610649565b604051908152602001610190565b6101f56101f0366004610dfc565b6106f9565b6040519015158152602001610190565b6101d461070881565b6101d461021c366004610f26565b61075d565b6101d461022f366004610dfc565b6109e7565b6101f5610242366004610dfc565b610a5b565b6102ae610255366004610dfc565b5f602081905290815260409020805460018201546002830154600384015460048501546005909501549394929391926001600160a01b03918216929082169181169060ff600160a01b8204811691600160a81b90041688565b604080519889526020890197909752958701949094526001600160a01b03928316606087015290821660808601521660a0840152151560c0830152151560e082015261010001610190565b6101d462093a8081565b600260015403610326576040516306fda65d60e31b815260040160405180910390fd5b60026001555f81815260208190526040902060048101546001600160a01b031661036b57604051634e86cc8760e11b8152600481018390526024015b60405180910390fd5b6005810154600160a01b900460ff168061039057506005810154600160a81b900460ff165b156103b1576040516358cb522560e11b815260048101839052602401610362565b80600201544210156103e557600281015460405163126b74dd60e11b81526004810191909152426024820152604401610362565b60058101805460ff60a81b1916600160a81b179055600381015460048201546001830154610420926001600160a01b03908116921690610abb565b60405182907ffe509803c09416b28ff3d8f690c8b0c61462a892c46d5430c8fb20abe472daf0905f90a2505060018055565b600260015403610475576040516306fda65d60e31b815260040160405180910390fd5b60026001555f82815260208190526040902060048101546001600160a01b03166104b557604051634e86cc8760e11b815260048101849052602401610362565b6005810154600160a01b900460ff16806104da57506005810154600160a81b900460ff165b156104fb576040516358cb522560e11b815260048101849052602401610362565b8060020154421061052e57600281015460405163301b1fcd60e01b81526004810191909152426024820152604401610362565b5f60028360405160200161054491815260200190565b60408051601f198184030181529082905261055e91610f70565b602060405180830381855afa158015610579573d5f803e3d5ffd5b5050506040513d601f19601f8201168201806040525081019061059c9190610f86565b825490915081146105cd5781546040516305ea586160e51b8152600481019190915260248101829052604401610362565b60058201805460ff60a01b198116600160a01b1790915560038301546001840154610605926001600160a01b03928316921690610abb565b837f38d6042dbdae8e73a7f6afbabd3fbe0873f9f5ed3cd71294591c3908c2e65fee8460405161063791815260200190565b60405180910390a25050600180555050565b60408051602081018890526bffffffffffffffffffffffff19606088811b82168385015287811b8216605484015286901b166068820152607c8101849052609c8082018490528251808303909101815260bc909101918290525f916002916106b091610f70565b602060405180830381855afa1580156106cb573d5f803e3d5ffd5b5050506040513d601f19601f820116820180604052508101906106ee9190610f86565b979650505050505050565b5f81815260208190526040812060048101546001600160a01b03161580159061072e57506005810154600160a01b900460ff16155b801561074657506005810154600160a81b900460ff16155b8015610756575080600201544210155b9392505050565b5f600260015403610781576040516306fda65d60e31b815260040160405180910390fd5b60026001555f8290036107a757604051631f2a200560e01b815260040160405180910390fd5b856107c557604051637550078560e01b815260040160405180910390fd5b6001600160a01b03841615806107e257506001600160a01b038316155b156108005760405163d92e233d60e01b815260040160405180910390fd5b306001600160a01b03851603610829576040516303fe161d60e21b815260040160405180910390fd5b826001600160a01b03163b5f0361085e5760405163d0b1b2a760e01b81526001600160a01b0384166004820152602401610362565b5f61086b61070842610fb1565b9050808610156108985760405163dfb9368360e01b81526004810187905260248101829052604401610362565b5f6108a662093a8042610fb1565b9050808711156108d357604051630748617d60e01b81526004810188905260248101829052604401610362565b6108e188338888888c610649565b5f818152602081905260409020600401549093506001600160a01b03161561091f5760405163afa955b960e01b815260048101849052602401610362565b61092a853386610bcb565b5f83815260208181526040918290208a815560018101879055600281018a90556003810180546001600160a01b03808b166001600160a01b03199283168117909355600484018054831633908117909155600585018054928e1692909316821790925585519283529382018990529381018c9052606081018b905290929086907f14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf9060800160405180910390a45050600180555095945050505050565b5f6002826040516020016109fd91815260200190565b60408051601f1981840301815290829052610a1791610f70565b602060405180830381855afa158015610a32573d5f803e3d5ffd5b5050506040513d601f19601f82011682018060405250810190610a559190610f86565b92915050565b5f81815260208190526040812060048101546001600160a01b031615801590610a9057506005810154600160a01b900460ff16155b8015610aa857506005810154600160a81b900460ff16155b8015610756575060020154421092915050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f91908516906370a0823190602401602060405180830381865afa158015610b02573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610b269190610f86565b6040516001600160a01b038516602482015260448101849052909150610b8c90859063a9059cbb60e01b906064015b60408051601f198184030181529190526020810180516001600160e01b03166001600160e01b031990931692909217909152610c78565b5f610b98858584610d0c565b9050828114610bc457604051632daa6d9560e21b81526004810184905260248101829052604401610362565b5050505050565b6040516370a0823160e01b81523060048201525f906001600160a01b038516906370a0823190602401602060405180830381865afa158015610c0f573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610c339190610f86565b6040516001600160a01b038516602482015230604482015260648101849052909150610c6c9085906323b872dd60e01b90608401610b55565b5f610b98853084610d0c565b5f80836001600160a01b031683604051610c929190610f70565b5f604051808303815f865af19150503d805f8114610ccb576040519150601f19603f3d011682016040523d82523d5f602084013e610cd0565b606091505b5091509150811580610ce85750610ce681610dc7565b155b15610d06576040516312171d8360e31b815260040160405180910390fd5b50505050565b6040516370a0823160e01b81526001600160a01b0383811660048301525f9182918616906370a0823190602401602060405180830381865afa158015610d54573d5f803e3d5ffd5b505050506040513d601f19601f82011682018060405250810190610d789190610f86565b905082811015610db45760405163d35f6edb60e01b81526001600160a01b03861660048201526024810184905260448101829052606401610362565b610dbe8382610fc4565b95945050505050565b5f81515f03610dd857506001919050565b8151602014610de857505f919050565b81806020019051810190610a559190610fd7565b5f60208284031215610e0c575f80fd5b5035919050565b8151815260208083015190820152604080830151908201526060808301516001600160a01b039081169183019190915260808084015182169083015260a0808401519091169082015260c080830151610100830191610e759084018215159052565b5060e0830151610e8960e084018215159052565b5092915050565b5f8060408385031215610ea1575f80fd5b50508035926020909101359150565b80356001600160a01b0381168114610ec6575f80fd5b919050565b5f805f805f8060c08789031215610ee0575f80fd5b86359550610ef060208801610eb0565b9450610efe60408801610eb0565b9350610f0c60608801610eb0565b9598949750929560808101359460a0909101359350915050565b5f805f805f60a08688031215610f3a575f80fd5b8535945060208601359350610f5160408701610eb0565b9250610f5f60608701610eb0565b949793965091946080013592915050565b5f82518060208501845e5f920191825250919050565b5f60208284031215610f96575f80fd5b5051919050565b634e487b7160e01b5f52601160045260245ffd5b80820180821115610a5557610a55610f9d565b81810381811115610a5557610a55610f9d565b5f60208284031215610fe7575f80fd5b81518015158114610756575f80fdfea26469706673582212203b389f3ab08dfe849580580c26d0a764a0dbb3637a98be8c561cab6f8fe1adb064736f6c634300081a0033';
   var FALLBACK_PRICE = 90000;
   var QR_MAX = 340;                 /* bytes at level L, version 13 (the encoder's ceiling) */
   var QR_M = 269;                   /* bytes at level M, version 12 */
@@ -1298,6 +1329,24 @@ contract CleanSwapHTLC {
   var PAY_MARGIN = 600;             /* stop paying once this little of the window is left */
   var T1_BLOCKS = 40;               /* ~6h40m of bitcoin blocks */
   var BLOCK_SECS = 600;
+  /* The two legs have to expire in the right order. The bitcoin side's payment
+     lives in a Lightning HTLC at the payee, and the payee's node states how
+     many blocks it keeps it: the invoice's `c` tag (BOLT 11's 18 blocks when the
+     tag is absent). The USDT escrow closes at T2, the claim publishes the
+     secret, and the payee settles with it after that - so the sats must not be
+     able to come back before the escrow is over, or one secret would collect
+     both legs: the payment returns at its expiry while the USDT is still
+     claimable. A window that does not clear the payment's own deadline by
+     LN_SAFETY_SECS is refused before anything is approved.
+
+     The deltas a route hint states are not added here: they say how long the
+     payer's own funds are held by the hops before the payee, while the deadline
+     that matters is the payee's incoming HTLC, which the final delta sets. A few
+     blocks on top of that cover the last hop's own hold, which is the routing
+     margin this check keeps. */
+  var LN_CLTV_DEFAULT = 18;         /* min_final_cltv_expiry when the invoice carries no c tag */
+  var LN_ROUTE_MARGIN_CLTV = 3;     /* blocks kept for the last hop's own hold */
+  var LN_SAFETY_SECS = 3600;        /* the claim side keeps this long after the escrow closes */
 
   var S = {
     mode: 'practice',               /* practice | wallet */
@@ -1347,6 +1396,8 @@ contract CleanSwapHTLC {
     codeAddr: '',                   /* a USDT address a code named, offered not taken */
     codeAddrFilled: '',             /* an address a code wrote into the field itself */
     codeTerms: null,                /* the amounts a code put on screen: {units, sats} */
+    codeAsk: null,                  /* a code from another app, waiting for a tap: {text, say} */
+    codeAsk: null,                  /* a code from another app, waiting for a tap: {text, say} */
     codeRateWarn: false,            /* whether the sentence on screen is the rate warning */
     tokenState: '',                 /* '' (not read) | ok | unread | wrong: what the chain said
                                        about the token set in Setup */
@@ -2076,10 +2127,19 @@ contract CleanSwapHTLC {
     var fresh = S.blockTs && (Date.now() - S.blockTsAt) < BLOCK_TS_TTL;
     return fresh && S.blockTs > local ? S.blockTs : local;
   }
-  /* Every configured endpoint is asked and the latest answer wins: a node that
-     is behind the others cannot make the window look longer than it is. This is
-     not the escrow itself, so it does not go through the quorum path - a stale
+  /* Every configured endpoint is asked, and the reading is the one they agree
+     on: the median of their answers, with any answer further than CLOCK_TOL
+     from it left out. Taking the highest answer instead let one node - behind
+     by an hour, or lying about the head by a year - decide that a window had
+     closed while an honest clock said it had not. Two honest heads are always
+     within a few seconds of each other, so a majority is a real majority; a
+     single endpoint is its own answer, as it is for the escrow. A reading
+     further than CLOCK_SKEW_MAX from this phone's clock is not a clock anyone
+     can vouch for (a year 3000 head, a zero), so it is not used either. This is
+     not the escrow itself, so it does not go through the quorum path: a stale
      head is a stricter answer, not a disagreement to report. */
+  var CLOCK_TOL = 300;              /* seconds: two honest heads agree this closely */
+  var CLOCK_SKEW_MAX = 24 * 3600;   /* beyond this a "head" is a mistake, not a clock */
   function chainTimeOnce() {
     var list = endpoints();
     return Promise.all(list.map(function (url) {
@@ -2088,9 +2148,19 @@ contract CleanSwapHTLC {
         return isFinite(t) && t > 0 ? t : null;
       }, function () { return null; });
     })).then(function (all) {
-      var best = null;
-      all.forEach(function (t) { if (t && (!best || t > best)) best = t; });
-      return best;
+      var local = nowSec();
+      var seen = all.filter(function (t) { return t && Math.abs(t - local) <= CLOCK_SKEW_MAX; })
+        .sort(function (a, b) { return a - b; });
+      if (!seen.length) return null;
+      var median = seen[Math.floor((seen.length - 1) / 2)];
+      var near = seen.filter(function (t) { return Math.abs(t - median) <= CLOCK_TOL; });
+      /* A majority of the answers have to sit together. With one endpoint that
+         is its own answer; with two or more, one node alone is not the clock. */
+      if (seen.length > 1 && near.length * 2 < seen.length) {
+        log('BLOCK', 'the endpoints do not agree on the time, so the phone\u2019s clock is what this screen uses', 'c-err');
+        return null;
+      }
+      return near[Math.floor((near.length - 1) / 2)];
     }, function () { return null; });
   }
   function syncChainTime(force) {
@@ -2571,6 +2641,36 @@ contract CleanSwapHTLC {
     var q = params && params.length ? '?' + params.join('&') : '';
     return 'ethereum:' + call.to + '@' + curChain().chainId + '/' + fn + q;
   }
+  /* The two calls that close a swap, as the links a wallet app can take: the
+     claim carries the id and the secret, the refund only the id. They are what
+     a phone without `window.ethereum` uses - the copy button says the same
+     call, this one hands it over, and the transaction hash comes back the way
+     every hand-off in this app does. */
+  function claimWalletLink(pre, id) {
+    return callLink({ to: escrowNow(), data: claimCalldata(id, '0x' + normHex(pre)) }, 'claim', [
+      'bytes32=0x' + normHex(id), 'bytes32=0x' + normHex(pre)
+    ]);
+  }
+  function refundWalletLink(id) {
+    return callLink({ to: escrowNow(), data: refundCalldata(id) }, 'refund', [
+      'bytes32=0x' + normHex(id)
+    ]);
+  }
+  /* Written again whenever the waiting screen is painted: the id is computed
+     from the terms, and the claim cannot be written until its secret is in the
+     field, so a link that is on screen is always the call those words describe. */
+  function paintCallLinks() {
+    var cl = $('claimLink'), rl = $('refundLink');
+    if ((!cl || cl.hidden) && (!rl || rl.hidden)) return;
+    if (!isAddr(escrowNow())) return;
+    swapIdNow().then(function (id) {
+      if (rl && !rl.hidden) rl.setAttribute('href', refundWalletLink(id));
+      if (cl && !cl.hidden) {
+        var pre = normHex($('secretIn').value || '');
+        cl.setAttribute('href', claimWalletLink(pre, id));
+      }
+    }, function () { /* no complete terms yet: nothing to open */ });
+  }
 
   function blockChain(c) {
     var msg = chainSay(c);
@@ -2884,7 +2984,10 @@ contract CleanSwapHTLC {
         var p = provider();
         if (!p) { render(); copy(callPacket(call, 'claim'), 'Claim call copied'); return; }
         busy(true);
-        walletSend(call.to, call.data)
+        /* Returned, so this tap's operation is still held while the wallet and
+           the chain work: the promise the lock was taken around is the one that
+           ends with the receipt, not the one that built the call. */
+        return walletSend(call.to, call.data)
           .then(function (h) { if (!h) throw new Error('the wallet sent nothing'); busy(true); return waitReceipt(h); })
           .then(function () { busy(false); return refreshChain(); })
           .then(function (c) { if (c && c.state === 'claimed') settleByChain(c); else blockChain(c); })
@@ -2910,7 +3013,9 @@ contract CleanSwapHTLC {
       var p = provider();
       if (!p) { render(); copy(callPacket(call, 'refund'), 'Refund call copied'); return; }
       busy(true);
-      walletSend(call.to, call.data)
+      /* Returned for the same reason as a claim: the lock this tap took is let
+         go when the transaction has an answer, not when its call was built. */
+      return walletSend(call.to, call.data)
         .then(function (h) { if (!h) throw new Error('the wallet sent nothing'); busy(true); return waitReceipt(h); })
         .then(function () { busy(false); return refreshChain(); })
         .then(function (c) {
@@ -3383,18 +3488,23 @@ contract CleanSwapHTLC {
     /* Every route hint, hop by hop: a node id, the short channel id, the base
        fee, the proportional fee and the delta. Nothing is decided from them
        here; an invoice that carries them is simply not refused for it. */
-    var routeHints = [], fallbacks = [];
+    var routeHints = [], fallbacks = [], routeCltv = 0;
     (fields.r || []).forEach(function (f) {
-      var b = wordsToBytes(f), j;
+      var b = wordsToBytes(f), j, sum = 0;
       for (j = 0; j + 51 <= b.length; j += 51) {
-        routeHints.push({
+        var hop = {
           nodeId: hexOf(b.subarray(j, j + 33)),
           shortChannelId: hexOf(b.subarray(j + 33, j + 41)),
           baseMsat: beNum(b.subarray(j + 41, j + 45)),
           ppm: beNum(b.subarray(j + 45, j + 49)),
           cltv: beNum(b.subarray(j + 49, j + 51))
-        });
+        };
+        sum += hop.cltv;
+        routeHints.push(hop);
       }
+      /* What the deepest hint adds to the payment's own deadline: every hop
+         holds the HTLC a little longer than the one after it. */
+      if (sum > routeCltv) routeCltv = sum;
     });
     /* A fallback address is a 5-bit version and the address itself; more than
        one is allowed, and each is kept as it was written. */
@@ -3408,6 +3518,12 @@ contract CleanSwapHTLC {
        escrow-window check an invoice that outlives every window, so the
        standard default is what a missing tag means here too. */
     var expiry = fields.x && fields.x[0] ? toNum(wordsToInt(fields.x[0]), 'expiry') : 3600;
+    /* `c` is min_final_cltv_expiry: how many blocks the payee's node keeps the
+       incoming payment before letting it come back. It is read here with the
+       rest of the terms, and BOLT 11 says a missing tag means 18 blocks - the
+       same default its `x` tag has in this decoder, so neither a missing
+       expiry nor a missing final delta can be read as "no deadline at all". */
+    var minFinalCltv = fields.c && fields.c[0] ? toNum(wordsToInt(fields.c[0]), 'cltv') : LN_CLTV_DEFAULT;
     var desc = null;
     if (fields.d && fields.d[0]) {
       try { desc = new TextDecoder('utf-8', { fatal: true }).decode(wordsToBytes(fields.d[0])); }
@@ -3446,6 +3562,8 @@ contract CleanSwapHTLC {
       timestamp: ts,
       expiry: expiry,
       expiresAt: ts + expiry,
+      minFinalCltv: minFinalCltv,
+      routeCltv: routeCltv,
       description: desc,
       nodeId: node,
       signed: true,
@@ -3488,6 +3606,17 @@ contract CleanSwapHTLC {
     for (i = 0; i < words.length; i++) out += B32.charAt(words[i]);
     return out;
   }
+  /* One hop of a route hint, as BOLT 11 packs it: a 33-byte node id, the short
+     channel id, the base fee, the proportional fee and the delta. The delta is
+     the only field this app reads, so the rest is a shape, not a claim. */
+  function routeHintBytes(cltv) {
+    var b = new Uint8Array(51), i;
+    b[0] = 2;
+    for (i = 1; i < 33; i++) b[i] = (i * 7) & 255;
+    b[49] = (cltv >> 8) & 255;
+    b[50] = cltv & 255;
+    return b;
+  }
   function mintInvoice(o) {
     var net = o.network || NET;
     var hrp = 'ln' + net + amountPart(o.sats);
@@ -3498,6 +3627,11 @@ contract CleanSwapHTLC {
       var body = intWords(ts, 7).concat(tagField('p', bytesToWords(seed)));
       if (desc) body = body.concat(tagField('d', bytesToWords(utf8(desc))));
       if (expiry != null) body = body.concat(tagField('x', intToVec(expiry)));
+      /* The final delta the payee's node asks for (the `c` tag) and the route
+         hint a private channel arrives with: both are terms the window check
+         reads, so a sample can state them the way a real invoice does. */
+      if (o.cltv != null) body = body.concat(tagField('c', intToVec(o.cltv)));
+      if (o.hintCltv) body = body.concat(tagField('r', bytesToWords(routeHintBytes(o.hintCltv))));
       var msg = hexOf(sha256Bytes(catBytes(utf8(hrp), wordsToBytesPad(body))));
       var sig = bytesToWords(fromHex(SECP.sign(msg, PRACTICE_KEY)));
       return assembleBech32(hrp, body.concat(sig));
@@ -4013,6 +4147,40 @@ contract CleanSwapHTLC {
     return null;
   }
 
+  /* How long the bitcoin side's own payment runs, in seconds, from the moment
+     it starts: the payee's final delta, which is the minimum its node keeps the
+     incoming payment, plus the few blocks of routing margin above. */
+  function lnHtlcSpan(dec) {
+    if (!dec || dec.kind !== 'bolt11') return null;
+    var blocks = (dec.minFinalCltv == null ? LN_CLTV_DEFAULT : Number(dec.minFinalCltv)) + LN_ROUTE_MARGIN_CLTV;
+    if (!isFinite(blocks) || blocks < 0) return null;
+    return blocks * BLOCK_SECS;
+  }
+  /* The earliest the sats could come back: a payment that starts now, over the
+     longest route the invoice allows. Every later payment gives a later one, so
+     this is the reading a window has to clear. */
+  function lnDeadline(dec, now) {
+    var span = lnHtlcSpan(dec);
+    if (span == null) return null;
+    return (now == null ? effNow() : Number(now)) + span;
+  }
+  /* The two legs, in the order they have to expire: the escrow window closes
+     first, the payment after it with room for the side that settles with the
+     revealed secret. Empty when the window is not known or the invoice says
+     nothing about its own deadline. */
+  function lnProblem(dec, t2, now) {
+    if (!t2) return '';
+    var n = now == null ? effNow() : Number(now);
+    var span = lnHtlcSpan(dec);
+    if (span == null) return '';
+    var room = Number(t2) - n;
+    if (span < room + LN_SAFETY_SECS) {
+      return 'That invoice keeps the payment open for ' + spanTxt(span) +
+        ', and the window closes ' + spanTxt(room) + ' from now: the sats could come back while the USDT is still claimable. Ask for an invoice that stays open an hour past the window.';
+    }
+    return '';
+  }
+
   /* The escrow window has a floor, a ceiling, and has to close before the
      invoice does. A partner who names a window five minutes out is betting that
      the sats land after it; a window years out leaves the funding side's money
@@ -4027,6 +4195,11 @@ contract CleanSwapHTLC {
     if (exp != null && exp < Number(t2) + T1_MARGIN) {
       return 'That invoice ends before the escrow window closes. Ask for one that stays payable at least an hour longer.';
     }
+    /* The payment has to outlive the escrow, not the other way round: the
+       window closing first is what leaves the bitcoin side time to settle
+       with the secret the claim has just published. */
+    var ln = lnProblem(dec, t2, now);
+    if (ln) return ln;
     return '';
   }
 
@@ -4330,7 +4503,16 @@ contract CleanSwapHTLC {
     // the finished swap says it once, in the title and on the receipt
     $('stateTxt').hidden = done;
     $('presets').hidden = done || waiting;
-    $('terms').hidden = done || waiting;
+    /* A swap that sends the USDT is the one whose terms the other side still
+       needs: the partner pays bitcoin against a code, and on a phone with this
+       app that code leaves as a QR or a paste while the USDT is already locked.
+       Hiding the row the moment the swap starts would strand that hand-off, so
+       Share code and QR stay for the two stages the USDT sits in the escrow.
+       A code cannot land on a running swap, so `Use code` goes. */
+    var shareLocked = !done && S.mode === 'wallet' && S.direction === 'u2b' && (locking || held);
+    $('terms').hidden = (done || waiting) && !shareLocked;
+    var pasteBtn = $('terms') && $('terms').querySelector('[data-act="pasteCode"]');
+    if (pasteBtn) pasteBtn.hidden = waiting;
     $('codeRow').hidden = done || waiting || $('codeRow').hidden;
     $('steps').hidden = done || waiting;
     $('payBox').hidden = !waiting;
@@ -4372,6 +4554,7 @@ contract CleanSwapHTLC {
 
     renderChain();
     renderLog();
+    renderCodeAsk();
   }
 
   /* The chain line under the rate: which Arbitrum, and whether the escrow
@@ -4492,6 +4675,17 @@ contract CleanSwapHTLC {
     $('payRowClaim').hidden = !open;
     $('claimBtn').hidden = !claimable;
     $('refundBtn').hidden = !(open && S.direction === 'u2b' && (!claimable || (S.t2 && effNow() >= S.t2)));
+    /* A phone whose wallet is not inside this page still has a wallet app, so
+       each of the two calls is offered as an `ethereum:` link beside the button
+       that copies it. The claim's link needs the secret checked here first, so
+       it appears once a secret is in the field - and it is the same call the
+       Claim button would send, never a different one. */
+    var noWallet = !practice && !provider();
+    var preField = normHex(($('secretIn') || {}).value || '');
+    var cl = $('claimLink'), rl = $('refundLink');
+    if (cl) cl.hidden = !(noWallet && claimable && /^[0-9a-f]{64}$/.test(preField));
+    if (rl) rl.hidden = !(noWallet && !$('refundBtn').hidden);
+    paintCallLinks();
     $('secretRow').hidden = !$('secretRow').dataset.open || $('secretRow').dataset.open === '0';
 
     // The payer has to be able to claim if the partner goes quiet: that takes
@@ -4785,6 +4979,26 @@ contract CleanSwapHTLC {
         toast(m);
         return;
       }
+      /* And the payment has to outlive the window from this moment on: a
+         payment made now runs for the invoice's own delta, and if that lands
+         before the escrow can be claimed the same secret would open both legs.
+         Read again here, on the tap, against the same fresh clock - from the
+         invoice this side approved, or the one on the screen when it approved
+         nothing yet. The invoice is decoded here rather than through the gate's
+         reader: the gate already refused the ones it could, and the question
+         now is one the gate never asks. */
+      var decNow = S.invDec;
+      if (!decNow && pasted()) {
+        try { decNow = parseLightning(pasted()); } catch (e) { decNow = null; }
+      }
+      var ln = lnProblem(decNow, S.t2, now);
+      if (ln) {
+        S.note = ln;
+        log('BLOCK', ln, 'c-err');
+        render();
+        toast(ln);
+        return;
+      }
       log('PAID', S.direction === 'btc2u'
         ? 'the sats have been sent \u00b7 waiting for the escrow to pay out on ' + curChain().label
         : 'the USDT has been sent');
@@ -4840,6 +5054,7 @@ contract CleanSwapHTLC {
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
     S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
     S.codeTerms = null; S.codeRateWarn = false; S.codeAddrFilled = '';
+    S.codeAsk = null;
     S.lockTx = ''; S.claimTx = '';
     clearSecret();
     S.busy = false;
@@ -4851,6 +5066,7 @@ contract CleanSwapHTLC {
     var c = $('codeIn'); if (c) c.value = '';
     var lt = $('lockTxIn'); if (lt) lt.value = '';
     renderCodeWarn();
+    renderCodeAsk();
     var box = $('qrBox'); if (box) box.innerHTML = '';
     var cx = $('codeRow'); if (cx) cx.hidden = true;
     log('RESET', 'state cleared');
@@ -4873,6 +5089,12 @@ contract CleanSwapHTLC {
     S.expectH = null;
     S.funder = '';
     S.lockTx = '';
+    /* The terms the last swap was locked under go with it: the hash it pinned,
+       the amount both sides agreed and the funding address a code named. Carried
+       into the next one they would approve against another swap's terms. */
+    S.H = null;
+    S.units = null;
+    S.locker = '';
     /* A new swap starts without the last one's secret, on the screen and in
        this page, whatever state the last one ended in. */
     clearSecret();
@@ -4929,8 +5151,7 @@ contract CleanSwapHTLC {
     var el = $('codeWarn');
     if (el) { el.textContent = S.codeWarn || ''; el.hidden = !S.codeWarn; }
     var row = $('codeAddr'), txt = $('codeAddrTxt');
-    if (!row || !txt) return;
-    if (S.codeAddr) {
+    if (!row || !txt) return;    if (S.codeAddr) {
       txt.textContent = 'This code names a USDT address (' + short(S.codeAddr, 6) +
         '). Use it only if it is yours.';
       row.hidden = false;
@@ -4940,9 +5161,57 @@ contract CleanSwapHTLC {
     }
   }
 
+  /* ------------------------------------------------------ a code arriving --
+     A code from another app (a scanner, a message, the camera) lands on a
+     screen that may already be set up. Applying it writes the terms, the
+     direction and - on the side that sends the USDT - the partner's address
+     over what is here, so it is not done on arrival: the code waits with one
+     sentence and two buttons, and the screen keeps what it had until one is
+     pressed. A screen with nothing on it has nothing to lose and takes the
+     code straight away, which is what a link tapped on a fresh screen is. */
+  function codeWouldReplace(c) {
+    var addr = String(addrEl() && addrEl().value || '').trim();
+    if (String(pasted()).trim()) return true;
+    if (S.expectH || S.codeTerms || S.t2) return true;
+    if (addr && (!c.address || String(c.address).toLowerCase() !== addr.toLowerCase())) return true;
+    return false;
+  }
+  function codeAskText(c) {
+    var dir = opposite(c.direction);
+    var addr = String(addrEl() && addrEl().value || '').trim();
+    var say = 'A swap code from another app would put ' + fmt(c.sats) + ' sats ' +
+      (dir === 'btc2u' ? 'paid in bitcoin' : 'paid in USDT') + ' here';
+    if (addr && c.address && String(c.address).toLowerCase() !== addr.toLowerCase()) {
+      say += ', with its own USDT address';
+    }
+    return say + '. Loading it replaces what is on this screen.';
+  }
+  function renderCodeAsk() {
+    var box = $('codeAsk'), txt = $('codeAskTxt');
+    if (!box || !txt) return;
+    if (!S.codeAsk) { box.hidden = true; txt.textContent = ''; return; }
+    txt.textContent = S.codeAsk.say;
+    box.hidden = false;
+  }
+  function acceptCode(text) {
+    var c = parseSwapLink(text);
+    if (!c) { toast('That is not a swap code'); return false; }
+    /* A swap that is already running refuses the code for its own reason, and
+       saying so is what the screen should do rather than asking a question
+       whose answer could not change anything. */
+    if (S.phase !== 'idle' || !codeWouldReplace(c)) return applyCode(text);
+    S.codeAsk = { text: String(text), say: codeAskText(c) };
+    log('CODE', 'a code from another app was held until this screen says so');
+    renderCodeAsk();
+    toast('A swap code is waiting: load it, or keep this one');
+    return false;
+  }
+
   function applyCode(text) {
     var c = parseSwapLink(text);
     if (!c) { toast('That is not a swap code'); return false; }
+    S.codeAsk = null;
+    renderCodeAsk();
     var now = effNow();
     if (S.phase === 'settled' || S.phase === 'refunded') { toast('Tap Done first, then use the code.'); return false; }
     /* A code names the terms of the next swap. Loading one into a swap that is
@@ -5279,7 +5548,21 @@ contract CleanSwapHTLC {
 
   var ACT = {
     mode: function (b) {
-      S.mode = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      var want = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      /* A real swap is not a rehearsal to switch out of. Changing the mode
+         mid-swap would put the screen on the other escrow while the USDT of
+         this one is still locked - the claim, the refund and the reading that
+         closes it would all be asked of the wrong chain. It is refused until
+         the swap is done or left behind. */
+      if (want !== S.mode && S.phase !== 'idle' && S.mode === 'wallet') {
+        var m = 'A real swap is running. Finish it, or tap Back, before switching modes.';
+        log('BLOCK', 'the mode was not switched while a wallet swap was ' + S.phase, 'c-err');
+        toast(m);
+        if (S.phase === 'paying') { S.note = m; }
+        render();
+        return;
+      }
+      S.mode = want;
       if (S.phase !== 'idle') backToForm();
       /* the two escrows are not each other's: a rehearsal's stand-in record
          never carries into a real swap, and a chain reading never into one */
@@ -5442,6 +5725,22 @@ contract CleanSwapHTLC {
       if (!v) { toast('Paste the code first'); return; }
       applyCode(v);
     },
+    /* The two answers to a code that arrived from another app. Yes loads it
+       with every gate a typed code walks; no leaves the screen exactly as it
+       was, address and terms included. */
+    codeAskYes: function () {
+      var ask = S.codeAsk;
+      if (!ask) return;
+      applyCode(ask.text);
+    },
+    codeAskNo: function () {
+      if (!S.codeAsk) return;
+      S.codeAsk = null;
+      renderCodeAsk();
+      log('CODE', 'the code that arrived was left alone; this screen kept its own');
+      render();
+      toast('Kept what was on this screen');
+    },
     copyInvoice: function () {
       var inv = readInvoice(pasted());
       if (!inv.ok) { needInvoice(); return; }
@@ -5532,7 +5831,7 @@ contract CleanSwapHTLC {
     if (el) el.addEventListener('click', walletHandoff);
   });
 
-  [invIn(), addrEl(), $('codeIn')].forEach(function (el) {
+  [invIn(), addrEl(), $('codeIn'), $('secretIn')].forEach(function (el) {
     if (!el) return;
     el.addEventListener('input', function () { render(); refreshGate(); });
   });
@@ -5546,8 +5845,8 @@ contract CleanSwapHTLC {
 
   // A code can arrive in the address bar of a hosted copy, or from the app
   // shell when another app hands it over. Nothing here is ever generated.
-  var fromUrl = parseSwapCode(String(location.search) + ' ' + String(location.hash));
-  if (fromUrl) applyCode(String(location.search) + ' ' + String(location.hash));
+  var fromUrl = parseSwapLink(String(location.search) + ' ' + String(location.hash));
+  if (fromUrl) acceptCode(String(location.search) + ' ' + String(location.hash));
 
   /* What this page leaves on the window. The host shell needs one entry -
      `acceptCode`, to hand a swap code over from another app - and the page's
@@ -5588,12 +5887,15 @@ contract CleanSwapHTLC {
   }
 
   window.CLEANSWAP = {
-    state: guardedState(), acceptCode: function (t) { return applyCode(t); }, applyCode: applyCode,
+    state: guardedState(), acceptCode: acceptCode, applyCode: applyCode,
     SEL: SEL, EVM: EVM, CHAINS: CHAINS, QR_MAX: QR_MAX, NET: NET, T2_SPAN: T2_SPAN,
     T2_MIN: T2_MIN, T2_MAX: T2_MAX, T1_MARGIN: T1_MARGIN, PAY_MARGIN: PAY_MARGIN,
     b64field: b64field, unB64field: unB64field,
     BYTECODE: BYTECODE, lockerNow: lockerNow, ensureMe: ensureMe, isOfficialEscrow: isOfficialEscrow,
     invoiceExpiry: invoiceExpiry, windowProblem: windowProblem, rpcQuorum: rpcQuorum, endpoints: endpoints,
+    lnHtlcSpan: lnHtlcSpan, lnDeadline: lnDeadline, lnProblem: lnProblem, chainTimeOnce: chainTimeOnce,
+    CLOCK_TOL: CLOCK_TOL, CLOCK_SKEW_MAX: CLOCK_SKEW_MAX, LN_SAFETY_SECS: LN_SAFETY_SECS,
+    claimWalletLink: claimWalletLink, refundWalletLink: refundWalletLink, callLink: callLink,
     sha256Hex: sha256Hex, sha256Bytes: sha256Bytes, computeSwapId: computeSwapId, bech32Decode: bech32Decode,
     SECP: SECP, wordsToInt: wordsToInt, fromHex: fromHex, effNow: effNow, syncChainTime: syncChainTime,
     unitsTxt: unitsTxt,

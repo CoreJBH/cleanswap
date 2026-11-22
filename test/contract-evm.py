@@ -157,7 +157,7 @@ check('TestUSDT.approve(): HTLC allowance set',
 # ---- lock ------------------------------------------------------------------
 R = bytes.fromhex('aa' * 32)
 H = keccak(text='unused')[:0] + __import__('hashlib').sha256(R).digest()  # sha256, not keccak
-timelock = now() + 310          # a little over MIN_TIMELOCK_DELTA (300s)
+timelock = now() + 1810          # just over MIN_TIMELOCK_DELTA (1800s)
 amount = 32_200_000                       # 32.20 USDT (6 decimals)
 check('hashlock: derived with sha256 (Bitcoin construction)', len(H) == 32)
 
@@ -165,6 +165,18 @@ too_soon = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
                          ['bytes32', 'uint256', 'address', 'address', 'uint256'],
                          [H, now() + 60, maker, usdt, amount], taker)
 check('lock: rejects a timelock inside MIN_TIMELOCK_DELTA', 'revert' in too_soon.lower(), too_soon[:60])
+
+# The floor is the app's own: a window that reaches a wallet is never one the
+# escrow refuses at the door, and the refund cannot race the claim by less than
+# half an hour.
+check('lock: MIN_TIMELOCK_DELTA is 30 minutes, the app\'s own floor for a window',
+      view(htlc, 'MIN_TIMELOCK_DELTA()', [], [], ['uint256'])[0] == 1800,
+      str(view(htlc, 'MIN_TIMELOCK_DELTA()', [], [], ['uint256'])[0]))
+just_under = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
+                           ['bytes32', 'uint256', 'address', 'address', 'uint256'],
+                           [H, now() + 1799, maker, usdt, amount], taker)
+check('lock: one second under the floor is refused (TimelockTooSoon)',
+      'revert' in just_under.lower(), just_under[:60])
 
 too_far = revert_reason(htlc, 'lock(bytes32,uint256,address,address,uint256)',
                         ['bytes32', 'uint256', 'address', 'address', 'uint256'],
@@ -242,16 +254,17 @@ check('swaps(id): after the claim the record says claimed and still pays the rec
 taker2 = accounts[4]
 send(usdt, 'transfer(address,uint256)', ['address', 'uint256'], [taker2, amount], taker)
 send(usdt, 'approve(address,uint256)', ['address', 'uint256'], [htlc, amount], taker2)
+tl2 = now() + 1805
 lock2 = send(htlc, 'lock(bytes32,uint256,address,address,uint256)',
              ['bytes32', 'uint256', 'address', 'address', 'uint256'],
-             [H, now() + 305, maker, usdt, amount], taker2)
+             [H, tl2, maker, usdt, amount], taker2)
 swap2 = to_bytes(hexstr=event(lock2, 'Locked(bytes32,address,address,address,uint256,bytes32,uint256)')['topics'][1])
 
 early = revert_reason(htlc, 'refund(bytes32)', ['bytes32'], [swap2], accounts[5])
 check('refund: refuses before the timelock (TimelockNotExpired)', 'revert' in early.lower(), early[:60])
 
-mine(max(0, timelock - now()) + 2)
-check('refund: timelock has passed on chain', now() >= timelock, 'now=%d timelock=%d' % (now(), timelock))
+mine(max(0, tl2 - now()) + 2)
+check('refund: timelock has passed on chain', now() >= tl2, 'now=%d timelock=%d' % (now(), tl2))
 
 claim_late = revert_reason(htlc, 'claim(bytes32,bytes32)', ['bytes32', 'bytes32'], [swap2, R], accounts[3])
 check('claim: closed after the timelock (TimelockExpired)', 'revert' in claim_late.lower(), claim_late[:60])
