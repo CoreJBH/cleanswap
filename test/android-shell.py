@@ -7,9 +7,12 @@ and XML, and each one is a promise worth a test:
 
   * FLAG_SECURE, so the swap screen is not in a screenshot or the recents list
   * no WebView cache, and what it held is dropped with the screen
+  * no instance state: a recreated screen starts from the form, never from a Bundle
   * /index.html over https is the only document served from the APK
+  * the app host is only a page under https, and mixed content is never allowed
   * https hand-offs go to a named list of hosts, not to anywhere
   * cleartext traffic is off in the manifest
+  * a release APK is signed with the release key or not built at all
 
     python3 test/android-shell.py
 """
@@ -21,6 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 JAVA = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'com', 'jbitmstr', 'cleanswap', 'MainActivity.java')
 MANIFEST = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
+GRADLE = os.path.join(ROOT, 'android', 'app', 'build.gradle.kts')
+CI = os.path.join(ROOT, 'android', 'ci', 'build-apk.yml')
 
 fails = []
 CHECKS = [0]
@@ -51,6 +56,8 @@ def body_of(src, signature):
 def main():
     java = open(JAVA, encoding='utf-8').read()
     manifest = open(MANIFEST, encoding='utf-8').read()
+    gradle = open(GRADLE, encoding='utf-8').read()
+    ci = open(CI, encoding='utf-8').read()
 
     # --- the screen stays off other people's screens -----------------------
     on_create = body_of(java, 'protected void onCreate(')
@@ -66,6 +73,24 @@ def main():
     check('shell: the cache is cleared and the history dropped when the screen goes',
           'clearCache(true)' in on_destroy and 'clearHistory()' in on_destroy,
           on_destroy.count('clear'))
+
+    # --- a recreated screen starts from the form --------------------------
+    check('shell: the WebView is never saved into the instance state',
+          'saveState(' not in java, 'saveState' in java)
+    check('shell: and never restored from it', 'restoreState(' not in java, 'restoreState' in java)
+    check('shell: the screen always loads the app document',
+          'web.loadUrl(APP_URL);' in on_create)
+
+    # --- the app host is a page only under https --------------------------
+    navigation = body_of(java, 'private boolean handleNavigation(')
+    check('shell: the app host is only ours under https',
+          'APP_HOST.equalsIgnoreCase' in navigation and
+          re.search(r'!\"https\"\.equalsIgnoreCase', navigation) is not None,
+          navigation.count('https'))
+    mixed = re.search(r'setMixedContentMode\(\s*WebSettings\.MIXED_CONTENT_NEVER_ALLOW\s*\)', java)
+    check('shell: mixed content is never allowed, said out loud', mixed is not None)
+    check('shell: the setting is on the page\'s own WebSettings',
+          'WebSettings.MIXED_CONTENT_ALWAYS_ALLOW' not in java and 'setMixedContentMode' in on_create)
 
     # --- one document, from the APK, at one address ------------------------
     intercept = body_of(java, 'public WebResourceResponse shouldInterceptRequest(')
@@ -97,6 +122,26 @@ def main():
     check('shell: cleartext traffic is off in the manifest',
           'android:usesCleartextTraffic="false"' in manifest)
     check('shell: no backup of the app data', 'android:allowBackup="false"' in manifest)
+
+    # --- release signing: the release key, or no release ------------------
+    check('gradle: the release key is read from the environment or keystore.properties',
+          'CLEANSWAP_KEYSTORE' in gradle and 'keystore.properties' in gradle)
+    check('gradle: a release task without the key stops instead of building',
+          'releasePackagingTasks' in gradle and 'throw GradleException' in gradle)
+    check('gradle: the gate does not touch debug builds or the tests',
+          'if (asked.isEmpty() || hasReleaseSigning) return@whenReady' in gradle)
+    check('gradle: the release build type uses the release signature when it exists',
+          'if (hasReleaseSigning)' in gradle and 'signingConfigs.getByName("release")' in gradle)
+
+    # --- the workflow builds the signed release, not a debug APK ----------
+    check('ci: the workflow assembles the release variant',
+          'assembleRelease' in ci and 'assembleDebug' not in ci)
+    check('ci: it writes the keystore from a secret and fails when that is missing',
+          'CLEANSWAP_KEYSTORE_BASE64' in ci and 'is not set' in ci)
+    check('ci: every working-directory line has its value after a space',
+          'working-directory:android' not in ci and 'working-directory: android' in ci)
+    check('ci: the collected APK comes from the release folder',
+          'outputs/apk/release' in ci and 'outputs/apk/debug' not in ci)
 
     print('%d/%d shell checks passed' % (CHECKS[0] - len(fails), CHECKS[0]))
     return 1 if fails else 0

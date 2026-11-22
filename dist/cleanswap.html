@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-ogAwcfrRIJgRbuQqO7QpXSiTZ4bBKMyUR47FVMspY+A='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-ehFthk97Ttqa1TQ0VBr0fsw/FbGGNbIO9QF8RpMmv+Q='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -1110,7 +1110,7 @@ contract CleanSwapHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CleanSwap v0.6.2 — Lightning bitcoin <-> USDT atomic swap in one file.
+<script>/* CleanSwap v0.6.3 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -1138,6 +1138,14 @@ contract CleanSwapHTLC {
    swap locks to. Pasting an offer is refused with a sentence that says so, and
    the partner is asked for a hold invoice instead. The TLV bytes of an offer
    are never hashed into H.
+
+   A BOLT12 invoice (`lni1...`) is read and its fields are checked, but it is
+   not taken: its signature is a Schnorr signature over a merkle root of its
+   TLVs, this page verifies BOLT11 signatures only, and terms nobody verified
+   are not terms to lock money behind. The refusal is a sentence that names
+   the way out - an ordinary Lightning invoice, which the page does check. An
+   invoice that states no creation time (164) or no expiry (166) is refused at
+   the decoder, so no path can read one as an invoice that never ends.
 
    A swap id is the terms plus the address that funds the escrow, so a code
    from the other side is checked before anything is adopted from it: the chain
@@ -1234,6 +1242,13 @@ contract CleanSwapHTLC {
     direction: 'btc2u',             /* what leaves this phone: btc2u sends BTC, u2b sends USDT */
     phase: 'idle',                  /* idle | locking | paying | paid | settled | refunded */
     net: 'testnet',                 /* testnet (Arbitrum Sepolia) | mainnet (Arbitrum One) */
+    /* One escrow, one token and one endpoint list per network: the three
+       fields below are the ones the selected network owns, and setups keeps
+       the other network's while it is not selected. */
+    setups: {
+      testnet: { contract: '', token: '', rpc: '' },
+      mainnet: { contract: '', token: '', rpc: '' }
+    },
     contract: '',                   /* the escrow contract on that chain */
     token: '',                      /* the USDT token on that chain */
     rpc: '',                        /* private endpoint(s), comma-separated, when set */
@@ -1588,22 +1603,56 @@ contract CleanSwapHTLC {
   function escrowNow() { return S.mode === 'practice' ? EVM.htlc : S.contract; }
 
   /* The setup is the one thing worth remembering between launches: a contract
-     address typed once is a contract address forever. */
+     address typed once is a contract address forever - on the chain it was
+     typed for. Two networks mean two escrows, two tokens and two endpoint
+     lists, and what was typed on one is never read while the other is
+     selected: a mainnet escrow address does not become a testnet one, and a
+     private endpoint for one chain is not asked about the other. */
+  function blankSetup() { return { contract: '', token: '', rpc: '' }; }
+  function cleanSetup(one) {
+    one = one || blankSetup();
+    return {
+      contract: isAddr(one.contract) ? String(one.contract).toLowerCase() : '',
+      token: isAddr(one.token) ? String(one.token).toLowerCase() : '',
+      rpc: endpointsOk(one.rpc) ? String(one.rpc) : ''
+    };
+  }
   function loadSetup() {
     try {
       var raw = window.localStorage && localStorage.getItem(SETTINGS_KEY);
       if (!raw) return;
-      var j = JSON.parse(raw) || {};
+      var j = JSON.parse(raw) || {}, net;
       if (j.net === 'testnet' || j.net === 'mainnet') S.net = j.net;
-      S.contract = isAddr(j.contract) ? String(j.contract).toLowerCase() : '';
-      S.token = isAddr(j.token) ? String(j.token).toLowerCase() : '';
-      S.rpc = endpointsOk(j.rpc) ? String(j.rpc) : '';
+      S.setups = { testnet: blankSetup(), mainnet: blankSetup() };
+      if (j.nets) {
+        for (net in S.setups) if (j.nets[net]) S.setups[net] = cleanSetup(j.nets[net]);
+      } else {
+        /* The first spelling kept one setup with no network attached to it.
+           It was written while one network was selected, so it belongs to
+           that one and to no other. */
+        S.setups[S.net] = cleanSetup(j);
+      }
+      applySetup();
     } catch (e) { /* a browser without storage simply forgets the setup */ }
   }
+  /* The three fields the screen and the chain calls read are always the ones
+     the selected network owns. */
+  function applySetup() {
+    var one = (S.setups && S.setups[S.net]) || blankSetup();
+    S.contract = one.contract;
+    S.token = one.token;
+    S.rpc = one.rpc;
+  }
+  /* What is on screen is put away under the network it was typed for. */
+  function keepSetup() {
+    if (!S.setups) S.setups = { testnet: blankSetup(), mainnet: blankSetup() };
+    S.setups[S.net] = cleanSetup({ contract: S.contract, token: S.token, rpc: S.rpc });
+  }
   function saveSetup() {
+    keepSetup();
     try {
       if (window.localStorage) localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-        net: S.net, contract: S.contract, token: S.token, rpc: S.rpc
+        net: S.net, nets: S.setups
       }));
     } catch (e) { /* ignore */ }
   }
@@ -1901,6 +1950,27 @@ contract CleanSwapHTLC {
     });
   }
 
+  /* The head of the chain, read the way the chain's clock is: every configured
+     endpoint is asked and the highest answer stands. A block number is a
+     liveness reading, not a state the money depends on, so it is not a
+     question for the quorum: Arbitrum makes a block every ~250ms, which means
+     two honest nodes are almost always a block or two apart, and a quorum on
+     the height would call a working chain broken and refuse the swap. */
+  function headNumber() {
+    var list = endpoints();
+    return Promise.all(list.map(function (url) {
+      return rpcOne(url, 'eth_blockNumber', []).then(function (bn) {
+        var n = parseInt(String(bn), 16);
+        return isFinite(n) && n > 0 ? n : null;
+      }, function () { return null; });
+    })).then(function (all) {
+      var best = null;
+      all.forEach(function (n) { if (n && (!best || n > best)) best = n; });
+      if (best == null) throw new Error('no endpoint answered');
+      return best;
+    });
+  }
+
   /* Does the chain answer, and is there really a contract at that address?
      A swap screen that points at an empty address explains nothing; this one
      says so before any money is asked for. */
@@ -1917,8 +1987,10 @@ contract CleanSwapHTLC {
     if (!isAddr(S.contract)) { S.rpcState = 'idle'; S.block = null; renderChain(); return Promise.resolve(null); }
     S.busy = true;
     renderChain();
-    return rpcQuorum('eth_blockNumber', []).then(function (bn) {
-      S.block = parseInt(bn, 16);
+    return headNumber().then(function (n) {
+      S.block = n;
+      /* Whether code exists at the escrow address is a state the money
+         depends on, so it keeps the cross-check. */
       return rpcQuorum('eth_getCode', [S.contract, 'latest']);
     }).then(function (code) {
       S.busy = false;
@@ -2824,6 +2896,15 @@ contract CleanSwapHTLC {
     function msat(type) { return fields[type] == null ? null : toNum(beUint(fields[type]) / 1000n, 'amount'); }
     function txt(type) { return fields[type] ? dec.decode(fields[type]) : null; }
     var form = /^lni1/i.test(o) ? 'invoice' : 'offer';
+    /* An invoice states when it was made (164) and how long it stays payable
+       (166), and both are required by the format. A reader that treated a
+       missing 164 as "no expiry" would let a stale invoice past every window
+       check, so a missing or wrongly sized one is refused here instead of
+       being read as an invoice that never ends. */
+    if (form === 'invoice') {
+      if (!fields[164] || fields[164].length !== 8) throw new Error('an invoice with no creation time');
+      if (!fields[166] || fields[166].length !== 8) throw new Error('an invoice with no expiry');
+    }
     /* Random text that happens to sit inside the bech32 alphabet still has to
        look like an offer before it is worth anything: a node id, offer chains
        or blinded paths, and a real 64-byte signature when one is present. */
@@ -2848,8 +2929,12 @@ contract CleanSwapHTLC {
       currency: txt(6),
       description: txt(10),
       issuer: txt(18),
-      absoluteExpiry: fields[164] ? toNum(beUint(fields[164]) + (fields[166] ? beUint(fields[166]) : 7200n), 'expiry')
-        : (num(14) || null),
+      /* An invoice's expiry is the moment it was made plus how long it stays
+         payable, both read as BigInt; an offer states an absolute one (14)
+         and states no moment of creation. */
+      absoluteExpiry: form === 'invoice'
+        ? toNum(beUint(fields[164]) + beUint(fields[166]), 'expiry')
+        : (fields[14] ? toNum(beUint(fields[14]), 'expiry') : null),
       createdAt: num(164),
       relativeExpiry: num(166),
       nodeId: fields[22] ? hexOf(fields[22]) : (fields[160] && fields[160].length === 33 ? hexOf(fields[160]).slice(2) : null),
@@ -3096,13 +3181,24 @@ contract CleanSwapHTLC {
      the payee's node with a fresh random hash, so hashing the offer's own bytes
      would tie the escrow to a hash no Lightning payment ever moves. Offers are
      refused with a sentence rather than bound to something that only looks like
-     a hash. */
+     a hash. A BOLT12 invoice is refused for the same kind of reason below: its
+     signature is not one this page can check. */
+  /* A BOLT12 invoice is signed by its payee's node over a merkle root of its
+     own TLVs. This page has no verifier for that signature, and an invoice
+     taken on trust would be terms nobody checked, so the app says so and asks
+     for the kind it can check. The sentence stays plain: no format names. */
+  var BOLT12_INVOICE_REFUSED = 'This app cannot check the signature on that kind of invoice, so it does not ' +
+    'take one. Ask your partner for an ordinary Lightning invoice made for this swap.';
   function readInvoice(raw) {
     var t = String(raw || '').trim();
     if (!t) return bad('empty', 'Paste the invoice for this swap.');
     var d;
     try { d = parseLightning(t); } catch (e) {
       var why = String((e && e.message) || '');
+      /* An invoice whose creation time or expiry is missing is not read as one
+         that never ends: the sentence is the same refusal as an invoice this
+         app cannot check at all. */
+      if (/creation time|no expiry/.test(why)) return bad('bolt12', BOLT12_INVOICE_REFUSED);
       /* A signature that does not check out is a different sentence from a
          string that is not an invoice at all: one may have been edited on the
          way here, and the answer is to ask for a fresh invoice. */
@@ -3118,6 +3214,7 @@ contract CleanSwapHTLC {
     if (d.kind === 'bolt12' && d.form === 'offer') {
       return bad('offer', 'An offer cannot hold a swap: the invoice your wallet gets for it carries its own payment hash. Ask your partner for a hold invoice made for this swap.');
     }
+    if (d.kind === 'bolt12' && d.form === 'invoice') return bad('bolt12', BOLT12_INVOICE_REFUSED);
     /* An invoice that names no amount asks the payer to pick one, so it cannot
        be tied to the sats on this screen: the escrow id would have nothing to
        match. */
@@ -4116,9 +4213,18 @@ contract CleanSwapHTLC {
   function setNet(v) {
     var want = v === 'mainnet' ? 'mainnet' : 'testnet';
     if (S.net === want) return;
+    /* What was typed belongs to the network it was typed for. It is put away
+       under that one before the other network's own escrow, token and
+       endpoints are read back, and every reading of the chain goes with it:
+       a block height, a timestamp and an escrow record are true of one chain
+       only, and none of them may be shown beside another. */
+    keepSetup();
     S.net = want;
+    applySetup();
     S.rpcState = 'idle';
     S.block = null;
+    S.blockTs = null; S.blockTsAt = 0; S.blockTsFail = 0;
+    S.quorum = 'idle';
     S.chain = null;
     saveSetup();
     paintSetup();

@@ -20,3 +20,9 @@ icon-clean-2.png
 # android build state from a local build
 android/.gradle/
 android/local.properties
+
+# release signing: the key and its passwords stay out of the repository
+android/keystore/
+android/keystore.properties
+*.jks
+*.keystore

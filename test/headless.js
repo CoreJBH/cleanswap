@@ -81,6 +81,17 @@ function bolt12Invoice(hashHex, sats, created, expiry) {
   ];
   return 'lni1' + fiveBits(bytes).map(i => B32C[i]).join('');
 }
+/* The same invoice with a field left out, to see what the decoder does with an
+   invoice that states no creation time (164) or no expiry (166): both are
+   required by the format, and neither may turn into "never expires". */
+function bolt12InvoiceWithout(omit) {
+  const bytes = [];
+  if (omit !== 168) bytes.push(...tlv(168, [...Buffer.from('5a'.repeat(32), 'hex')]));
+  if (omit !== 170) bytes.push(...tlv(170, u64(50000 * 1000)));
+  if (omit !== 164) bytes.push(...tlv(164, u64(Math.floor(Date.now() / 1000))));
+  if (omit !== 166) bytes.push(...tlv(166, u64(3600)));
+  return 'lni1' + fiveBits(bytes).map(i => B32C[i]).join('');
+}
 
 /* A BOLT12 offer shaped the way a wallet makes one (Lexe and friends): a node
    id and a 64-byte signature, optionally an amount in msat, an expiry, and - in
@@ -187,7 +198,8 @@ const CHAIN = {
   receipts: {},                       /* tx hash -> {status, blockNumber} */
   txs: {},                            /* tx hash -> transaction (from, to, input) */
   calls: [],                          /* every method the page asked for */
-  down: false                         /* flip to make the endpoint refuse */
+  down: false,                        /* flip to make the endpoint refuse */
+  headSkew: 0                         /* how many blocks the second endpoint is ahead */
 };
 function hexWord(v) { return BigInt(v).toString(16).padStart(64, '0'); }
 function hexAddr(a) { return String(a).replace(/^0x/, '').toLowerCase().padStart(64, '0'); }
@@ -277,7 +289,10 @@ const lieServer = http.createServer((req, res) => {
     if (!j) { res.writeHead(400, cors); res.end('{}'); return; }
     let result = null;
     if (j.method === 'eth_chainId') result = CHAIN.chainId;
-    else if (j.method === 'eth_blockNumber') result = '0x' + CHAIN.block.toString(16);
+    /* A second node is a few blocks ahead of the first, as two honest
+       Arbitrum nodes usually are: the probe has to take the higher head
+       instead of calling the chain broken. */
+    else if (j.method === 'eth_blockNumber') result = '0x' + (CHAIN.block + CHAIN.headSkew).toString(16);
     else if (j.method === 'eth_getBlockByNumber') result = {
       number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + CHAIN.blockTs.toString(16)
     };
@@ -654,6 +669,68 @@ const view = (pg) => pg.evaluate(() => {
     CHAIN.calls.some(c => c.method === 'eth_blockNumber') && CHAIN.calls.some(c => c.method === 'eth_getCode'));
   check('setup: the block it read is on screen in the panel', /block [\d,]+/.test(w.setupHint), w.setupHint);
   await page.screenshot({ path: path.join(SHOTS, 'v50-setup.png') });
+
+  /* Two honest Arbitrum nodes are a block or two apart by design (a block every
+     ~250ms), so the height is read from every endpoint and the highest stands:
+     the probe must not call a working chain broken and refuse the swap. */
+  CHAIN.headSkew = 9;
+  const headOut = await page.evaluate(async ({ rpc, lie }) => {
+    const S = window.CLEANSWAP.state;
+    const was = S.rpc;
+    S.rpc = rpc + ' ' + lie;
+    await window.CLEANSWAP.chainProbe();
+    const out = { rpcState: S.rpcState, block: S.block, quorum: S.quorum };
+    S.rpc = was;
+    return out;
+  }, { rpc: RPC, lie: RPC_LIE });
+  CHAIN.headSkew = 0;
+  check('head: a head a few blocks apart on two endpoints is not a disagreement',
+    headOut.rpcState === 'ok', headOut.rpcState + ' / ' + headOut.quorum);
+  check('head: the highest head is the one on screen', headOut.block === CHAIN.block + 9, String(headOut.block));
+
+  /* One escrow, one token, one endpoint list per network: a mainnet address
+     never becomes a testnet one, and coming back brings the right set back. */
+  const MAIN_CONTRACT = '0x2b1e7d4c9a6f3058b1ce42d7a890f3c5e6721b04';
+  await page.click('#netMain');
+  await page.waitForTimeout(400);
+  const onMain = await page.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return { net: s.net, contract: s.contract, token: s.token, rpc: s.rpc, block: s.block, chain: s.chain };
+  });
+  check('net: switching to mainnet carries no testnet escrow, token or endpoint with it',
+    onMain.net === 'mainnet' && onMain.contract === '' && onMain.token === '' && onMain.rpc === '',
+    JSON.stringify(onMain));
+  check('net: the setup fields are the mainnet ones, and they are empty',
+    (await page.inputValue('#contractIn')) === '' && (await page.inputValue('#rpcIn')) === '',
+    (await page.inputValue('#contractIn')) + ' / ' + (await page.inputValue('#rpcIn')));
+  await page.fill('#contractIn', MAIN_CONTRACT);
+  await page.fill('#tokenIn', TOKEN);
+  await page.fill('#rpcIn', RPC);
+  await page.click('[data-act="saveSetup"]');
+  await page.waitForTimeout(1100);
+  const onMainSaved = await page.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return { contract: s.contract, token: s.token, rpc: s.rpc, rpcState: s.rpcState };
+  });
+  check('net: a mainnet escrow is read on mainnet',
+    onMainSaved.contract === MAIN_CONTRACT && onMainSaved.rpcState === 'ok', JSON.stringify(onMainSaved));
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('cleanswap.setup.v1')));
+  check('net: storage keeps one setup for each network, side by side',
+    !!stored && stored.net === 'mainnet' && stored.nets.mainnet.contract === MAIN_CONTRACT &&
+    stored.nets.testnet.contract === CONTRACT && stored.nets.testnet.token === TOKEN && stored.nets.testnet.rpc === RPC,
+    JSON.stringify(stored && stored.nets));
+  await page.click('#netTest');
+  await page.waitForTimeout(1100);
+  const backOnTest = await page.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return { net: s.net, contract: s.contract, token: s.token, rpc: s.rpc };
+  });
+  check('net: switching back brings the testnet escrow, token and endpoint, not the mainnet one',
+    backOnTest.net === 'testnet' && backOnTest.contract === CONTRACT && backOnTest.token === TOKEN && backOnTest.rpc === RPC,
+    JSON.stringify(backOnTest));
+  check('net: the field shows the testnet escrow again',
+    (await page.inputValue('#contractIn')) === CONTRACT, await page.inputValue('#contractIn'));
+
   await page.click('#chainRow');
   await page.waitForTimeout(250);
 
@@ -1182,18 +1259,42 @@ const view = (pg) => pg.evaluate(() => {
   check('gate: the TRON zero address is refused', gates.tronZero.code === 'format' && /cannot receive/.test(gates.tronZero.msg), gates.tronZero.msg);
   check('gate: a T address holding a 0 is refused', gates.tronBadChar.code === 'format', gates.tronBadChar.msg);
 
-  /* a BOLT12 invoice (lni...) is read the same way: TLV 168 hash, TLV 170 amount */
+  /* A BOLT12 invoice (lni1...) is read, and then refused: its signature is a
+     Schnorr signature over a merkle root of its own TLVs, this page verifies
+     BOLT11 signatures only, and none of it is taken on trust. */
   const nowS = Math.floor(Date.now() / 1000);
   const lni = bolt12Invoice('0x' + '5a'.repeat(32), 50000, nowS, 3600);
   const lniOld = bolt12Invoice('0x' + '5a'.repeat(32), 50000, nowS - 7200, 600);
-  const lniOut = await p4.evaluate(({ a, b }) => ({
+  const noCreated = bolt12InvoiceWithout(164);
+  const noExpiry = bolt12InvoiceWithout(166);
+  const lniOut = await p4.evaluate(({ a, b, c, d }) => ({
     live: window.CLEANSWAP.readInvoice(a),
-    dead: window.CLEANSWAP.readInvoice(b)
-  }), { a: lni, b: lniOld });
-  check('gate: a BOLT12 invoice is accepted, with its own payment hash',
-    lniOut.live.ok && lniOut.live.H === '0x' + '5a'.repeat(32), lniOut.live.code + ' ' + lniOut.live.msg);
-  check('gate: a BOLT12 invoice over the amount is refused',
-    lniOut.dead.code === 'expired', lniOut.dead.code + ' · ' + lniOut.dead.msg);
+    dead: window.CLEANSWAP.readInvoice(b),
+    noCreated: window.CLEANSWAP.readInvoice(c),
+    noExpiry: window.CLEANSWAP.readInvoice(d),
+    dec: (() => { try { return window.CLEANSWAP.decodeBolt12(a); } catch (e) { return { err: e.message }; } })(),
+    decNoCreated: (() => { try { window.CLEANSWAP.decodeBolt12(c); return 'decoded'; } catch (e) { return e.message; } })(),
+    decNoExpiry: (() => { try { window.CLEANSWAP.decodeBolt12(d); return 'decoded'; } catch (e) { return e.message; } })()
+  }), { a: lni, b: lniOld, c: noCreated, d: noExpiry });
+  check('gate: a BOLT12 invoice is refused because its signature cannot be checked',
+    !lniOut.live.ok && lniOut.live.code === 'bolt12' && !lniOut.live.H,
+    lniOut.live.code + ' · ' + lniOut.live.msg);
+  check('gate: the refusal asks for an ordinary Lightning invoice',
+    /ordinary Lightning invoice/.test(lniOut.live.msg), lniOut.live.msg);
+  check('gate: an expired BOLT12 invoice gets the same refusal', lniOut.dead.code === 'bolt12', lniOut.dead.code);
+  check('gate: the BOLT12 refusal reads as plain English', !JARGON.test(lniOut.live.msg), lniOut.live.msg);
+  check('bolt12: an invoice is still decoded, with creation time plus expiry as its end',
+    lniOut.dec && lniOut.dec.absoluteExpiry === nowS + 3600 && lniOut.dec.createdAt === nowS,
+    JSON.stringify({ e: lniOut.dec && lniOut.dec.absoluteExpiry, c: lniOut.dec && lniOut.dec.createdAt }));
+  check('bolt12: an invoice with no creation time is refused at the decoder, not read as endless',
+    /no creation time/.test(String(lniOut.decNoCreated)), String(lniOut.decNoCreated));
+  check('bolt12: an invoice with no expiry is refused at the decoder too',
+    /no expiry/.test(String(lniOut.decNoExpiry)), String(lniOut.decNoExpiry));
+  check('gate: an invoice with no creation time gets the plain refusal, not "cannot be read"',
+    lniOut.noCreated.code === 'bolt12' && /cannot check the signature/.test(lniOut.noCreated.msg),
+    lniOut.noCreated.code + ' · ' + lniOut.noCreated.msg);
+  check('gate: an invoice with no expiry gets the plain refusal too',
+    lniOut.noExpiry.code === 'bolt12', lniOut.noExpiry.code + ' · ' + lniOut.noExpiry.msg);
 
   /* A BOLT12 offer (lno1...) is refused. It carries no payment hash, and the
      invoice a wallet gets for one carries its own, so binding the escrow to the

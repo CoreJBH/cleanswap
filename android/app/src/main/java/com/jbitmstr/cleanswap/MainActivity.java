@@ -94,14 +94,20 @@ public class MainActivity extends Activity {
            copy is a stale swap screen at best. Nothing is read from a cache. */
         s.setCacheMode(WebSettings.LOAD_NO_CACHE);
         s.setSaveFormData(false);
+        /* The page is served from the app's own https origin, so nothing it
+           loads may arrive over plain http: a mixed-content load would put a
+           document that is not the app's own next to its terms, and a network
+           in between would be able to write it. */
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         setContentView(web);
-        if (state != null) {
-            web.restoreState(state);
-            pageReady = true;
-        } else {
-            web.loadUrl(APP_URL);
-        }
+        /* The screen always starts from the form. The WebView is deliberately
+           never saved into the instance state and never restored from it: what
+           the page holds - an invoice, a USDT address, a running swap with its
+           secret - would then sit in a Bundle that the system writes out for a
+           process that may come back much later. A recreated screen asks again
+           instead of reading back what it had. */
+        web.loadUrl(APP_URL);
         deliverCode();
     }
 
@@ -149,12 +155,6 @@ public class MainActivity extends Activity {
         newlines, quotes, backslashes and the line separators an intent can carry. */
     private static String jsString(String s) {
         return JSONObject.quote(s);
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle out) {
-        super.onSaveInstanceState(out);
-        web.saveState(out);
     }
 
     @Override
@@ -257,7 +257,12 @@ public class MainActivity extends Activity {
             return false;
         }
         // A page of this app stays here; every other host and scheme belongs to another app.
-        if (APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost())) || isLocalScheme(uri.getScheme())) {
+        // The app's own page is one https document, so this host under any other scheme is
+        // not that page either: it is refused instead of being loaded or handed on.
+        if (APP_HOST.equalsIgnoreCase(String.valueOf(uri.getHost()))) {
+            return !"https".equalsIgnoreCase(String.valueOf(uri.getScheme()));
+        }
+        if (isLocalScheme(uri.getScheme())) {
             return false;
         }
         return openInOtherApp(uri);

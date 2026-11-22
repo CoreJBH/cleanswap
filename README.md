@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-541%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-570%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.2" src="https://img.shields.io/badge/android-0.6.2-0f9d6e">
+  <img alt="android 0.6.3" src="https://img.shields.io/badge/android-0.6.3-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -147,6 +147,46 @@ its own terms. Every item in that review is closed:
   narrowed to a named host list (`remix.ethereum.org`, `arbiscan.io`, `sepolia.arbiscan.io`,
   `mempool.space`), and `android:usesCleartextTraffic="false"` in the manifest.
 
+`v0.6.3` closes the fourth pass, the one about what the app believes when something is merely
+present:
+
+* **A block height is not a question for the quorum.** Arbitrum makes a block every ~250 ms, so two
+  honest nodes are almost always a block or two apart; asking them to agree on the head called a
+  working chain broken, the probe said the chain did not answer, and Approve refused to start a swap.
+  The head is now read from every configured endpoint and the highest answer stands - a stale head
+  is a stricter answer, not a disagreement - while `eth_getCode` (whether the escrow exists at all)
+  keeps the cross-check.
+* **One escrow, one token, one endpoint list per network.** They are stored per network and read
+  back with the network that owns them: switching to One and back brings each set back, and a
+  mainnet escrow address is never read while Sepolia is selected (nor a private endpoint asked
+  about the other chain). The block height, its timestamp and the last escrow record are cleared on
+  every switch, because they are true of one chain only. The setting is stored as
+  `{net, nets: {testnet, mainnet}}`; a first-version setup that named no network is read as the one
+  it was written under.
+* **A BOLT12 invoice is refused, with the reason.** `lni1` carries a Schnorr signature over a merkle
+  root of its own TLVs, and this page verifies BOLT11 signatures only - taking one would mean
+  locking money behind terms nobody checked. The refusal says so in plain words and asks for an
+  ordinary Lightning invoice, which the page does check. The decoder also requires the invoice's
+  creation time (TLV 164) and expiry (166), so a missing 164 can never read as an invoice that never
+  ends and slip past the window checks.
+* **The app's own host is a page only under https.** A navigation to that host under any other
+  scheme is refused instead of being kept in the WebView, and `MIXED_CONTENT_NEVER_ALLOW` is set
+  explicitly: the one document the shell serves cannot be joined by anything fetched over plain
+  http.
+* **Nothing of a swap goes into the instance state.** `saveState`/`restoreState` are gone; a
+  recreated screen starts from the form instead of reading back an invoice, a USDT address or a
+  running swap from a Bundle the system may keep for a long time.
+* **A release APK is signed with the release key, or it is not built.** `signingConfigs.release`
+  reads `CLEANSWAP_KEYSTORE`, `CLEANSWAP_KEYSTORE_PASSWORD`, `CLEANSWAP_KEY_ALIAS` and
+  `CLEANSWAP_KEY_PASSWORD` from the environment or from `android/keystore.properties`, and a task
+  that packages a release stops with a message naming what is missing rather than producing an APK
+  signed with a debug key - which installs, but can never update a released one. Debug builds, lint
+  and the tests never touch it.
+* **The tracked CI workflow builds that signed release.** `android/ci/build-apk.yml` had
+  `working-directory:android` (a YAML value that needed its space), built `assembleDebug`, and
+  collected the debug APK; it now writes the keystore from `CLEANSWAP_KEYSTORE_BASE64`, assembles
+  `release`, collects the signed file and checks its certificate before uploading it.
+
 ## What it does
 
 * **The same three steps as ever.** `1 Partner's Lightning invoice` (a hold invoice that states its
@@ -189,13 +229,14 @@ its own terms. Every item in that review is closed:
   opens it: the escrow contract address, the USDT token address, optional RPC endpoints
   (comma-separated; more than one means a cross-check). With no contract set, the panel offers the
   deploy hand-off: **Copy bytecode** (solc 0.8.26 creation code, embedded in the page) and **Open
-  Remix**. The setup survives in `localStorage` under one key, and nothing but this panel ever
-  writes it.
+  Remix**. The setup survives in `localStorage` under one key, one escrow, token and endpoint list
+  for each network, and nothing but this panel ever writes it.
 * **Only a signed, priced invoice with a payment hash is accepted.** A BOLT11 hold invoice
-  (`lnbc...`) or a BOLT12 invoice (`lni1...`) that carries the standard `payment_hash` field; either
-  one names the hash the swap locks to. A BOLT11's signature is verified and its amount has to be
-  stated (see `v0.6.2`). A BOLT12 offer (`lno1...`) is refused with a sentence and an explanation,
-  because the invoice it produces gets a hash of its own (see below).
+  (`lnbc...`) that carries the standard `payment_hash` field and a signature the page verifies; its
+  amount has to be stated (see `v0.6.2`). A BOLT12 invoice (`lni1...`) is decoded and refused, because
+  its Schnorr signature is not one this page verifies (see `v0.6.3`); a BOLT12 offer (`lno1...`) is
+  refused with a sentence and an explanation, because the invoice it produces gets a hash of its own
+  (see below).
 * **The terms leave as a code, not as a web address.** `Share code` copies `cleanswap:...`
   (base64url JSON: both amounts, the window, the hashlock, the USDT address, and in Wallet mode the
   chain, the escrow and the address that funds it - still under the 340-byte QR budget, because the
@@ -318,8 +359,11 @@ states its own payment hash.
 * **BOLT11 encode** (`lnbc…`) — hold invoices: bech32 checksum, 35-bit timestamp, `p`/`d`/`x`
   tagged fields, a 65-byte signature slot, `payment_hash = H`, and an expiry that has to outlive the
   escrow window.
-* **BOLT12 invoices** (`lni1…`) are read through the standard `invoice_payment_hash` (TLV 168).
-  The app's own type-80 tag is reported separately and is never mistaken for the payment hash.
+* **BOLT12 invoices** (`lni1…`) are decoded - `invoice_payment_hash` (TLV 168), amount (170),
+  creation time (164), expiry (166) - and then **refused**: their Schnorr signature is not one this
+  page verifies, so the refusal asks for an ordinary Lightning invoice, which is. The app's own
+  type-80 tag is reported separately and is never mistaken for the payment hash. An invoice with no
+  creation time or no expiry is refused at the decoder rather than read as one that never ends.
 * **BOLT12 offers** (`lno1…`) are recognised and **refused**. An offer cannot carry a payment hash,
   and the invoice a wallet gets for it is built by the payee's node with a fresh random hash, so
   hashing the offer's own bytes would lock the USDT to a hash no Lightning payment ever moves. The
@@ -361,10 +405,11 @@ test/
   contract-evm.py            contract behaviour on py-evm + the page's ABI against eth_abi
   qr-crosscheck.py           QR matrices vs python-qrcode (64 fixed-mask matrices)
   invoice-crosscheck.py      minted invoices vs an independent BOLT11 decoder + secp256k1/OpenSSL
-  android-shell.py           the shell's own promises: FLAG_SECURE, no cache, one document, hosts
+  android-shell.py           the shell's own promises: FLAG_SECURE, no cache, no instance state,
+                             one https document, mixed content off, release signing fail-closed
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.2, versionCode 11)
+android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.3, versionCode 12)
 ```
 
 ## Build
@@ -385,11 +430,11 @@ All suites pass on this tree:
 
 | Suite | What it proves | Result |
 | --- | --- | --- |
-| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain, a 5-minute or 8-day window, or a token amount above 2^53 refused with the setup untouched, a code refused while a swap is running, a code's USDT address offered but not written into the receiving side's field, Practice walking the same road, and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; the chain's own clock past the window -> paying refused; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), an old allowance reset to zero before the exact one, a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: BOLT #11's own invoices (a real signature recovered to the spec's key, a duplicate field and an unrecoverable signature refused, an amountless invoice refused, high-S accepted for recovery), a QR drawn element by element whose caption stays text, and a Content-Security-Policy that names the hashes of its own code and refuses a block added afterwards | **334/334 pass** |
+| `test/headless.js` (Playwright + a mock Arbitrum JSON-RPC endpoint on 127.0.0.1) | The three steps in both modes, the flip, invoice and address refusals, BOLT12 offers refused (never bound to a made-up hash), the `cleanswap:` code round trip (chain, escrow and funding address included, still QR-sized), a code that tries to write an escrow, another chain, a 5-minute or 8-day window, or a token amount above 2^53 refused with the setup untouched, a code refused while a swap is running, a code's USDT address offered but not written into the receiving side's field, Practice walking the same road, and the whole wallet flow against real `eth_call` responses: nothing locked -> Approve refused; `locked` -> the payment starts; `I paid` -> watching, no receipt; the chain's own clock past the window -> paying refused; endpoint down -> nothing completes and the line says why; record for another amount -> refused; `claimed` -> the swap completes and the receipt names the chain; the USDT side: the lock call (copy / EIP-681 / ABI shape), an old allowance reset to zero before the exact one, a pasted tx hash read back through `eth_getTransactionReceipt`, a wrong secret refused before any wallet sees it, and a `refunded` record closing the swap as refunded. Plus the review items: BOLT #11's own invoices (a real signature recovered to the spec's key, a duplicate field and an unrecoverable signature refused, an amountless invoice refused, high-S accepted for recovery), a QR drawn element by element whose caption stays text, and a Content-Security-Policy that names the hashes of its own code and refuses a block added afterwards. And the fourth pass: the head read from every endpoint with the highest standing (two nodes nine blocks apart still answer), one escrow, token and endpoint list per network with nothing carried across a switch, and a BOLT12 invoice refused with its creation time and expiry still decoded - and refused at the decoder when either is missing | **349/349 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MAX_TIMELOCK_DELTA` refusing an 8-day timelock, a fee-on-transfer token refused and a token that returns no bool accepted, a zero hashlock and a receiver that is the escrow itself refused, a token that re-enters `lock` mid-transfer refused with nothing escrowed (and the same token accepted when its call-back is harmless) - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **48/48 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder, its signature is recovered and verified by OpenSSL (`cryptography`), all of them are signed by the one practice key, and the BOLT #11 vectors recover to the spec's key with the signed preimage equal to the hash the spec prints | **79/79 pass** |
-| `test/android-shell.py` | `FLAG_SECURE`, no WebView cache and a cleared one, one document served (`https`, the app host, `/index.html`), an `https` hand-off allowlist with no wildcard, and `usesCleartextTraffic="false"` | **16/16 pass** |
+| `test/android-shell.py` | `FLAG_SECURE`, no WebView cache and a cleared one, no `saveState`/`restoreState`, one document served (`https`, the app host, `/index.html`), the app host only as an https page, `MIXED_CONTENT_NEVER_ALLOW`, an `https` hand-off allowlist with no wildcard, `usesCleartextTraffic="false"`, and a release build that stops without the four signing values (with `android/ci/build-apk.yml` assembling and checking the signed release) | **30/30 pass** |
 | `test/verify-english.py` | Hangul count is 0 across every tracked text file, file name and commit message | **0 characters** |
 
 ```bash
@@ -411,10 +456,13 @@ suite.
 4. `Check` reads the chain and tells you the escrow has code. Everything else stays on the phone;
    the other phone learns the address from a `cleanswap:` code.
 
+Each network keeps its own escrow, token and endpoint list: switching the network in Setup shows
+that network's set, and nothing typed for one is read while the other is selected.
+
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.2`, `versionCode 11`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.3`, `versionCode 12`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the
@@ -430,8 +478,34 @@ it. A release build is minified and shrunk by R8 with `proguard-rules.pro` keepi
 points.
 
 GitHub Actions builds `cleanswap.apk` on every push to `main` and on `v*` tags
-(`.github/workflows/apk.yml`); the same file is kept under `android/ci/build-apk.yml` for reference.
-The APK is uploaded as a workflow artifact.
+(`.github/workflows/apk.yml`); the same file, updated for the signed release build, is kept under
+`android/ci/build-apk.yml` for reference. The APK is uploaded as a workflow artifact.
+
+### Signing a release
+
+A release APK is signed with a long-lived key: a debug signature would install, but it could never
+update an installed release, and each CI runner would make a different one. The four values come
+from the environment, or from `android/keystore.properties` (git-ignored) for a local build:
+
+```properties
+CLEANSWAP_KEYSTORE=keystore/cleanswap-release.jks
+CLEANSWAP_KEYSTORE_PASSWORD=…
+CLEANSWAP_KEY_ALIAS=cleanswap
+CLEANSWAP_KEY_PASSWORD=…
+```
+
+```bash
+cd android
+export CLEANSWAP_KEYSTORE_PASSWORD=… CLEANSWAP_KEY_ALIAS=cleanswap CLEANSWAP_KEY_PASSWORD=…
+CLEANSWAP_KEYSTORE=keystore/cleanswap-release.jks gradle assembleRelease
+```
+
+When any of the four is missing, `assembleRelease`, `bundleRelease` and `installRelease` stop before
+any APK exists and say which one is missing - a build signed with a debug key would install once and
+never update. `assembleDebug`, lint and the tests need no key. In CI the key is
+`CLEANSWAP_KEYSTORE_BASE64` (base64 of the .jks) plus the three passwords as repository secrets;
+`android/ci/build-apk.yml` writes it to a temporary file, assembles the release, and checks the
+certificate with `apksigner` before uploading.
 
 ## Security notes and limitations
 
@@ -454,11 +528,15 @@ The APK is uploaded as a workflow artifact.
 * A `cleanswap:` code carries terms only. It is not a web address, has no host, and is never built
   from the page's own URL - and it never changes the setup: the chain and the escrow in a code are
   requirements that must already match, not settings that get written.
-* A swap lives in the page: reloading it forgets it. The Setup panel is the only thing kept, in one
-  `localStorage` key.
+* A swap lives in the page: reloading it forgets it, and the Android shell keeps nothing of it in
+  the instance state either. The Setup panel is the only thing kept, in one `localStorage` key -
+  with one escrow, token and endpoint list per network.
 * A BOLT11 invoice's signature is checked, but a BOLT11 invoice names no payee unless it carries an
   `n` tag: without one, the key is recovered from the signature, which proves the invoice was not
   edited, not who made it. The `n` tag, when present, is verified against and must be low-S.
+* A BOLT12 invoice (`lni1`) is **not** accepted: its signature is a Schnorr signature over a merkle
+  root of its TLVs, and this page has no verifier for it, so it refuses one rather than take terms
+  on trust. The refusal asks for an ordinary Lightning invoice.
 * Practice invoices are signed with a key that ships in the page: they are real BOLT11 strings and
   they verify, but no node holds that key and no one can pay them. They are rehearsal material, and
   the screen never asks anyone to pay one outside Practice.
