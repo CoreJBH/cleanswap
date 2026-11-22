@@ -160,7 +160,7 @@
     block: null,                    /* latest block read from the chain */
     blockTs: null,                  /* that block's timestamp, the chain's clock */
     blockTsAt: 0, blockTsFail: 0,   /* when it was read, when a read last failed */
-    rpcState: 'idle',               /* idle | ok | bad */
+    rpcState: 'idle',               /* idle | ok | unclear | nocon | nohtlc | bad */
     chain: null,                    /* the last reading: {state, why, rec} */
     chainAt: 0, simRec: null,       /* the practice stand-in for that record */
     txPending: null,                /* a call built and waiting for a wallet */
@@ -168,6 +168,8 @@
     claimTx: '',                    /* the transaction that took it out */
     secret: '',                     /* the payment secret, when this side has it */
     busy: false,                    /* a chain read is in flight */
+    op: '',                         /* a tap's operation is in flight: approve, lock, claim, refund */
+    sending: false,                 /* this page has a wallet call of its own in flight */
     note: '',                       /* what the last refusal said, on the waiting screen */
     watch: 0,                       /* the polling timer while a swap runs */
     sats: 50000,
@@ -1180,10 +1182,13 @@
       } else if (verdict === 'other') {
         S.rpcState = 'nohtlc';
         log('SETUP', 'the address answers, but not the way the swap contract answers', 'c-err');
-      } else {
+      } else if (verdict === 'unclear') {
         /* A disagreement between the endpoints is not a verdict about the
-           contract; the reading below refuses the swap on it, and the screen
-           says the endpoints disagree rather than blaming the address. */
+           contract, and it is not a yes either: nothing that depends on this
+           address is read as ready until they agree again. */
+        S.rpcState = 'unclear';
+        log('SETUP', 'the endpoints disagree about the escrow, so nothing is read as ready', 'c-err');
+      } else {
         S.rpcState = 'ok';
       }
       renderChain();
@@ -1220,6 +1225,11 @@
   function walletSend(to, data) {
     var p = provider();
     if (!p) return Promise.reject(new Error('no wallet in this page'));
+    /* A wallet call this page made is not made a second time while the first
+       is still on its way: two claims of one escrow are one claim, and a
+       wallet asked twice can charge twice. */
+    if (S.sending) return Promise.reject(new Error('that call is already in flight'));
+    S.sending = true;
     return ensureChain(p)
       .then(function () { return p.request({ method: 'eth_requestAccounts' }); })
       .then(function (accts) {
@@ -1227,7 +1237,8 @@
         if (!from) throw new Error('the wallet shared no account');
         S.me = String(from);
         return p.request({ method: 'eth_sendTransaction', params: [{ from: S.me, to: to, data: data, value: '0x0' }] });
-      });
+      })
+      .then(function (h) { S.sending = false; return h; }, function (e) { S.sending = false; throw e; });
   }
   /* A transaction is only real once the chain has it: the receipt is what the
      app waits for, and the escrow reading after it is what the app believes. */
@@ -1260,6 +1271,18 @@
 
   /* ---------------------------------------------------- wallet actions --- */
   function busy(on) { S.busy = !!on; render(); }
+
+  /* One tap, one operation. A slow phone, or a finger that lands twice, must
+     not put two locks on the same USDT or two claims on the same escrow: the
+     second tap is refused here, before anything is built or sent, and the
+     first one decides what happens next. */
+  function opStart(kind) {
+    if (S.op) return false;
+    S.op = kind;
+    return true;
+  }
+  function opEnd() { S.op = ''; }
+  function opWait() { toast('One moment: the last tap is still on its way.'); }
 
   function lockCall() {
     return { to: escrowNow(), data: lockCalldata({ hashlock: S.H, timelock: S.t2, receiver: S.addr, token: tokenNow(), amount: usdtUnits() }) };
@@ -1323,6 +1346,12 @@
         toast('The chain did not answer. Nothing was approved.');
         return null;
       }
+      if (S.rpcState === 'unclear') {
+        busy(false);
+        log('BLOCK', 'the endpoints disagree about the escrow, so nothing is approved', 'c-err');
+        toast('The two endpoints disagree about the escrow. Nothing was approved.');
+        return null;
+      }
       simSeed();
       return refreshChain();
     }).then(function (c) {
@@ -1367,6 +1396,10 @@
   }
 
   function runLock(p) {
+    /* The approvals and the lock are one operation with a wallet: a second tap
+       while the first is still being sent would ask for them all again. */
+    if (S.sending) { opWait(); return; }
+    S.sending = true;
     var amount = BigInt(usdtUnits());
     /* An approval is a transaction too: the next step only exists once it is
        mined, and a token that already allows this escrow something treats a
@@ -1427,15 +1460,16 @@
         busy(false);
         return refreshChain();
       })
-      .then(function (c) { lockedMine(c); })
-      .catch(function (e) { busy(false); walletFail(e); });
+      .then(function (c) { S.sending = false; lockedMine(c); })
+      .catch(function (e) { S.sending = false; busy(false); walletFail(e); });
   }
 
   function walletFail(e) {
     var m = String((e && e.message) || e || '');
     var say = /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
       : /insufficient|balance|allowance/i.test(m) ? 'That wallet does not hold enough USDT for this swap.'
-        : 'The wallet did not finish, so nothing has moved.';
+        : /already in flight/i.test(m) ? 'That call is already on its way, so nothing was sent twice.'
+          : 'The wallet did not finish, so nothing has moved.';
     log('ERR', say, 'c-err');
     render();
     toast(say);
@@ -1505,6 +1539,10 @@
   function doClaim() {
     var pre = normHex(S.secret);
     if (!/^[0-9a-f]{64}$/.test(pre)) { toast('Paste the 32-byte payment secret'); return; }
+    /* One claim at a time: the secret is hashed, the escrow is read and a
+       wallet is asked, and a second tap in the middle of that would ask for
+       the whole thing again. */
+    if (!opStart('claim')) { opWait(); return; }
     busy(true);
     sha256Hex(pre).then(function (h) {
       busy(false);
@@ -1535,10 +1573,13 @@
           .then(function (c) { if (c && c.state === 'claimed') settleByChain(c); else blockChain(c); })
           .catch(function (e) { busy(false); walletFail(e); });
       });
-    }, function () { busy(false); toast('That secret cannot be read'); });
+    }, function () { busy(false); toast('That secret cannot be read'); })
+      .then(opEnd, function () { opEnd(); busy(false); });
   }
 
   function doRefund() {
+    /* One refund at a time, for the same reason as one claim. */
+    if (!opStart('refund')) { opWait(); return; }
     busy(true);
     swapIdNow().then(function (id) {
       var call = { to: escrowNow(), data: refundCalldata(id) };
@@ -1560,7 +1601,8 @@
           else blockChain(c);
         })
         .catch(function (e) { busy(false); walletFail(e); });
-    }, function () { busy(false); toast('These terms are not readable yet'); });
+    }, function () { busy(false); toast('These terms are not readable yet'); })
+      .then(opEnd, function () { opEnd(); busy(false); });
   }
 
   /* A transaction hash pasted back from a wallet that cannot be reached from
@@ -2770,6 +2812,14 @@
           fields: { invoice: inv, address: ad }
         });
       }
+      /* Zero is not an amount. Before the quote lands there is no USDT figure
+         at all, and a tap in that window would lock a swap with nothing in
+         it - the escrow would take it and the bitcoin would buy 0 USDT. */
+      if (!(Number(usdtUnits()) > 0)) {
+        return Promise.resolve({ ok: false, code: 'rate', field: 'go',
+          msg: 'The rate has not loaded yet, so the USDT amount would be zero. Tap Approve again in a moment.',
+          fields: { invoice: inv, address: ad } });
+      }
       /* The escrow window has to leave room to pay and claim, and the invoice
          has to outlive it. A code that names five minutes, or years, stops
          here - before any button can approve it. */
@@ -2947,6 +2997,8 @@
       txt += ' \u00b7 no contract at that address';
     } else if (!practice && S.rpcState === 'nohtlc') {
       txt += ' \u00b7 not the swap contract';
+    } else if (!practice && S.rpcState === 'unclear') {
+      txt += ' \u00b7 endpoints disagree';
     } else if (S.chain) {
       if (S.chain.state === 'error') { txt += S.chain.disagree ? ' \u00b7 endpoints disagree' : ' \u00b7 no answer from the chain'; }
       else if (S.chain.state === 'locked') { txt += ' \u00b7 USDT locked'; dot = 'live'; }
@@ -3071,10 +3123,11 @@
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow reads like the swap contract: block ' + fmt(S.block || 0) + '.'
-        : (S.rpcState === 'nocon' ? 'Nothing answers at that address on ' + c.label + '.'
-          : (S.rpcState === 'nohtlc' ? 'That address answers, but it is not the swap contract. Check the address in Setup.'
-            : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
-              : 'Tap Check to read the chain.'))))) + cross;
+        : (S.rpcState === 'unclear' ? 'The endpoints disagree about that address, so the escrow is not read as ready. Check the endpoints in Setup.'
+          : (S.rpcState === 'nocon' ? 'Nothing answers at that address on ' + c.label + '.'
+            : (S.rpcState === 'nohtlc' ? 'That address answers, but it is not the swap contract. Check the address in Setup.'
+              : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
+                : 'Tap Check to read the chain.')))))) + cross;
   }
 
   function presetsOn() {
@@ -3162,6 +3215,10 @@
     if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
     if (S.phase === 'paying') { paid(); return; }
     if (S.phase === 'locking' || S.phase === 'paid') { checkChain(); return; }
+    /* The gate takes a chain reading and then opens the swap: a second tap in
+       that gap would read the terms again and start a second swap on the same
+       money. */
+    if (!opStart('approve')) { opWait(); return; }
     /* The id names the address that funds the escrow. When this side funds it,
        the wallet is asked who it is before anything is computed. */
     var whoFirst = S.mode === 'wallet' && S.direction === 'u2b' ? ensureMe() : Promise.resolve(true);
@@ -3194,8 +3251,8 @@
       logSwap(r);
       /* Practice rehearses the same gates against a stand-in escrow. Wallet
          mode moves real USDT and the chain has the last word. */
-      startSwap();
-    });
+      return startSwap();
+    }).then(opEnd, function (e) { opEnd(); walletFail(e); });
   }
 
   /* ------------------------------------------------- the rehearsal escrow --
@@ -3341,6 +3398,7 @@
     S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
     S.lockTx = ''; S.claimTx = ''; S.secret = '';
     S.busy = false;
+    S.op = ''; S.sending = false;
     var s = $('secretIn'); if (s) { s.value = ''; }
     var t = $('txIn'); if (t) { t.value = ''; }
     var row = $('secretRow'); if (row) { row.hidden = true; row.dataset.open = '0'; }
@@ -3357,13 +3415,22 @@
   }
 
   /* Back from the finished swap or the waiting screen keeps the terms on
-     screen. */
+     screen but not the swap that used them. The window a code set, the hash it
+     pinned, the address the escrow saw and the transaction that locked it
+     belong to that swap alone: carried into the next one they would build its
+     id from the last one's funder, pin a hash nobody will pay, or approve
+     against a window that is already half gone. */
   function backToForm() {
     if (S.phase === 'idle') return;
     stopWatch();
     S.phase = 'idle';
     S.qrInv = '';
+    S.t2 = null;
+    S.expectH = null;
+    S.funder = '';
+    S.lockTx = '';
     var box = $('qrBox'); if (box) box.innerHTML = '';
+    log('BACK', 'a new swap starts without the last one\u2019s window or transaction');
     render();
     refreshGate();
   }
@@ -3677,6 +3744,7 @@
       if (!readSetup()) return;
       chainProbe().then(function () {
         if (S.rpcState === 'ok') toast('The chain answers');
+        else if (S.rpcState === 'unclear') toast('The endpoints disagree about that address');
         else if (S.rpcState === 'nocon') toast('No contract at that address');
         else if (S.rpcState === 'nohtlc') toast('That address is not the swap contract');
         else toast('The chain did not answer');

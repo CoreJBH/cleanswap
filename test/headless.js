@@ -271,6 +271,10 @@ const chainServer = http.createServer((req, res) => {
    with a locked record, whatever the id. With two endpoints configured the app
    has to notice that the two answers differ and trust neither. */
 const LIE = {
+  /* When false this endpoint is honest about the escrow and only ahead in
+     blocks: that is the shape of two working nodes, and the head check uses
+     it to show a few blocks of skew is not a disagreement. */
+  escrowLie: true,
   record: {
     hashlock: '0x' + '31'.repeat(32), amount: 32500000, timelock: 1999999999,
     token: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
@@ -302,7 +306,7 @@ const lieServer = http.createServer((req, res) => {
       number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + CHAIN.blockTs.toString(16)
     };
     else if (j.method === 'eth_getCode') result = '0x6080604052348015600e575f80fd5b50';
-    else if (j.method === 'eth_call') result = recordHex(LIE.record);
+    else if (j.method === 'eth_call') result = LIE.escrowLie === false ? chainJson(j) : recordHex(LIE.record);
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
     res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: result }));
   });
@@ -727,6 +731,7 @@ const view = (pg) => pg.evaluate(() => {
      ~250ms), so the height is read from every endpoint and the highest stands:
      the probe must not call a working chain broken and refuse the swap. */
   CHAIN.headSkew = 9;
+  LIE.escrowLie = false;              /* ahead in blocks, honest about the escrow */
   const headOut = await page.evaluate(async ({ rpc, lie }) => {
     const S = window.CLEANSWAP.state;
     const was = S.rpc;
@@ -737,6 +742,7 @@ const view = (pg) => pg.evaluate(() => {
     return out;
   }, { rpc: RPC, lie: RPC_LIE });
   CHAIN.headSkew = 0;
+  LIE.escrowLie = true;
   check('head: a head a few blocks apart on two endpoints is not a disagreement',
     headOut.rpcState === 'ok', headOut.rpcState + ' / ' + headOut.quorum);
   check('head: the highest head is the one on screen', headOut.block === CHAIN.block + 9, String(headOut.block));
@@ -2877,6 +2883,283 @@ const view = (pg) => pg.evaluate(() => {
     legacy.mainnet === '0x' + 'ab'.repeat(20) && legacy.testnet === '',
     JSON.stringify(legacy));
   await legacyCtx.c.close();
+
+  /* ------------- 11. v0.6.6: one tap, one swap, and no leftover terms --- */
+  /* Four ways a swap could be built out of something that does not belong to
+     it: a quote that has not loaded pricing the swap at zero, a second tap
+     running the same approval twice, the window and the pin of the swap
+     before, and two endpoints disagreeing about the escrow while the screen
+     still says the escrow is ready. */
+
+  /* (a) No quote, no lock. The USDT amount comes from the rate; with no rate
+     yet it is unknown, not zero, and zero would lock a swap with nothing in
+     it while the bitcoin still left. */
+  const ZR2 = await freshPage(390, 844);
+  const z2 = ZR2.p;
+  await z2.click('[data-act="sampleInv"]');
+  await z2.waitForFunction(() => /^lnbc/.test(document.getElementById('invIn').value), null, { timeout: 5000 });
+  await z2.click('[data-act="sampleAddr"]');
+  await z2.waitForTimeout(300);
+  const z2was = await z2.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    const was = { price: S.price, pstate: S.pstate };
+    S.price = null; S.pstate = 'loading'; S.units = null;
+    return was;
+  });
+  await z2.evaluate(() => window.CLEANSWAP.refreshGate());
+  await z2.waitForTimeout(400);
+  const z2g = await view(z2);
+  check('zero rate: with no quote, Approve does not offer to lock zero USDT',
+    z2g.ready === '0' && z2g.gate === 'rate' && /rate has not loaded/.test(z2g.say),
+    z2g.gate + ' / ' + z2g.say);
+  check('zero rate: the refusal is plain English', !JARGON.test(z2g.say), z2g.say);
+  await z2.click('#primary');
+  await z2.waitForTimeout(400);
+  const z2t = await view(z2);
+  const z2units = await z2.evaluate(() => window.CLEANSWAP.state.units);
+  check('zero rate: a tap with no quote starts no swap and locks nothing',
+    z2t.phase === 'idle' && z2units === null && /rate has not loaded/.test(z2t.toast),
+    z2t.phase + ' / ' + String(z2units) + ' / ' + z2t.toast);
+  await z2.evaluate((was) => {
+    const S = window.CLEANSWAP.state;
+    S.price = was.price; S.pstate = was.pstate;
+  }, z2was);
+  await z2.evaluate(() => window.CLEANSWAP.refreshGate());
+  await z2.waitForTimeout(400);
+  const z2ok = await view(z2);
+  check('zero rate: once the quote is there, the same terms are ready',
+    z2ok.ready === '1' && z2ok.gate === 'ok', z2ok.gate + ' / ' + z2ok.say);
+  check('zero rate: no page errors', ZR2.errs.length === 0, ZR2.errs.join(' | '));
+  await ZR2.c.close();
+
+  /* (b) Two taps, one approval. Both clicks land in the same turn of the
+     event loop, which is exactly the gap a fast finger finds: the second one
+     has to be refused before it reads the terms again. */
+  const DT = await freshPage(390, 844);
+  const dtp = DT.p;
+  await dtp.click('[data-act="sampleInv"]');
+  await dtp.waitForFunction(() => /^lnbc/.test(document.getElementById('invIn').value), null, { timeout: 5000 });
+  await dtp.click('[data-act="sampleAddr"]');
+  await dtp.waitForTimeout(300);
+  const dtTap = await dtp.evaluate(() => {
+    const b = document.getElementById('primary');
+    b.click(); b.click();
+    /* read in the same turn: no approval has finished yet, so this is the
+       answer the second tap got */
+    return { toast: document.getElementById('toast').textContent };
+  });
+  check('double tap: the second tap on Approve is refused while the first runs',
+    /still on its way/.test(dtTap.toast), dtTap.toast);
+  await dtp.waitForTimeout(1500);
+  const dtOut = await dtp.evaluate(() => ({
+    invoices: window.CLEANSWAP.state.log.filter(e => e.kind === 'INVOICE').length,
+    locks: window.CLEANSWAP.state.log.filter(e => e.kind === 'LOCK').length,
+    phase: document.body.dataset.phase
+  }));
+  check('double tap: one tap approves one swap, so the terms are read once',
+    dtOut.invoices === 1 && dtOut.phase === 'paying',
+    dtOut.invoices + ' invoices / ' + dtOut.phase);
+  check('double tap: no page errors', DT.errs.length === 0, DT.errs.join(' | '));
+  await DT.c.close();
+
+  /* (c) Back is a new swap. A code sets a window and pins a hash; once that
+     swap is done with, neither belongs to the next one. */
+  const BK = await freshPage(390, 844);
+  const bk = BK.p;
+  const hBk = '0x' + crypto.createHash('sha256').update(Buffer.from('7b'.repeat(32), 'hex')).digest('hex');
+  const t2Bk = Math.floor(Date.now() / 1000) + 7200;
+  const unitsBk = await bk.evaluate(() => window.CLEANSWAP.usdtUnits());
+  await bk.evaluate((c) => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 50000, units: unitsBk, t2: t2Bk, h: hBk }));
+  const invBk = await bk.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hBk);
+  await bk.fill('#invIn', invBk);
+  await bk.fill('#addrIn', PARTNER);
+  await bk.waitForTimeout(400);
+  await bk.click('#primary');
+  await bk.waitForTimeout(900);
+  const bkBefore = await bk.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { phase: S.phase, t2: S.t2, expectH: S.expectH, funder: S.funder, lockTx: S.lockTx };
+  });
+  check('back: the swap before Back had the code\'s window and its pin',
+    bkBefore.phase === 'paying' && bkBefore.t2 === t2Bk &&
+    String(bkBefore.expectH).toLowerCase() === hBk.toLowerCase(), JSON.stringify(bkBefore));
+  await bk.click('#backBtn');
+  await bk.waitForTimeout(400);
+  const bkAfter = await bk.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { phase: S.phase, t2: S.t2, expectH: S.expectH, funder: S.funder, lockTx: S.lockTx };
+  });
+  check('back: Back leaves the last window, pin, funder and transaction behind',
+    bkAfter.phase === 'idle' && bkAfter.t2 === null && bkAfter.expectH === null &&
+    bkAfter.funder === '' && bkAfter.lockTx === '', JSON.stringify(bkAfter));
+  /* A new invoice on another hash is the next swap's terms: refused against
+     the old pin it would be the previous swap deciding for this one. */
+  const hBk2 = '0x' + crypto.createHash('sha256').update(Buffer.from('7c'.repeat(32), 'hex')).digest('hex');
+  const invBk2 = await bk.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hBk2);
+  await bk.fill('#invIn', '');
+  await bk.fill('#invIn', invBk2);
+  await bk.waitForTimeout(400);
+  const bk2 = await view(bk);
+  check('back: the next invoice is not refused against the swap before',
+    bk2.gate !== 'mismatch' && bk2.ready === '1', bk2.gate + ' / ' + bk2.say);
+  await bk.click('#primary');
+  await bk.waitForTimeout(900);
+  const bk2t2 = await bk.evaluate(() => ({
+    t2: window.CLEANSWAP.state.t2, span: window.CLEANSWAP.T2_SPAN,
+    phase: document.body.dataset.phase
+  }));
+  check('back: the next swap gets its own window, not the last one\'s',
+    bk2t2.phase === 'paying' && bk2t2.t2 !== t2Bk &&
+    Math.abs(bk2t2.t2 - (Math.floor(Date.now() / 1000) + bk2t2.span)) <= 30,
+    String(bk2t2.t2) + ' vs ' + t2Bk);
+  check('back: no page errors', BK.errs.length === 0, BK.errs.join(' | '));
+  await BK.c.close();
+
+  /* (d) Two endpoints that disagree about the escrow are not an escrow that
+     reads ready: the disagreement is its own state, named on the screen. */
+  const PR = await freshPage(390, 844);
+  const pr = PR.p;
+  await pr.click('#modeWallet');
+  await pr.waitForTimeout(250);
+  await pr.click('#chainRow');
+  await pr.fill('#contractIn', CONTRACT);
+  await pr.fill('#tokenIn', TOKEN);
+  await pr.fill('#rpcIn', RPC + ',' + RPC_LIE);
+  await pr.click('[data-act="saveSetup"]');
+  await pr.waitForTimeout(1800);
+  const prState = await pr.evaluate(() => window.CLEANSWAP.state.rpcState);
+  const prView = await view(pr);
+  check('probe: a disagreement between the endpoints is not the escrow reading ready',
+    prState === 'unclear', prState);
+  check('probe: the chain line names the disagreement instead of the escrow being ready',
+    /endpoints disagree/.test(prView.chainTxt) && !/escrow ready/.test(prView.chainTxt), prView.chainTxt);
+  if (!(await pr.isVisible('#setupBox'))) {
+    await pr.click('#chainRow');
+    await pr.waitForTimeout(250);
+  }
+  const prHint = await pr.textContent('#setupHint');
+  check('probe: the setup panel says the address is not read as ready',
+    /disagree/.test(prHint) && !/reads like the swap contract/.test(prHint), prHint);
+  const hPr = '0x' + crypto.createHash('sha256').update(Buffer.from('7d'.repeat(32), 'hex')).digest('hex');
+  const invPr = await pr.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hPr);
+  await pr.click('#swapDir');
+  await pr.waitForTimeout(250);
+  await pr.fill('#invIn', invPr);
+  await pr.fill('#addrIn', PARTNER);
+  await pr.waitForTimeout(400);
+  await pr.click('#primary');
+  await pr.waitForTimeout(1600);
+  const prTap = await view(pr);
+  check('probe: Approve on a disagreed escrow approves nothing and says why',
+    prTap.phase === 'idle' && /endpoints disagree/.test(prTap.toast), prTap.phase + ' / ' + prTap.toast);
+  check('probe: no page errors through the disagreement', PR.errs.length === 0, PR.errs.join(' | '));
+  await PR.c.close();
+
+  /* (e) One wallet call at a time, and Back after it. The claim is tapped
+     twice in one turn; the page's own lock leaves a funder and a transaction
+     behind, and Back must take both with it. */
+  const OWNER2 = '0xc0ffee0000000000000000000000000000000004';
+  const WC = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await WC.addInitScript((acct) => {
+    window.__w2 = [];
+    window.ethereum = {
+      request: function (o) {
+        const p = o.params || [];
+        if (o.method === 'eth_chainId') return Promise.resolve('0x66eee');
+        if (o.method === 'eth_accounts' || o.method === 'eth_requestAccounts') return Promise.resolve([acct]);
+        if (o.method === 'eth_sendTransaction') {
+          const h = '0x' + String(window.__w2.length + 1).padStart(64, '0');
+          window.__w2.push({ to: p[0].to, data: p[0].data, hash: h });
+          return Promise.resolve(h);
+        }
+        return Promise.reject(new Error('unexpected ' + o.method));
+      }
+    };
+  }, OWNER2);
+  const wc = await WC.newPage();
+  const wcErrs = [];
+  wc.on('pageerror', e => wcErrs.push(e.message));
+  wc.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) wcErrs.push(m.text()); });
+  await wc.goto(URL, { waitUntil: 'load' });
+  await wc.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await wc.click('#modeWallet');
+  await wc.click('#swapDir');
+  await wc.waitForTimeout(300);
+  const preW = '0x' + '7e'.repeat(32);
+  const hW = '0x' + crypto.createHash('sha256').update(Buffer.from('7e'.repeat(32), 'hex')).digest('hex');
+  const invW = await wc.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hW);
+  await wc.fill('#addrIn', PARTNER);
+  await wc.fill('#invIn', invW);
+  await wc.click('#chainRow');
+  await wc.fill('#contractIn', CONTRACT);
+  await wc.fill('#tokenIn', TOKEN);
+  await wc.fill('#rpcIn', RPC);
+  await wc.click('[data-act="saveSetup"]');
+  await wc.waitForTimeout(1200);
+  await wc.click('#chainRow');
+  await wc.waitForTimeout(250);
+  const t2W2 = Math.floor(Date.now() / 1000) + 7200;
+  const unitsW2 = await wc.evaluate((t) => { window.CLEANSWAP.state.t2 = t; return window.CLEANSWAP.usdtUnits(); }, t2W2);
+  const hApp2 = '0x' + '1'.padStart(64, '0');
+  const hLock2 = '0x' + '2'.padStart(64, '0');
+  const hClaim2 = '0x' + '3'.padStart(64, '0');
+  /* The escrow sees a relayer, not the account the wallet handed the page:
+     the lock is really sent (the record only exists after it) and the funder
+     is the one the escrow's own event names. */
+  const RL2 = '0x6a5b4c3d2e1f0091827364554637281900a1b2c3';
+  const idW2 = swapIdOf({ hashlock: hW, sender: RL2, receiver: PARTNER, token: TOKEN, amount: unitsW2, timelock: t2W2 });
+  CHAIN.receipts[hApp2] = { status: '0x1' };
+  CHAIN.receipts[hLock2] = {
+    status: '0x1',
+    logs: [{
+      address: CONTRACT,
+      topics: [LOCKED_TOPIC, idW2,
+        '0x' + '0'.repeat(24) + RL2.slice(2), '0x' + '0'.repeat(24) + PARTNER.slice(2)],
+      data: '0x' + [hexAddr(TOKEN), hexWord(unitsW2), hexB32(hW), hexWord(t2W2)].join('')
+    }]
+  };
+  CHAIN.receipts[hClaim2] = { status: '0x1' };
+  CHAIN.records[idW2.toLowerCase()] = {
+    hashlock: hW, amount: unitsW2, timelock: t2W2, token: TOKEN,
+    sender: RL2, receiver: PARTNER, claimed: false, refunded: false
+  };
+  await wc.click('#primary');
+  await wc.waitForTimeout(3200);
+  const wcPaid = await view(wc);
+  check('one call: the in-page wallet locks once and the swap reads paid',
+    wcPaid.phase === 'paid' && wcPaid.chainState === 'locked', wcPaid.phase + ' / ' + wcPaid.chainState);
+  await wc.click('[data-act="claimOpen"]');
+  await wc.fill('#secretIn', preW);
+  await wc.waitForTimeout(200);
+  const claimTap = await wc.evaluate(() => {
+    const b = document.querySelector('[data-act="sendClaim"]');
+    b.click(); b.click();
+    return { toast: document.getElementById('toast').textContent };
+  });
+  check('one call: the second tap on Claim is refused while the first is sent',
+    /still on its way/.test(claimTap.toast), claimTap.toast);
+  await wc.waitForTimeout(2500);
+  const claimSends = await wc.evaluate(() => window.__w2.filter(c => String(c.data).toLowerCase().startsWith('0x84cc9dfb')).length);
+  check('one call: two taps send one claim, not two', claimSends === 1, String(claimSends) + ' claims');
+  const wcBefore = await wc.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { phase: S.phase, t2: S.t2, funder: S.funder, lockTx: S.lockTx };
+  });
+  check('back: the wallet swap before Back knows its funder and its transaction',
+    wcBefore.funder === RL2 && wcBefore.lockTx.toLowerCase() === hLock2,
+    String(wcBefore.funder) + ' / ' + String(wcBefore.lockTx));
+  await wc.click('#backBtn');
+  await wc.waitForTimeout(500);
+  const wcAfter = await wc.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { phase: S.phase, t2: S.t2, funder: S.funder, lockTx: S.lockTx, expectH: S.expectH };
+  });
+  check('back: the wallet swap leaves no funder, transaction or window behind',
+    wcAfter.phase === 'idle' && wcAfter.funder === '' && wcAfter.lockTx === '' &&
+    wcAfter.t2 === null && wcAfter.expectH === null, JSON.stringify(wcAfter));
+  check('one call: no page errors through the claim and Back', wcErrs.length === 0, wcErrs.join(' | '));
+  await WC.close();
 
   await browser.close();
 
