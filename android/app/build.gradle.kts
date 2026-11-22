@@ -50,8 +50,8 @@ android {
         applicationId = "com.jbitmstr.cleanswap"
         minSdk = 24
         targetSdk = 34
-        versionCode = 16
-        versionName = "0.6.7"
+        versionCode = 17
+        versionName = "0.6.8"
         resourceConfigurations += listOf("en", "ko")
     }
 

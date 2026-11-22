@@ -392,6 +392,28 @@ check('guard: the same token with a harmless call back locks normally',
 check('guard: the guard is released after a call finishes',
       view(htlc, 'canClaim(bytes32)', ['bytes32'], [ctl_id], ['bool'])[0] is True)
 
+# ---- ordering: the pull comes before the record -----------------------------
+# The same token, armed this time with the escrow's own view of the very swap
+# it is funding. Inside transferFrom the record has to be empty - the escrow
+# has not been paid yet - and only once the token has arrived is it written.
+# That is what keeps a stored swap from ever describing money that has not
+# moved, and what a token calling back mid-transfer now finds.
+ord_tl = now() + 3900
+ord_id = view(htlc, 'computeSwapId(bytes32,address,address,address,uint256,uint256)',
+              ['bytes32', 'address', 'address', 'address', 'uint256', 'uint256'],
+              [H, sender_re, maker, re_tok, amount, ord_tl], ['bytes32'])[0]
+peek = selector('swaps(bytes32)') + abi_encode(['bytes32'], [ord_id])
+send(re_tok, 'arm(address,bytes)', ['address', 'bytes'], [htlc, peek], accounts[0])
+send(htlc, LOCK_SIG, LOCK_TYPES, [H, ord_tl, maker, re_tok, amount], sender_re)
+ord_ok = view(re_tok, 'lastOk()', [], [], ['bool'])[0]
+ord_back = view(re_tok, 'lastReturn()', [], [], ['bytes'])[0]
+check('lock: the token is pulled in before the swap record is written',
+      ord_ok is True and ord_back == b'\x00' * 256,
+      'ok=%s, %d bytes seen from inside the transfer' % (ord_ok, len(ord_back or b'')))
+check('lock: and the record is there once the money has arrived',
+      swaps_raw(ord_id)[1][0] == H,
+      'hashlock ' + swaps_raw(ord_id)[1][0].hex()[:12])
+
 # ---- the app's own encoding ------------------------------------------------
 # The UI builds lock() calldata in the browser. These two checks tie that
 # encoding to this ABI: the selector constants in src/app.js have to hash to the

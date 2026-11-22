@@ -141,6 +141,11 @@ contract ReentrantUSDT {
     address public escrow;
     bytes public poke;
     bool public fired;
+    /* What the call back answered, kept so a test can say what the escrow
+       looked like from inside the transfer: the record of the swap being
+       funded has to be empty at that moment. */
+    bool public lastOk;
+    bytes public lastReturn;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -179,7 +184,9 @@ contract ReentrantUSDT {
     function _poke() private {
         if (fired || escrow == address(0)) return;
         fired = true;
-        (bool ok, ) = escrow.call(poke);
+        (bool ok, bytes memory ret) = escrow.call(poke);
+        lastOk = ok;
+        lastReturn = ret;
         if (!ok) revert("the call back failed");
     }
 

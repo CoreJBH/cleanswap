@@ -29,7 +29,10 @@ pragma solidity ^0.8.26;
 ///         interactions and a one-shot `claimed` flag would cover this escrow
 ///         on their own, but the token is a stranger's contract, and a token
 ///         that calls back during a transfer must not be able to enter a second
-///         time. Token movement goes through `_safeTransfer`/`_safeTransferFrom`,
+///         time. `lock` pulls the token in before it writes the swap record, so
+///         a token that calls back mid-transfer finds no swap under the id it is
+///         funding, and the stored record never describes money that has not
+///         arrived. Token movement goes through `_safeTransfer`/`_safeTransferFrom`,
 ///         which accept tokens that return no bool but refuse any transfer whose
 ///         actual balance movement differs from the agreed amount, so a
 ///         fee-on-transfer token cannot quietly short the other side. The token
@@ -152,6 +155,15 @@ contract CleanSwapHTLC {
         swapId = computeSwapId(hashlock, msg.sender, receiver, token, amount, timelock);
         if (swaps[swapId].sender != address(0)) revert SwapExists(swapId);
 
+        /* The token is pulled in before the record is written: a token that
+           calls back during the transfer (a hook token, a proxy) reaches a
+           contract whose `swaps[swapId]` is still empty, so there is no swap
+           under that id for it to act on while the escrow is mid-flight. The
+           reentrancy guard refuses the call anyway; this keeps the stored
+           state from ever describing money that has not arrived. If the
+           transfer reverts, nothing was written. */
+        _safeTransferFrom(token, msg.sender, amount);
+
         Swap storage s = swaps[swapId];
         s.hashlock = hashlock;
         s.amount = amount;
@@ -160,7 +172,6 @@ contract CleanSwapHTLC {
         s.sender = msg.sender;
         s.receiver = receiver;
 
-        _safeTransferFrom(token, msg.sender, amount);
         emit Locked(swapId, msg.sender, receiver, token, amount, hashlock, timelock);
     }
 

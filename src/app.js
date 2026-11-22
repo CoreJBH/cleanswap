@@ -130,7 +130,10 @@
   var FALLBACK_PRICE = 90000;
   var QR_MAX = 340;                 /* bytes at level L, version 13 (the encoder's ceiling) */
   var QR_M = 269;                   /* bytes at level M, version 12 */
-  var NET = 'bc';                   /* invoice network prefix */
+  /* The bitcoin network the Lightning leg pays on, as a BOLT11 prefix. A sample
+     invoice is written on mainnet, which is the invoice a rehearsal stands in
+     for; what may be accepted is decided by the chain below (see invNetOk). */
+  var NET = 'bc';                   /* invoice network prefix a sample is made on */
   /* A practice address, so the rehearsal has somewhere to send USDT. */
   var DEMO_ADDR = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
   var T2_SPAN = 7200;               /* USDT escrow window a new code asks for, seconds */
@@ -187,6 +190,9 @@
     expectH: null,                  /* hashlock pinned by a code from the other side */
     codeWarn: '',                   /* what a refused code said, kept on screen */
     codeAddr: '',                   /* a USDT address a code named, offered not taken */
+    codeAddrFilled: '',             /* an address a code wrote into the field itself */
+    codeTerms: null,                /* the amounts a code put on screen: {units, sats} */
+    codeRateWarn: false,            /* whether the sentence on screen is the rate warning */
     log: [],
     qrInv: '',                      /* the payload whose QR is on screen */
     gate: null
@@ -423,6 +429,17 @@
   }
   function normHex(x) { return String(x == null ? '' : x).trim().replace(/^0x/i, '').replace(/\s+/g, '').toLowerCase(); }
   function nowSec() { return Math.floor(Date.now() / 1000) + S.sim; }
+  /* The Lightning leg follows the chain this app is set to. A Sepolia escrow
+     is play USDT, so it can sit beside a testnet invoice (`lntb`) or a real
+     one; an escrow on Arbitrum One pays real USDT and only a real mainnet
+     invoice may buy it - testnet sats are worth nothing and would take real
+     USDT for them. A phone set to a test chain that refused `lntb` would
+     refuse the only invoice its partner can actually pay there. */
+  function invNetOk(net) {
+    if (net === NET) return true;
+    return S.net !== 'mainnet' && (net === 'tb' || net === 'bcrt');
+  }
+
   function curHeight() { return S.h0 + Math.floor(S.sim / BLOCK_SECS); }
   function fmt(n) { return Number(n).toLocaleString('en-US'); }
   function usdtOf() { return S.units != null ? S.units / 1e6 : (S.price ? S.sats / 1e8 * S.price : 0); }
@@ -1258,6 +1275,9 @@
   function walletSend(to, data) {
     var p = provider();
     if (!p) return Promise.reject(new Error('no wallet in this page'));
+    /* Real USDT is never locked against a guessed price: without a live quote
+       the wallet is not asked to sign anything. */
+    if (quoteMissing()) return Promise.reject(rateError());
     /* A wallet call this page made is not made a second time while the first
        is still on its way: two claims of one escrow are one claim, and a
        wallet asked twice can charge twice. */
@@ -1427,6 +1447,7 @@
   }
 
   function beginLocking() {
+    if (quoteMissing()) { refuseRate(); return; }
     S.phase = 'locking';
     S.note = '';
     var p = provider();
@@ -1441,6 +1462,9 @@
     /* The approvals and the lock are one operation with a wallet: a second tap
        while the first is still being sent would ask for them all again. */
     if (S.sending) { opWait(); return; }
+    /* Last line before real USDT moves: a swap whose amount came from the
+       offline guess is not sent to a wallet at all. */
+    if (quoteMissing()) { walletFail(rateError()); return; }
     S.sending = true;
     var amount = BigInt(usdtUnits());
     /* An approval is a transaction too: the next step only exists once it is
@@ -1527,6 +1551,7 @@
         curChain().label + ', then tap again.'
       : /denied|rejected|cancel/i.test(m) ? 'Nothing was sent: the wallet was not confirmed.'
       : /insufficient|balance|allowance/i.test(m) ? 'That wallet does not hold enough USDT for this swap.'
+        : (e && e.noQuote) ? 'The live BTC price has not arrived, so nothing was locked: a swap is not priced by a guess.'
         : /already in flight/i.test(m) ? 'That call is already on its way, so nothing was sent twice.'
           : 'The wallet did not finish, so nothing has moved.';
     log('ERR', say, 'c-err');
@@ -1574,17 +1599,24 @@
     toast('Swap complete');
   }
 
+  /* One poll of a running swap: the chain's clock first, then the escrow. A
+     window is measured against the chain, and that reading is only good for 45
+     seconds; without asking again here, a swap that runs longer than a minute
+     would quietly measure its window against the phone's own clock, and a
+     phone whose clock is off would see the window close early or late. */
+  function watchOnce() {
+    if (S.phase !== 'paid') { stopWatch(); return Promise.resolve(null); }
+    return syncChainTime(true).then(function () { return refreshChain(); }).then(function (c) {
+      if (!c) return c;
+      if (c.state === 'claimed') settleByChain(c);
+      else if (c.state === 'refunded') wentBack(c);
+      return c;
+    });
+  }
   function startWatch() {
     stopWatch();
     var every = S.mode === 'practice' ? 1200 : 12000;
-    S.watch = setInterval(function () {
-      if (S.phase !== 'paid') { stopWatch(); return; }
-      refreshChain().then(function (c) {
-        if (!c) return;
-        if (c.state === 'claimed') settleByChain(c);
-        else if (c.state === 'refunded') wentBack(c);
-      });
-    }, every);
+    S.watch = setInterval(watchOnce, every);
     simClaim();
   }
   function stopWatch() {
@@ -2483,6 +2515,64 @@
     return { gap: Math.abs(codePrice - S.price) / S.price, codePrice: codePrice };
   }
 
+  /* The sentence a code's own price earns when it sits far from the live quote,
+     or '' when it does not. One function, so the check reads the same whether
+     the code arrives before the quote or the quote arrives after the code. */
+  function rateWarnText(units, sats) {
+    var rg = rateGap(units, sats);
+    if (!rg || !(rg.gap > RATE_WARN)) return '';
+    return 'Careful: this code prices 1 BTC at about ' + fmt(Math.round(rg.codePrice)) +
+      ' USDT, which is ' + Math.round(rg.gap * 100) + '% away from the market rate. Check the terms with your partner before paying.';
+  }
+
+  /* A code is read the moment it arrives, and the quote arrives when it
+     arrives. On a cold start the code in the address bar can be applied while
+     the quote is still loading, and the check above then had nothing to compare
+     against - so the terms a code put on screen are kept here, and the same
+     check runs again the instant a live quote lands. A code loaded before the
+     rate is still warned about before anything is paid. */
+  function recheckCodeRate() {
+    if (!S.codeTerms) return;
+    var was = S.codeRateWarn;
+    var txt = rateWarnText(S.codeTerms.units, S.codeTerms.sats);
+    S.codeRateWarn = !!txt;
+    if (txt) {
+      if (was) return;                 /* the same warning is already on screen */
+      S.codeWarn = txt;
+      renderCodeWarn();
+      var rg = rateGap(S.codeTerms.units, S.codeTerms.sats);
+      log('SECURITY', 'a code loaded before the quote prices 1 BTC at ' + fmt(Math.round(rg.codePrice)) +
+        ' USDT; the live quote says ' + fmt(Math.round(S.price)) + ' (' + Math.round(rg.gap * 100) + '% off)', 'c-err');
+      return;
+    }
+    /* Only a warning this check wrote is withdrawn: a refusal the code earned
+       belongs to whatever refused it, not to the rate. */
+    if (was) { S.codeWarn = ''; renderCodeWarn(); }
+  }
+
+  /* A wallet swap locks real USDT, and the amount it locks is the one the live
+     quote prices. When that quote did not arrive, the figure comes from
+     FALLBACK_PRICE - this page's own guess at the market - and a lock built on
+     a guess hands the other side an amount nobody quoted. Practice rehearses on
+     a stand-in escrow and keeps running; a wallet swap waits for a quote. */
+  function quoteMissing() {
+    return S.mode === 'wallet' && S.pstate !== 'live';
+  }
+  function rateError() {
+    var e = new Error('no live price, so nothing is locked at a guess');
+    e.noQuote = true;
+    return e;
+  }
+  /* A tap with no live quote says so and asks for the quote again: the page
+     reads the price once at boot, and a phone that was offline then must not
+     be left with a guess for the rest of the session. */
+  function refuseRate() {
+    log('BLOCK', 'a wallet swap was refused while the price was the offline guess', 'c-err');
+    toast('The live BTC price has not arrived, so a swap would lock USDT at a guessed amount. Nothing was sent: reading the price again now.');
+    render();
+    loadRate();
+  }
+
   /* A code states what the sender of the code does; the phone that reads it
      takes the other side, so the same code reads correctly from both ends. A
      code is only made when it carries real terms: a rate that has not loaded
@@ -2678,7 +2768,11 @@
     }
     var exp = invoiceExpiry(d);
     if (exp != null && effNow() > exp) return bad('expired', 'That invoice has expired. Ask for a new one.');
-    if (d.kind === 'bolt11' && d.network !== NET) return bad('network', 'That invoice is for another bitcoin network.');
+    if (d.kind === 'bolt11' && !invNetOk(d.network)) {
+      return bad('network', S.net === 'mainnet'
+        ? 'That invoice is for Bitcoin\u2019s test network, and this swap pays real USDT on Arbitrum One. Ask your partner for a mainnet invoice.'
+        : 'That invoice is for another bitcoin network.');
+    }
     var w = windowProblem(d, S.t2);
     if (w) return bad('window', w);
     return good('Invoice ready.', { dec: d, H: H, basis: 'invoice' });
@@ -2877,6 +2971,15 @@
       if (!(Number(usdtUnits()) > 0)) {
         return Promise.resolve({ ok: false, code: 'rate', field: 'go',
           msg: 'The rate has not loaded yet, so the USDT amount would be zero. Tap Approve again in a moment.',
+          fields: { invoice: inv, address: ad } });
+      }
+      /* A wallet swap moves real USDT, and the amount is the one the live quote
+         prices. Without that quote the figure is this page's own guess, and a
+         lock built on a guess hands the other side an amount nobody quoted.
+         Practice rehearses on a stand-in and keeps running. */
+      if (quoteMissing()) {
+        return Promise.resolve({ ok: false, code: 'rate', field: 'go',
+          msg: 'The live BTC price has not arrived, so this swap would lock USDT at a guessed amount. Tap Approve again once the rate line is live.',
           fields: { invoice: inv, address: ad } });
       }
       /* The escrow window has to leave room to pay and claim, and the invoice
@@ -3300,6 +3403,9 @@
     if (S.phase === 'settled' || S.phase === 'refunded') { reset(); return; }
     if (S.phase === 'paying') { paid(); return; }
     if (S.phase === 'locking' || S.phase === 'paid') { checkChain(); return; }
+    /* No live quote, no wallet swap: the tap is answered with a sentence and
+       the price is read again, rather than opening a swap priced by a guess. */
+    if (quoteMissing()) { refuseRate(); return; }
     /* The gate takes a chain reading and then opens the swap: a second tap in
        that gap would read the terms again and start a second swap on the same
        money. */
@@ -3489,6 +3595,7 @@
     S.inv = ''; S.invDec = null; S.addr = ''; S.expectH = null; S.basis = null;
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
     S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
+    S.codeTerms = null; S.codeRateWarn = false; S.codeAddrFilled = '';
     S.lockTx = ''; S.claimTx = ''; S.secret = '';
     S.busy = false;
     S.op = ''; S.sending = false;
@@ -3536,10 +3643,39 @@
      contract that only imitates the real one. */
   function refuseCode(msg, detail) {
     S.codeWarn = msg;
+    S.codeRateWarn = false;   /* the sentence on screen is this refusal, not the rate */
     log('SECURITY', detail || msg, 'c-err');
     toast(msg);
     renderCodeWarn();
     return false;
+  }
+
+  /* The terms a code put on this phone - the window it set, the hash it
+     pinned, the address it named and the amount it agreed - belong to the one
+     swap that code described. A tap that changes what the swap is (the
+     direction, the amount) clears them, so the next swap is not locked under a
+     window a stranger chose for another swap, against a hash this side is not
+     paying, or from an address that belonged to the other side's role. Asking
+     for a new code is what puts those terms back. */
+  function clearCodeTerms(why) {
+    var had = !!(S.expectH || S.locker || S.codeTerms || S.codeAddr || S.codeWarn || S.t2);
+    S.t1 = null; S.t2 = null;
+    S.expectH = null;
+    S.locker = '';
+    S.funder = '';
+    S.units = null;
+    S.codeTerms = null; S.codeRateWarn = false;
+    S.codeWarn = ''; S.codeAddr = '';
+    /* An address a code wrote into the field is the partner's, said in the
+       code's own voice. One the person typed is theirs and stays. */
+    var el = addrEl();
+    if (S.codeAddrFilled && el && String(el.value).trim().toLowerCase() === String(S.codeAddrFilled).toLowerCase()) {
+      el.value = '';
+      el.dataset.state = '';
+    }
+    S.codeAddrFilled = '';
+    renderCodeWarn();
+    if (had) log('RESET', why);
   }
 
   function renderCodeWarn() {
@@ -3619,11 +3755,17 @@
        name - that one is filled in. On the receiving side it is only offered,
        for a tap that says it is this phone's address. */
     S.codeAddr = '';
+    S.codeAddrFilled = '';
     if (c.address) {
-      if (S.direction === 'u2b') addrEl().value = c.address;
+      if (S.direction === 'u2b') { addrEl().value = c.address; S.codeAddrFilled = c.address; }
       else S.codeAddr = c.address;
     }
     S.codeWarn = '';
+    S.codeRateWarn = false;
+    /* The amounts this code states stay here after the screen is painted: the
+       quote can land later, and the check below has to be made again when it
+       does (see recheckCodeRate). */
+    S.codeTerms = { units: c.units, sats: c.sats };
     renderCodeWarn();
     $('codeRow').hidden = true;
     presetsOn();
@@ -3634,12 +3776,14 @@
     /* The price the code carries is checked against the live quote before
        anything is rendered as accepted. The swap still runs - a partner is
        allowed to quote their own spread - but the screen says how far the
-       terms sit from the market, while it is still only terms. */
-    var rg = rateGap(c.units, c.sats);
-    if (rg && rg.gap > RATE_WARN) {
-      S.codeWarn = 'Careful: this code prices 1 BTC at about ' + fmt(Math.round(rg.codePrice)) +
-        ' USDT, which is ' + Math.round(rg.gap * 100) + '% away from the market rate. Check the terms with your partner before paying.';
+       terms sit from the market, while it is still only terms. A quote that
+       has not landed yet is checked again the moment it does. */
+    var warn = rateWarnText(c.units, c.sats);
+    if (warn) {
+      S.codeWarn = warn;
+      S.codeRateWarn = true;
       renderCodeWarn();
+      var rg = rateGap(c.units, c.sats);
       log('SECURITY', 'a code pricing 1 BTC at ' + fmt(Math.round(rg.codePrice)) + ' USDT was loaded; the live quote says ' +
         fmt(Math.round(S.price)) + ' (' + Math.round(rg.gap * 100) + '% off)', 'c-err');
     }
@@ -3849,6 +3993,7 @@
     walletSend: function () {
       var p = provider();
       if (!p) { toast('No wallet in this page: copy the call instead'); return; }
+      if (quoteMissing()) { refuseRate(); return; }
       runLock(p);
     },
     copyCall: function () {
@@ -3887,6 +4032,13 @@
       /* The other direction is funded by the other side: an address learned
          for one side is not this side's. */
       S.funder = '';
+      /* And the terms a code wrote belong to the swap it described, not to the
+         one this flip starts: the window it set, the hash it pinned, the
+         funding address it named and the amount it agreed are all its own.
+         Carried over, the next swap would be locked under a window someone
+         else chose for the other direction, against a hash this side is not
+         paying. The sats stay - they are the amount this side picked. */
+      clearCodeTerms('the direction flip left the last code\u2019s window, hash, funder and amount behind');
       render();
       refreshGate();
     },
@@ -3894,6 +4046,9 @@
       if (S.phase === 'settled') return;
       S.sats = Number(b.dataset.v);
       S.units = null;
+      /* A new amount is a new swap: the window, the hash and the funding
+         address a code set were agreed for the old amount. */
+      clearCodeTerms('a new amount left the last code\u2019s window, hash and funder behind');
       presetsOn();
       render();
       refreshGate();
@@ -4015,7 +4170,15 @@
         S.price = usd; S.pstate = 'live';
       })
       .catch(function () { S.price = FALLBACK_PRICE; S.pstate = 'offline'; })
-      .then(function () { clearTimeout(timer); render(); refreshGate(); });
+      .then(function () {
+        clearTimeout(timer);
+        /* A code can arrive before this quote does - the deep link in the
+           address bar is read at boot, while the price is still loading - and
+           the check it earns against the market is made again here, before
+           the screen is painted. */
+        recheckCodeRate();
+        render(); refreshGate();
+      });
   }
 
   /* ---------------------------------------------------------------- boot -- */
@@ -4118,6 +4281,8 @@
     escrowUnits: escrowUnits, usdtUnits: usdtUnits, usdtTxt: usdtTxt, tokenNow: tokenNow,
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
     rateGap: rateGap, RATE_WARN: RATE_WARN, ZERO_ID: ZERO_ID,
+    rateWarnText: rateWarnText, quoteMissing: quoteMissing, invNetOk: invNetOk,
+    watchOnce: watchOnce, startWatch: startWatch,
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,
     approve: approve, paid: paid, reset: reset, backToForm: backToForm, presetsOn: presetsOn,
     checkChain: checkChain, settleByChain: settleByChain, loadTx: loadTx,
