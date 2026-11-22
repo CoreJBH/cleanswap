@@ -82,7 +82,8 @@
   /* keccak256(signature) selectors — verified against solc 0.8.26 --hashes */
   var SEL = {
     lock: '91644b2b', claim: '84cc9dfb', refund: '7249fbb6',
-    swaps: 'eb84e7f2', balance: '70a08231', approve: '095ea7b3', allowance: 'dd62ed3e'
+    swaps: 'eb84e7f2', balance: '70a08231', approve: '095ea7b3', allowance: 'dd62ed3e',
+    decimals: '313ce567'
   };
   /* An id nobody ever locked. The escrow answers it with the whole record,
      zeroed - eight words, not an error - which is exactly how the probe
@@ -193,6 +194,8 @@
     codeAddrFilled: '',             /* an address a code wrote into the field itself */
     codeTerms: null,                /* the amounts a code put on screen: {units, sats} */
     codeRateWarn: false,            /* whether the sentence on screen is the rate warning */
+    tokenState: '',                 /* '' (not read) | ok | unread | wrong: what the chain said
+                                       about the token set in Setup */
     log: [],
     qrInv: '',                      /* the payload whose QR is on screen */
     gate: null
@@ -647,6 +650,42 @@
   function tokenNow() { return S.mode === 'practice' ? EVM.token : (S.token || curChain().token); }
   function escrowNow() { return S.mode === 'practice' ? EVM.htlc : S.contract; }
 
+  /* A token is only a token when the chain says two things about it: that code
+     lives at that address, and that the code counts in the decimals this page
+     counts in. Every amount here is written in millionths, so a token that
+     counts in another unit would turn the amount the person agreed into a
+     different amount of money - a seven-decimal token would move a tenth of
+     what the screen said. The escrow itself refuses a token with no code; this
+     is the same question asked where the token is typed, before any swap is
+     priced against it. */
+  function decimalsOf(res) {
+    var s = String(res == null ? '' : res);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(s)) return null;
+    var h = s.slice(2);
+    if (!/^0{56}/.test(h)) return null;        /* wider than 32 bits: not a decimals count */
+    return parseInt(h.slice(56), 16);
+  }
+  function tokenVerdict(addr, list) {
+    var opt = { list: list, quiet: true };
+    return rpcQuorum('eth_getCode', [addr, 'latest'], opt).then(function (code) {
+      if (!code || /^0x0*$/.test(String(code))) return { ok: false, why: 'nocontract' };
+      return rpcQuorum('eth_call', [{ to: addr, data: '0x' + SEL.decimals }, 'latest'], opt)
+        .then(function (res) {
+          var d = decimalsOf(res);
+          if (d == null) return { ok: false, why: 'nodecimals' };
+          if (d !== DECIMALS) return { ok: false, why: 'decimals', decimals: d };
+          return { ok: true, decimals: d };
+        }, function (e) { return { ok: false, why: 'unread', disagree: !!(e && e.disagree) }; });
+    }, function (e) { return { ok: false, why: 'unread', disagree: !!(e && e.disagree) }; });
+  }
+  function tokenWhy(v) {
+    if (v.why === 'nocontract') return 'There is no token contract at that address on ' + curChain().label + '.';
+    if (v.why === 'nodecimals') return 'That address answers, but it does not say how many decimals its token has, so it is not the token this swap counts in.';
+    if (v.why === 'decimals') return 'That token counts in ' + v.decimals + ' decimals, and this swap moves a token that counts in ' + DECIMALS + '.';
+    if (v.disagree) return 'The endpoints do not agree about that token, so it was not accepted.';
+    return 'The chain did not answer, so the token could not be read.';
+  }
+
   /* The setup is the one thing worth remembering between launches: a contract
      address typed once is a contract address forever - on the chain it was
      typed for. Two networks mean two escrows, two tokens and two endpoint
@@ -733,8 +772,13 @@
      rate-limiting earns the next one, never a decision that the escrow is
      empty and never a swap called done. An answer from the chain (a revert)
      stops the walk: asking a second node the same question cannot change it. */
-  function rpc(method, params) {
-    var list = endpoints(), i = 0, last = null;
+  function rpc(method, params) { return rpcWalk(endpoints(), method, params); }
+  /* The same walk over a list that was just typed rather than the one already in
+     effect: Setup has to read the chain it is about to save, and the endpoints it
+     is about to save with it. */
+  function rpcWalk(list, method, params) {
+    list = list && list.length ? list : endpoints();
+    var i = 0, last = null;
     function step() {
       if (i >= list.length) return Promise.reject(last || new Error('no endpoint'));
       var url = list[i++];
@@ -832,14 +876,16 @@
      cannot then show a lock that is not there: it disagrees with the other, and
      the page says so instead of trusting either. A single endpoint is its own
      answer — that is what a private node is for. */
-  function rpcQuorum(method, params) {
-    var list = endpoints();
+  function rpcQuorum(method, params, opt) {
+    opt = opt || {};
+    var list = opt.list && opt.list.length ? opt.list : endpoints();
     if (list.length < 2) {
       /* One endpoint is its own answer - that is what a private node is for -
          but the reading was not cross-checked, and the screen says so instead
-         of letting a single node's word pass for a verified one. */
-      if (S.mode !== 'practice') { S.quorum = 'single'; renderChain(); }
-      return rpc(method, params);
+         of letting a single node's word pass for a verified one. A quiet read
+         (Setup asking about a token it has not saved yet) leaves the line alone. */
+      if (!opt.quiet && S.mode !== 'practice') { S.quorum = 'single'; renderChain(); }
+      return rpcWalk(list, method, params);
     }
     return Promise.all(list.map(function (url) {
       return rpcOne(url, method, params).then(
@@ -852,8 +898,8 @@
         seen[r.key] = (seen[r.key] || 0) + 1;
         if (!best || seen[r.key] > seen[best.key]) best = r;
       });
-      if (best && seen[best.key] >= 2) { S.quorum = 'ok'; return best.v; }
-      S.quorum = (best ? 'disagree' : 'down');
+      if (best && seen[best.key] >= 2) { if (!opt.quiet) S.quorum = 'ok'; return best.v; }
+      if (!opt.quiet) S.quorum = (best ? 'disagree' : 'down');
       var e = new Error('the endpoints do not agree');
       e.disagree = true;
       throw e;
@@ -1226,8 +1272,22 @@
       } else {
         S.rpcState = 'ok';
       }
-      renderChain();
-      return S.rpcState;
+      /* The token is asked about on the same pass: a setup stored before this
+         page read decimals is still on a phone, and a token that turned out to
+         count in another unit has to be named before an amount is built from
+         it. A chain that does not answer marks the token unread, not wrong. */
+      var tokenRead = Promise.resolve();
+      if (isAddr(tokenNow())) {
+        tokenRead = tokenVerdict(tokenNow()).then(function (r) {
+          S.tokenState = r.ok ? 'ok' : (r.why === 'unread' ? 'unread' : 'wrong');
+          if (S.tokenState === 'wrong') log('SETUP', tokenWhy(r), 'c-err');
+        }, function () { S.tokenState = 'unread'; });
+      }
+      return tokenRead.then(function () {
+        paintSetup();
+        renderChain();
+        return S.rpcState;
+      });
     }, function (e) {
       S.busy = false;
       S.rpcState = 'bad';
@@ -1582,11 +1642,23 @@
     refreshGate();
   }
 
+  /* The payment secret is the one value that opens the bitcoin leg. It lives
+     in this page only while the swap it belongs to is running: a swap that
+     settled, a refund, Back, or a reset leaves neither the state nor the field
+     holding it, so the next swap cannot be claimed with the last one's. */
+  function clearSecret() {
+    S.secret = '';
+    var s = $('secretIn'); if (s) { s.value = ''; }
+  }
+
   /* Settled means the escrow said so. Nothing else reaches this function. */
   function settleByChain(c) {
     if (!c || c.state !== 'claimed') { blockChain(c); return; }
     S.phase = 'settled';
     S.claimTx = '';
+    /* The swap this secret opened is over: neither the page nor the field
+       keeps it for the next one. */
+    clearSecret();
     swapIdNow().then(function (id) { S.id = id; }, function () { /* terms gone */ });
     log('CLAIM', 'the escrow paid out ' + usdtTxt() + ' USDT');
     log('SETTLE', 'both legs closed on the same secret, verified on chain');
@@ -2965,6 +3037,16 @@
           fields: { invoice: inv, address: ad }
         });
       }
+      /* The token was read and it is not one this page can count in: a token
+         that does not count in six decimals would move an amount other than
+         the one the screen says, so nothing is approved against it. */
+      if (S.mode === 'wallet' && S.tokenState === 'wrong') {
+        return Promise.resolve({
+          ok: false, code: 'setup', field: 'go',
+          msg: 'The token set in Setup is not a 6-decimal token, so this swap cannot count with it. Set the right token in Setup.',
+          fields: { invoice: inv, address: ad }
+        });
+      }
       /* Zero is not an amount. Before the quote lands there is no USDT figure
          at all, and a tap in that window would lock a swap with nothing in
          it - the escrow would take it and the bitcoin would buy 0 USDT. */
@@ -3282,6 +3364,14 @@
     var c = curChain();
     var eps = endpoints().length;
     var cross = eps > 1 ? ' The ' + eps + ' endpoints are cross-checked: the escrow is only believed when two agree.' : '';
+    /* What the chain said about the token, in the same panel the token is typed
+       in: unread is a sentence, and a token that counts in other decimals is
+       never stored, so this line only appears for a setup kept from before. */
+    var tokenSay = S.tokenState === 'unread'
+      ? ' The token at that address was not read: the chain did not answer.'
+      : (S.tokenState === 'wrong'
+        ? ' The token set here is not a 6-decimal token, so this swap cannot count with it. Set the right one and Save.'
+        : '');
     $('setupHint').textContent = (!isAddr(S.contract)
       ? 'Deploy the escrow once on ' + c.label + ': copy the bytecode, open Remix, deploy, then paste the address here. Everything else stays on this phone.'
       : (S.rpcState === 'ok' ? 'The chain answers and the escrow reads like the swap contract: block ' + fmt(S.block || 0) + '.'
@@ -3289,7 +3379,7 @@
           : (S.rpcState === 'nocon' ? 'Nothing answers at that address on ' + c.label + '.'
             : (S.rpcState === 'nohtlc' ? 'That address answers, but it is not the swap contract. Check the address in Setup.'
               : (S.rpcState === 'bad' ? 'The chain did not answer. Check the endpoint, then tap Check.'
-                : 'Tap Check to read the chain.')))))) + cross;
+                : 'Tap Check to read the chain.')))))) + tokenSay + cross;
   }
 
   function presetsOn() {
@@ -3596,10 +3686,10 @@
     S.qrInv = ''; S.chain = null; S.simRec = null; S.txPending = null;
     S.locker = ''; S.funder = ''; S.codeWarn = ''; S.codeAddr = '';
     S.codeTerms = null; S.codeRateWarn = false; S.codeAddrFilled = '';
-    S.lockTx = ''; S.claimTx = ''; S.secret = '';
+    S.lockTx = ''; S.claimTx = '';
+    clearSecret();
     S.busy = false;
     S.op = ''; S.sending = false;
-    var s = $('secretIn'); if (s) { s.value = ''; }
     var t = $('txIn'); if (t) { t.value = ''; }
     var row = $('secretRow'); if (row) { row.hidden = true; row.dataset.open = '0'; }
     var a = invIn(); if (a) { a.value = ''; a.dataset.state = ''; }
@@ -3629,6 +3719,9 @@
     S.expectH = null;
     S.funder = '';
     S.lockTx = '';
+    /* A new swap starts without the last one's secret, on the screen and in
+       this page, whatever state the last one ended in. */
+    clearSecret();
     var box = $('qrBox'); if (box) box.innerHTML = '';
     log('BACK', 'a new swap starts without the last one\u2019s window or transaction');
     render();
@@ -3913,6 +4006,7 @@
     S.net = want;
     applySetup();
     S.rpcState = 'idle';
+    S.tokenState = '';
     S.block = null;
     S.blockTs = null; S.blockTsAt = 0; S.blockTsFail = 0;
     S.quorum = 'idle';
@@ -3926,7 +4020,9 @@
     }
   }
 
-  function readSetup() {
+  /* What was typed, checked for shape only: nothing is stored here, so a
+     token that the chain then refuses leaves the setup as it was. */
+  function parseSetup() {
     var c = String($('contractIn').value || '').trim();
     var t = String($('tokenIn').value || '').trim();
     var r = String($('rpcIn').value || '').trim();
@@ -3934,18 +4030,22 @@
       toast(/^0x[0-9a-fA-F]{40}$/.test(c)
         ? 'That contract address has a mistyped character: its capitals do not spell it the way an address spells itself'
         : 'That contract address is not a 0x one');
-      return false;
+      return null;
     }
     if (t && !isAddr(t)) {
       toast(/^0x[0-9a-fA-F]{40}$/.test(t)
         ? 'That token address has a mistyped character: its capitals do not spell it the way an address spells itself'
         : 'That token address is not a 0x one');
-      return false;
+      return null;
     }
-    if (r && !endpointsOk(r)) { toast('Every endpoint has to be an https one'); return false; }
-    S.contract = c.toLowerCase();
-    S.token = t.toLowerCase();
-    S.rpc = r;
+    if (r && !endpointsOk(r)) { toast('Every endpoint has to be an https one'); return null; }
+    return { contract: c.toLowerCase(), token: t.toLowerCase(), rpc: r };
+  }
+
+  function commitSetup(v) {
+    S.contract = v.contract;
+    S.token = v.token;
+    S.rpc = v.rpc;
     S.rpcState = 'idle';
     S.quorum = 'idle';
     S.chain = null;
@@ -3953,6 +4053,73 @@
     paintSetup();
     render();
     refreshGate();
+  }
+
+  /* Save and Check go through here: the shape is read first, then the token is
+     asked about on the chain the setup is about to name. A token that is not a
+     contract, or that counts in other decimals, is refused before it is stored
+     and before any amount is priced against it. A chain that does not answer is
+     not a verdict about the token: the setup is kept, marked unread, and the
+     panel says so - nothing is refused on silence alone. */
+  function applySetupFromForm(done) {
+    var v = parseSetup();
+    if (!v) return;
+    function after() { if (done) done(); }
+    if (!v.token) {
+      S.tokenState = 'ok';        /* the chain's own token is the one this page counts in */
+      commitSetup(v);
+      after();
+      return;
+    }
+    var list = endpointList(v.rpc);
+    if (!list.length) list = curChain().rpc.slice();
+    tokenVerdict(v.token, list).then(function (r) {
+      if (r.ok) {
+        S.tokenState = 'ok';
+        commitSetup(v);
+        log('SETUP', 'the token at ' + short(v.token, 6) + ' is a contract and counts in ' + r.decimals + ' decimals');
+        paintSetup();
+        after();
+        return;
+      }
+      if (r.why === 'unread') {
+        commitSetup(v);
+        S.tokenState = 'unread';
+        log('SETUP', 'the token at ' + short(v.token, 6) + ' was kept unread: the chain did not answer', 'c-err');
+        paintSetup();
+        toast('The chain did not answer, so the token was kept unread. Check again when it answers.');
+        after();
+        return;
+      }
+      /* A definite answer against the token: the token is not stored, and the
+         escrow and endpoints typed with it are - fixing the token then costs
+         one field, not the whole panel again. The refused address stays in
+         the field, and the sentence says which answer it was. */
+      S.contract = v.contract;
+      S.rpc = v.rpc;
+      S.rpcState = 'idle';
+      S.quorum = 'idle';
+      S.chain = null;
+      S.tokenState = 'wrong';
+      saveSetup();
+      paintSetup();
+      var el = $('tokenIn'); if (el) el.value = v.token;
+      var msg = tokenWhy(r);
+      log('SETUP', msg, 'c-err');
+      toast(msg);
+    }, function () {
+      commitSetup(v);
+      S.tokenState = 'unread';
+      paintSetup();
+      toast('The chain did not answer, so the token was kept unread. Check again when it answers.');
+      after();
+    });
+  }
+
+  function readSetup() {
+    var v = parseSetup();
+    if (!v) return false;
+    commitSetup(v);
     return true;
   }
 
@@ -3976,16 +4143,21 @@
       openSetup();
     },
     net: function (b) { setNet(b.dataset.v); },
-    saveSetup: function () { if (readSetup()) chainProbe().then(function () { if (S.H) refreshChain(); }); },
+    saveSetup: function () {
+      applySetupFromForm(function () { chainProbe().then(function () { if (S.H) refreshChain(); }); });
+    },
     checkSetup: function () {
-      if (!readSetup()) return;
-      chainProbe().then(function () {
-        if (S.rpcState === 'ok') toast('The chain answers');
-        else if (S.rpcState === 'unclear') toast('The endpoints disagree about that address');
-        else if (S.rpcState === 'nocon') toast('No contract at that address');
-        else if (S.rpcState === 'nohtlc') toast('That address is not the swap contract');
-        else toast('The chain did not answer');
-        paintSetup();
+      applySetupFromForm(function () {
+        chainProbe().then(function () {
+          if (S.rpcState === 'ok') toast(S.tokenState === 'unread'
+            ? 'The chain answers, but the token was not read'
+            : 'The chain answers');
+          else if (S.rpcState === 'unclear') toast('The endpoints disagree about that address');
+          else if (S.rpcState === 'nocon') toast('No contract at that address');
+          else if (S.rpcState === 'nohtlc') toast('That address is not the swap contract');
+          else toast('The chain did not answer');
+          paintSetup();
+        });
       });
     },
     copyBytecode: function () { copy(BYTECODE, 'Bytecode copied'); },
@@ -4236,7 +4408,14 @@
      ships in the same file anyone can download. */
   function guardedState() {
     return new Proxy(S, {
-      get: function (o, k) { return k === 'secret' ? undefined : o[k]; },
+      /* `secretHeld` is a boolean about the state, never the state itself: the
+         suites can see that the page let go of a finished swap's secret
+         without the window ever holding the bytes. */
+      get: function (o, k) {
+        if (k === 'secret') return undefined;
+        if (k === 'secretHeld') return !!o.secret;
+        return o[k];
+      },
       has: function (o, k) { return k !== 'secret' && k in o; },
       ownKeys: function (o) {
         return Reflect.ownKeys(o).filter(function (k) { return k !== 'secret'; });

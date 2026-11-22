@@ -217,6 +217,8 @@ const CHAIN = {
   receipts: {},                       /* tx hash -> {status, blockNumber} */
   txs: {},                            /* tx hash -> transaction (from, to, input) */
   calls: [],                          /* every method the page asked for */
+  tokenDecimals: 6,                   /* what the token's decimals() answers */
+  blankCode: '',                      /* an address with no code (an ordinary account) */
   down: false,                        /* flip to make the endpoint refuse */
   headSkew: 0,                        /* how many blocks the second endpoint is ahead */
   nohtlc: false,                      /* flip to make the address answer like some other contract */
@@ -242,9 +244,12 @@ function chainJson(j) {
       timestamp: '0x' + CHAIN.blockTs.toString(16),
       hash: '0x' + '11'.repeat(32)
     };
-    case 'eth_getCode': return '0x6080604052348015600e575f80fd5b50';
+    case 'eth_getCode':
+      return CHAIN.blankCode && String(p[0] || '').toLowerCase() === CHAIN.blankCode.toLowerCase()
+        ? '0x' : '0x6080604052348015600e575f80fd5b50';
     case 'eth_call': {
       const data = String((p[0] && p[0].data) || '');
+      if (data.toLowerCase().startsWith('0x313ce567')) return '0x' + hexWord(CHAIN.tokenDecimals);  /* decimals() */
       if (data.toLowerCase().startsWith('0xeb84e7f2')) {              /* swaps(bytes32) */
         if (CHAIN.nohtlc) return '0x';                                /* a contract that is not the escrow */
         const id = ('0x' + data.slice(10, 74)).toLowerCase();
@@ -338,7 +343,13 @@ const lieServer = http.createServer((req, res) => {
       number: '0x' + CHAIN.block.toString(16), timestamp: '0x' + CHAIN.blockTs.toString(16)
     };
     else if (j.method === 'eth_getCode') result = '0x6080604052348015600e575f80fd5b50';
-    else if (j.method === 'eth_call') result = LIE.escrowLie === false ? chainJson(j) : recordHex(LIE.record);
+    else if (j.method === 'eth_call') {
+      /* The lie is about the escrow, not about arithmetic: swaps(id) is where
+         this node disagrees, and every other call is answered as the first
+         node would answer it. */
+      const data = String((j.params && j.params[0] && j.params[0].data) || '');
+      result = (LIE.escrowLie && data.toLowerCase().startsWith('0xeb84e7f2')) ? recordHex(LIE.record) : chainJson(j);
+    }
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json' }, cors));
     res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: result }));
   });
@@ -3767,6 +3778,140 @@ const view = (pg) => pg.evaluate(() => {
   check('network: the refusal is plain English', !JARGON.test(nwMain.tb.msg), nwMain.tb.msg);
   check('network: no page errors through the network check', NW.errs.length === 0, NW.errs.join(' | '));
   await NW.c.close();
+
+  /* ------------- 13. v0.6.9: a token the chain vouches for, and a secret the
+     next swap does not inherit ---------- */
+  /* A token address is not a token. The chain is asked two questions - is
+     there code there, and does it count in the six decimals every amount on
+     this page is written in - and a wrong answer is refused before the setup
+     is stored, so no swap is ever priced against it. */
+  const TK = await freshPage(390, 844);
+  const tk = TK.p;
+  await tk.click('#modeWallet');
+  await tk.waitForTimeout(250);
+  await tk.click('#chainRow');
+  await tk.waitForTimeout(250);
+  await tk.fill('#contractIn', CONTRACT);
+  await tk.fill('#rpcIn', RPC);
+  const EIGHT = '0x' + '1e'.repeat(20);
+  const tokenView = () => tk.evaluate(() => ({
+    token: window.CLEANSWAP.state.token,
+    state: window.CLEANSWAP.state.tokenState,
+    toast: document.getElementById('toast').textContent,
+    hint: document.getElementById('setupHint').textContent,
+    field: document.getElementById('tokenIn').value,
+    saved: String(localStorage.getItem('cleanswap.setup.v1') || '')
+  }));
+
+  CHAIN.tokenDecimals = 8;
+  await tk.fill('#tokenIn', EIGHT);
+  await tk.click('[data-act="saveSetup"]');
+  await tk.waitForTimeout(800);
+  let tv = await tokenView();
+  check('token: a token that counts in 8 decimals is refused, and the count is named',
+    tv.state === 'wrong' && /8 decimals/.test(tv.toast), tv.state + ' / ' + tv.toast);
+  check('token: and nothing about it is stored',
+    tv.token === '' && !tv.saved.toLowerCase().includes(EIGHT), tv.token + ' / ' + tv.saved.slice(0, 80));
+  check('token: the page asked the token for its decimals',
+    CHAIN.calls.some(c => c.method === 'eth_call' && String((c.params[0] || {}).data || '').toLowerCase().startsWith('0x313ce567')));
+
+  CHAIN.tokenDecimals = 6;
+  CHAIN.blankCode = EIGHT;
+  await tk.click('[data-act="saveSetup"]');
+  await tk.waitForTimeout(800);
+  tv = await tokenView();
+  check('token: an address with no code at all is not taken as a token',
+    tv.state === 'wrong' && /no token contract/i.test(tv.toast) && tv.token === '', tv.toast);
+
+  CHAIN.blankCode = '';
+  await tk.click('[data-act="saveSetup"]');
+  await tk.waitForTimeout(900);
+  tv = await tokenView();
+  check('token: a six-decimal token is read, accepted and stored',
+    tv.state === 'ok' && tv.token === EIGHT && tv.saved.toLowerCase().includes(EIGHT),
+    tv.state + ' / ' + tv.token);
+  check('token: the setup panel does not warn about a token it read',
+    !/not read|not a 6-decimal/.test(tv.hint), tv.hint);
+
+  /* Silence is not a verdict: a chain that does not answer keeps the setup and
+     says the token was not read, instead of refusing it or passing it as read. */
+  const DOWNTOK = '0x' + '2f'.repeat(20);
+  await tk.fill('#tokenIn', DOWNTOK);
+  CHAIN.down = true;
+  await tk.click('[data-act="saveSetup"]');
+  await tk.waitForTimeout(900);
+  tv = await tokenView();
+  check('token: a chain that does not answer keeps the token but marks it unread',
+    tv.state === 'unread' && tv.token === DOWNTOK && /not read/.test(tv.hint),
+    tv.state + ' / ' + tv.hint);
+  CHAIN.down = false;
+  check('token: no page errors while the token is read', TK.errs.length === 0, TK.errs.join(' | '));
+
+  /* A setup stored before this page asked for decimals is re-read when the
+     chain is: a wallet swap does not count in a token the chain has refused. */
+  await tk.evaluate(({ contract, token, rpc }) => {
+    localStorage.setItem('cleanswap.setup.v1', JSON.stringify({
+      net: 'testnet',
+      nets: { testnet: { contract, token, rpc }, mainnet: { contract: '', token: '', rpc: '' } }
+    }));
+  }, { contract: CONTRACT, token: EIGHT, rpc: RPC });
+  CHAIN.tokenDecimals = 8;
+  await tk.reload({ waitUntil: 'load' });
+  await tk.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await tk.click('#modeWallet');
+  await tk.waitForTimeout(1200);
+  const keptTok = await tk.evaluate(() => ({ token: window.CLEANSWAP.state.token, state: window.CLEANSWAP.state.tokenState }));
+  check('token: a token stored before this page read decimals is caught when the chain is read',
+    keptTok.token === EIGHT && keptTok.state === 'wrong', keptTok.token + ' / ' + keptTok.state);
+  CHAIN.tokenDecimals = 6;
+  check('token: no page errors through the stored-setup read', TK.errs.length === 0, TK.errs.join(' | '));
+  await TK.c.close();
+
+  /* The payment secret opens the bitcoin leg. It lives in the page and the
+     claim field only while its own swap runs: a swap that settled, or Back,
+     leaves neither holding it, so the next claim cannot be made with the last
+     one's secret. */
+  const SECRET = await freshPage(390, 844);
+  const sk = SECRET.p;
+  const PRE = 'ab'.repeat(32);
+  const secretHeld = () => sk.evaluate(() => ({
+    held: window.CLEANSWAP.state.secretHeld,
+    field: document.getElementById('secretIn').value,
+    phase: window.CLEANSWAP.state.phase
+  }));
+  async function holdSecret() {
+    await sk.evaluate((pre) => {
+      const S = window.CLEANSWAP.state;
+      S.phase = 'paid';
+      S.H = '0x' + '11'.repeat(32);
+      const row = document.getElementById('secretRow');
+      row.hidden = false; row.dataset.open = '1';
+      document.getElementById('secretIn').value = pre;
+      document.querySelector('[data-act="sendClaim"]').click();
+    }, PRE);
+    await sk.waitForTimeout(350);
+  }
+  await holdSecret();
+  let sh = await secretHeld();
+  check('secret: while a swap runs the page holds the secret the field holds',
+    sh.held && sh.field === PRE, sh.held + ' / ' + sh.field.length + ' chars');
+  await sk.evaluate(() => { window.CLEANSWAP.settleByChain({ state: 'claimed' }); });
+  await sk.waitForTimeout(350);
+  sh = await secretHeld();
+  check('secret: a settled swap leaves the page holding no secret',
+    sh.held === false && sh.phase === 'settled', sh.held + ' / ' + sh.phase);
+  check('secret: and the claim field is empty for the next swap', sh.field === '', sh.field.length + ' chars');
+
+  await holdSecret();
+  sh = await secretHeld();
+  check('secret: a second swap can hold its own secret again', sh.held && sh.field === PRE, String(sh.held));
+  await sk.evaluate(() => { window.CLEANSWAP.backToForm(); });
+  await sk.waitForTimeout(350);
+  sh = await secretHeld();
+  check('secret: Back leaves neither the page nor the field holding it',
+    sh.held === false && sh.field === '' && sh.phase === 'idle', sh.held + ' / ' + sh.field.length + ' / ' + sh.phase);
+  check('secret: no page errors through the settle and Back', SECRET.errs.length === 0, SECRET.errs.join(' | '));
+  await SECRET.c.close();
 
   await browser.close();
 

@@ -50,8 +50,8 @@ android {
         applicationId = "com.jbitmstr.cleanswap"
         minSdk = 24
         targetSdk = 34
-        versionCode = 17
-        versionName = "0.6.8"
+        versionCode = 18
+        versionName = "0.6.9"
         resourceConfigurations += listOf("en", "ko")
     }
 
@@ -83,6 +83,10 @@ android {
             }
             isMinifyEnabled = true
             isShrinkResources = true
+            /* Said out loud, not left to the default: a release APK carries no
+               debug flag, so the system never lets a debugger attach to it. */
+            isDebuggable = false
+            isJniDebuggable = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

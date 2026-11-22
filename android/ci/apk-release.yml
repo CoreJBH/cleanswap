@@ -1,7 +1,9 @@
-# Build cleanswap.apk from the single-file web app.
-# GitHub cannot accept workflow files from this repository's automation, so this
-# file is tracked here: copy it to .github/workflows/build-apk.yml to enable the
-# build (push or "Run workflow").
+# Build the signed cleanswap.apk from the single-file web app.
+# The workflow GitHub runs is .github/workflows/apk.yml; this file is the copy
+# kept in the tree because a push from the app cannot write .github/workflows/.
+# Paste it over .github/workflows/apk.yml (name it apk.yml) once the four
+# signing secrets exist, and every push to main or v* tag builds a signed
+# release APK instead of a debug one.
 #
 # The APK is signed with the release key, never the debug key: a debug signature
 # cannot update an installed release, and each CI runner would make a different
