@@ -68,6 +68,8 @@
     swapCode: swapCode, parseSwapCode: parseSwapCode, parseSwapLink: parseSwapLink,
     rateGap: rateGap, RATE_WARN: RATE_WARN, ZERO_ID: ZERO_ID,
     priceVerdict: priceVerdict, priceSources: PRICE_SOURCES, rateKnown: rateKnown,
+    PRICE_TTL: PRICE_TTL, PRICE_TTL_MIN: PRICE_TTL_MIN, PRICE_TTL_MAX: PRICE_TTL_MAX,
+    priceTtl: priceTtl, priceAge: priceAge, priceStale: priceStale, refreshRate: refreshRate,
     rateWarnText: rateWarnText, quoteMissing: quoteMissing, invNetOk: invNetOk,
     watchOnce: watchOnce, startWatch: startWatch,
     render: render, refreshGate: refreshGate, validate: validate, paintGate: paintGate,

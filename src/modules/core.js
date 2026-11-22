@@ -117,7 +117,9 @@
     note: '',                       /* what the last refusal said, on the waiting screen */
     watch: 0,                       /* the polling timer while a swap runs */
     sats: 50000,
-    price: null, pstate: 'loading',
+    price: null, pstate: 'loading',   /* the quote and its verdict: live | single | disagree | offline */
+    priceAt: 0,                     /* when that quote landed, ms; its age is what PRICE_TTL judges */
+    rateWait: false,                /* a fresh read is in flight before a tap goes on */
     units: null,                    /* agreed USDT amount, micro-units */
     H: null, id: null,
     t1: null, t2: null,

@@ -1,4 +1,4 @@
-/* CleanSwap v0.6.11 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.12 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -86,6 +86,15 @@
    and is used only when they agree; the token a wallet swap counts in has to
    be one the chain has read; and the shipped page leaves one entry on the
    window (`acceptCode`) where the test build leaves the whole handle.
+
+   v0.6.12 gives the quote a shelf life, and the mode switch its line. A price
+   is a market, and a market moves: a quote is good for ninety seconds, and the
+   taps that would spend it - Approve, the lock, a code handed to the other
+   side - read both sources again first when it is older than that, so the USDT
+   amount that gets locked is the one the fresh pair prices. And a rehearsal's
+   terms are not a real swap's: switching from Practice to Wallet clears the
+   window, pinned hash, funding address and amount a Practice code put on
+   screen, before a resumed swap writes its own back.
 
    The source is one script built out of src/modules/, one file per
    responsibility (core, storage, chain, wallet, crypto, swap, gate, render,

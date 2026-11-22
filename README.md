@@ -10,9 +10,9 @@
   <img alt="dependencies 0" src="https://img.shields.io/badge/dependencies-0-0f9d6e">
   <img alt="single file build" src="https://img.shields.io/badge/build-single%20file%20HTML-0f9d6e">
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
-  <img alt="tests passing" src="https://img.shields.io/badge/tests-592%20passing-0f9d6e">
+  <img alt="tests passing" src="https://img.shields.io/badge/tests-618%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.11" src="https://img.shields.io/badge/android-0.6.11-0f9d6e">
+  <img alt="android 0.6.12" src="https://img.shields.io/badge/android-0.6.12-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -469,6 +469,30 @@ tree in modules instead of one 4,746-line file.
 
 `versionCode 20`, `versionName 0.6.11`.
 
+`v0.6.12` gives the quote a shelf life, and the mode switch its line.
+
+* **A quote is good for ninety seconds.** A rate is a market, and a market moves: the BTC/USD price
+  this page read a while ago is not the price a swap is approved at now, and the USDT amount that
+  follows from it is real money. `PRICE_TTL` is 90 s - inside the 60-120 s band a swap's price can be
+  trusted over, and the band is enforced - the moment a quote lands is kept (`priceAt`), and the taps
+  that would spend it read both sources again first when it is older than that, then carry on from
+  the fresh pair: `Approve`, the lock, and a code written by `Share code` / `QR`. The log says the
+  read was made and why (`the quote was 100 s old, so both sources were asked again before the swap
+  was approved`), the rate line shows the new price, and a fresh read that comes back split approves
+  nothing - the same refusal a disagreeing pair always earned, with no wallet call and no lock built.
+  A quote still inside its shelf life costs no extra read, and a rehearsal on the stand-in escrow is
+  never held up for one. One read is shared: a boot read and a tap in the same moment ask the two
+  sources once, so the rate on screen is never the slower of two races.
+* **Practice terms do not follow the switch to Wallet.** The window a Practice code set, the hash it
+  pinned, the funding address it named and the amount both sides agreed were agreed for the stand-in
+  escrow. Carried into Wallet they would price and lock on a chain against terms no chain ever saw,
+  so switching from Practice to Wallet in `idle` clears them with the same `clearCodeTerms()` a
+  direction flip and a new amount already use - before a swap the phone was in the middle of writes
+  its own terms back. What this side picked and typed itself stays: the sats preset, the invoice and
+  the address in their fields.
+
+`versionCode 21`, `versionName 0.6.12`.
+
 ## What it does
 
 * **The same three steps as ever.** `1 Partner's Lightning invoice` (a hold invoice that states its
@@ -745,7 +769,17 @@ an unread token once before the gate judges it; and a swap put away before a wal
 away - the record holding the terms and no secret, the page coming back in Wallet mode on the same
 swap with its fields filled, the lock it then takes written into the record, a settled swap leaving
 nothing behind, Back leaving nothing behind, and a stale record (40 days) or one for another escrow
-not acted on | **592/592 pass** |
+not acted on. Plus v0.6.12: a quote good for ninety seconds inside an enforced minute-to-two band, a
+quote inside that band read as current and one past it not, and a quote this page never read
+carrying no age to judge; a wallet swap whose quote is 100 s old reading both sources again before
+the tap approves, priced by the fresh pair (a market that moved from 95,000 to 100,000 locks
+50.000000 USDT, not 47.5), with the log saying the read was made and why, and a quote still current
+costing no extra read; a stale read that comes back split approving nothing, with no lock built and
+no wallet called; a rehearsal on the stand-in escrow not held up for an old quote; a code priced
+from a fresh quote, both sources read before it and the fresh amount written into it; and switching
+from Practice to Wallet clearing the Practice code's window, pinned hash, funding address and
+amount before a resumed swap writes its own, while the sats preset and what this side typed stay,
+and a switch with nothing to clear saying nothing | **618/618 pass** |
 | `test/contract-evm.py` (solc 0.8.26 + py-evm + eth-abi) | Real bytecode: `lock` escrows and debits, `swaps(id)` returns the 8-word record and eight zero words for an unknown id, `claim` with the right preimage pays the receiver and emits R, double claim reverts, refund before/after the timelock, `computeSwapId` = the id `lock` used (and a different id for another sender), `MIN_TIMELOCK_DELTA` at 30 minutes refusing a timelock one second under it and `MAX_TIMELOCK_DELTA` refusing an 8-day one, a fee-on-transfer token refused and a token that returns no bool accepted, a zero hashlock and a receiver that is the escrow itself refused, a token that re-enters `lock` mid-transfer refused with nothing escrowed (and the same token accepted when its call-back is harmless), an address with no code refused as a token by name (`TokenHasNoCode`) and with its own error rather than a panic, a rebasing token that shrinks the escrow's balance between the two reads refused (`BalanceShrank`) with the escrow's pre-existing balance left whole and no arithmetic panic in the revert data, a token that looks at the escrow from inside its own `transferFrom` finding the swap record still empty and the record there once the money has arrived (`lock` pulls before it writes) - and every selector the page sends equals keccak of the contract signature, the committed bytecode matches the source, and the mock endpoint's answer equals what `eth_abi` encodes for the same record | **58/58 pass** |
 | `test/qr-crosscheck.py` | Every module of every mask (0–7) across eight payloads matches `python-qrcode` | **64/64 matrices equal** |
 | `test/invoice-crosscheck.py` | Every invoice the app mints parses under an independent Python BOLT11 decoder, its signature is recovered and verified by OpenSSL (`cryptography`), all of them are signed by the one practice key, and the BOLT #11 vectors recover to the spec's key with the signed preimage equal to the hash the spec prints | **79/79 pass** |
@@ -777,7 +811,7 @@ that network's set, and nothing typed for one is read while the other is selecte
 ## Android wrapper
 
 `android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.11`, `versionCode 20`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+0.6.12`, `versionCode 21`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the

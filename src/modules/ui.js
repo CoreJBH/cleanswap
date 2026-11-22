@@ -141,6 +141,7 @@
   var ACT = {
     mode: function (b) {
       var want = b.dataset.v === 'wallet' ? 'wallet' : 'practice';
+      var was = S.mode;
       /* A real swap is not a rehearsal to switch out of. Changing the mode
          mid-swap would put the screen on the other escrow while the USDT of
          this one is still locked - the claim, the refund and the reading that
@@ -156,6 +157,14 @@
       }
       S.mode = want;
       if (S.phase !== 'idle') backToForm();
+      /* A rehearsal's terms are not a real swap's. The window a Practice code
+         set, the hash it pinned, the funding address it named and the amount
+         both sides agreed were agreed for a stand-in escrow; Wallet prices its
+         own swap and locks it on a chain. So they go when Practice does, before
+         a swap this phone was in the middle of writes its terms back. */
+      if (want !== was && was === 'practice' && S.phase === 'idle') {
+        clearCodeTerms('the switch to Wallet left the Practice terms behind');
+      }
       /* Switching to Wallet is also how a swap the page was in the middle of
          comes back when the phone did not open on it - the same record the
          boot reads, read once more here. */
@@ -265,9 +274,11 @@
        check the escrow without it. */
     /* A code states the terms of a swap, and a term of zero is not a term: an
        exchange rate that has not loaded yet cannot be written as "0 USDT" and
-       handed to the other side, so no code is made here at all. */
+       handed to the other side, so no code is made here at all. And a code that
+       prices the swap is written from a current quote: one older than its shelf
+       life is read again from both sources before the code is made. */
     copyCode: function () {
-      ensureMe().then(function () {
+      ensureMe().then(rateForCode).then(function () {
         var code;
         try { code = swapCode(); } catch (e) {
           log('BLOCK', String((e && e.message) || e), 'c-err');
@@ -282,7 +293,7 @@
     qrCode: function () {
       var box = $('qrBox');
       if (box.innerHTML) { box.innerHTML = ''; S.qrInv = ''; return; }
-      ensureMe().then(function () {
+      ensureMe().then(rateForCode).then(function () {
         var code;
         try { code = swapCode(); } catch (e) {
           log('BLOCK', String((e && e.message) || e), 'c-err');

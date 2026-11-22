@@ -237,10 +237,21 @@
     render();
     refreshGate();
     toast('The USDT is locked. Pay, then tap I paid');
+    /* What is locked does not change now, but the market line under it is read
+       from a quote, and one older than its shelf life describes a market that
+       has moved: both sources are asked again while the payment waits, without
+       holding the payment up. A rehearsal holds no real USDT, so nothing there
+       is re-read. */
+    if (S.mode === 'wallet' && priceStale()) refreshStaleRate('the payment started');
   }
 
   function beginLocking() {
     if (quoteMissing()) { refuseRate(); return; }
+    /* The lock is where the terms become money, and the market line under it is
+       a quote: one older than its shelf life is read again from both sources
+       before a wallet is handed anything, so a market that moved or split
+       since is seen first. */
+    if (S.mode === 'wallet' && priceStale()) { withFreshRate(beginLocking, 'the USDT was locked'); return; }
     S.phase = 'locking';
     S.note = '';
     /* The next thing that happens is another app: the wallet opens, and while

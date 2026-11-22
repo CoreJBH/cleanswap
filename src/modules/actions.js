@@ -41,6 +41,10 @@
     /* No live quote, no wallet swap: the tap is answered with a sentence and
        the price is read again, rather than opening a swap priced by a guess. */
     if (quoteMissing()) { refuseRate(); return; }
+    /* And a quote is not forever: the price this screen showed a minute and a
+       half ago is not the market this tap would lock at, so both sources are
+       asked again first and this same tap carries on from their answer. */
+    if (S.mode === 'wallet' && priceStale()) { withFreshRate(approve, 'the swap was approved'); return; }
     /* The gate takes a chain reading and then opens the swap: a second tap in
        that gap would read the terms again and start a second swap on the same
        money. */

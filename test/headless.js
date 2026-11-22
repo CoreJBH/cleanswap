@@ -38,7 +38,13 @@
    guess (Practice still rehearsing), a flip or a new amount clearing the last
    code's terms, every poll of a running swap reading the chain's clock again,
    and a testnet invoice taken beside a Sepolia escrow but not beside Arbitrum
-   One. The quote itself is answered by a route, so the page's own loadRate()
+   One. And the ninth: a quote good for ninety seconds inside an enforced
+   minute-to-two band, a stale one read again from both sources before the tap
+   that would spend it (and the fresh pair's amount locked), a stale read that
+   comes back split approving nothing, a rehearsal not held up for one, a code
+   priced from a fresh quote, and Practice terms cleared when the mode switches
+   to Wallet.
+   The quote itself is answered by a route, so the page's own loadRate()
    lands live; tests that need the guess set the state themselves.
    Writes shots/v43-*, shots/v68-*.
 */
@@ -519,18 +525,29 @@ const view = (pg) => pg.evaluate(() => {
      (quoteMock(p, { usd: 95000, coinbase: 120000 })). */
   async function quoteMock(p, opts) {
     const o = typeof opts === 'number' ? { usd: opts } : (opts || {});
-    const usd = o.usd == null ? QUOTE_USD : o.usd;
-    const coin = o.coinbase == null ? usd : o.coinbase;
-    if (o.failMempool) await p.route('**/api/v1/prices', route => route.abort());
-    else await p.route('**/api/v1/prices', route => route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({ time: Math.floor(Date.now() / 1000), USD: usd })
-    }));
-    if (o.failCoinbase) await p.route('**/v2/prices/BTC-USD/spot', route => route.abort());
-    else await p.route('**/v2/prices/BTC-USD/spot', route => route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({ data: { base: 'BTC', currency: 'USD', amount: String(coin) } })
-    }));
+    /* Each answer is read at the moment of the call, not at setup: a test can
+       move the market between two reads of the same page, which is exactly
+       what a quote's shelf life is judged against. `requests` counts the reads
+       when a test wants to see that both sources were asked again. */
+    const hit = (name) => { if (o.requests) o.requests.push(name); };
+    await p.route('**/api/v1/prices', route => {
+      hit('mempool');
+      if (o.failMempool) return route.abort();
+      const usd = o.usd == null ? QUOTE_USD : o.usd;
+      return route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ time: Math.floor(Date.now() / 1000), USD: usd })
+      });
+    });
+    await p.route('**/v2/prices/BTC-USD/spot', route => {
+      hit('coinbase');
+      if (o.failCoinbase) return route.abort();
+      const coin = o.coinbase == null ? (o.usd == null ? QUOTE_USD : o.usd) : o.coinbase;
+      return route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ data: { base: 'BTC', currency: 'USD', amount: String(coin) } })
+      });
+    });
   }
 
   async function freshPage(width, height) {
@@ -4528,6 +4545,248 @@ const view = (pg) => pg.evaluate(() => {
   check('price: neither source answering is the offline guess', pov.state === 'offline' && pov.price === 90000, pov.state + ' / ' + pov.price);
   check('price: and no wallet swap is priced by the guess', pov.walletMissing === true, String(pov.walletMissing));
   await PO.c.close();
+
+  /* ------------- 16b. a quote has a shelf life --------------------------- */
+  /* A rate is a market, and a market moves. The price this page read a couple
+     of minutes ago is not the price a swap is approved at now, and the USDT
+     amount that follows from it is real money. Past PRICE_TTL the tap that
+     would spend it reads both sources again first, and the amount it locks is
+     the one the fresh pair prices. */
+  const TTLP = await freshPage(390, 844);
+  const ttl = await TTLP.p.evaluate(() => {
+    const CS = window.CLEANSWAP, S = CS.state;
+    const was = S.priceAt;
+    S.priceAt = Date.now() - 30000;  const young = CS.priceStale();
+    S.priceAt = Date.now() - 85000;  const inside = CS.priceStale();
+    S.priceAt = Date.now() - 95000;  const old = CS.priceStale();
+    S.priceAt = 0;                   const unstamped = CS.priceStale();
+    S.priceAt = was;
+    return {
+      ttl: CS.PRICE_TTL, min: CS.PRICE_TTL_MIN, max: CS.PRICE_TTL_MAX, step: CS.priceTtl(),
+      young: young, inside: inside, old: old, unstamped: unstamped
+    };
+  });
+  check('rate: a quote is good for ninety seconds, inside the minute-to-two band',
+    ttl.ttl === 90000 && ttl.min === 60000 && ttl.max === 120000 && ttl.step === 90000,
+    JSON.stringify({ ttl: ttl.ttl, min: ttl.min, max: ttl.max, step: ttl.step }));
+  check('rate: a quote inside its shelf life is current, one past it is not',
+    ttl.young === false && ttl.inside === false && ttl.old === true,
+    JSON.stringify({ young: ttl.young, inside: ttl.inside, old: ttl.old }));
+  check('rate: a quote this page never read carries no age, so it is not aged',
+    ttl.unstamped === false, String(ttl.unstamped));
+  await TTLP.c.close();
+
+  /* A wallet swap with its terms filled in, on the side that sends the USDT,
+     pointed at the mock chain. The market the route answers is read at each
+     call, so a test can move it between two reads of the same page. */
+  async function rateSwapPage(opts, seed) {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await c.newPage();
+    await quoteMock(p, opts);
+    const errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+    await p.goto(URL, { waitUntil: 'load' });
+    await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+    await p.click('#modeWallet');
+    await p.click('#swapDir');                       /* sending USDT: no funding-address gate */
+    await p.click('#chainRow');
+    await p.fill('#contractIn', CONTRACT);
+    await p.fill('#tokenIn', TOKEN);
+    await p.fill('#rpcIn', RPC);
+    await p.click('[data-act="saveSetup"]');
+    await p.waitForTimeout(1200);
+    if (await p.isVisible('#setupBox')) { await p.click('#chainRow'); await p.waitForTimeout(200); }
+    const h = '0x' + crypto.createHash('sha256').update(Buffer.from((seed || 'c1').repeat(32), 'hex')).digest('hex');
+    const inv = await p.evaluate(x => window.CLEANSWAP.mintInvoice({ paymentHash: x, sats: 50000, expiry: 6 * 3600 }), h);
+    await p.fill('#invIn', inv);
+    await p.fill('#addrIn', PARTNER);
+    await p.waitForTimeout(300);
+    return { c, p, errs };
+  }
+
+  /* (a) The market moved while the page sat on its quote: the tap reads both
+      sources again, and the amount it locks is the fresh one. */
+  const TTLQ = { usd: 95000, requests: [] };
+  const TS = await rateSwapPage(TTLQ, 'c1');
+  const tsBefore = TTLQ.requests.length;                  /* the boot read: two sources */
+  TTLQ.usd = 100000;                                      /* the market moved */
+  await TS.p.evaluate(() => { window.CLEANSWAP.state.priceAt = Date.now() - 100000; });
+  await TS.p.click('#primary');
+  await TS.p.waitForFunction(() => document.body.dataset.phase !== 'idle', null, { timeout: 10000 });
+  const tsOut = await TS.p.evaluate(() => ({
+    pstate: window.CLEANSWAP.state.pstate, price: window.CLEANSWAP.state.price,
+    units: String(window.CLEANSWAP.state.units), phase: document.body.dataset.phase,
+    rate: document.getElementById('rateTxt').textContent,
+    reads: window.CLEANSWAP.state.log.filter(e => e.kind === 'RATE').map(e => e.text)
+  }));
+  check('rate: a quote past its shelf life is read again from both sources before the tap approves',
+    TTLQ.requests.length === tsBefore + 2 &&
+    TTLQ.requests.slice(tsBefore).indexOf('mempool') >= 0 && TTLQ.requests.slice(tsBefore).indexOf('coinbase') >= 0,
+    tsBefore + ' -> ' + TTLQ.requests.join(','));
+  check('rate: the swap is priced by the fresh pair, not the quote it outlived',
+    tsOut.pstate === 'live' && tsOut.price === 100000 && tsOut.units === '50000000',
+    tsOut.pstate + ' / ' + tsOut.price + ' / ' + tsOut.units);
+  check('rate: the rate line shows the fresh quote',
+    /^1 BTC ≈ 100,000 USDT$/.test(tsOut.rate), tsOut.rate);
+  check('rate: the log says the read was made, and why',
+    tsOut.reads.length === 1 && /the quote was 100 s old, so both sources were asked again before the swap was approved/.test(tsOut.reads[0]),
+    tsOut.reads.join(' | '));
+  check('rate: the tap carried on instead of asking for a second one',
+    tsOut.phase === 'locking', tsOut.phase);
+  check('rate: no page errors through the fresh read', TS.errs.length === 0, TS.errs.join(' | '));
+  await TS.c.close();
+
+  /* (b) A quote inside its shelf life costs nothing: the tap does not read the
+      market again. */
+  const FQ = { usd: 95000, requests: [] };
+  const FS = await rateSwapPage(FQ, 'c2');
+  const fqBefore = FQ.requests.length;
+  await FS.p.click('#primary');
+  await FS.p.waitForFunction(() => document.body.dataset.phase !== 'idle', null, { timeout: 10000 });
+  const fsOut = await FS.p.evaluate(() => ({
+    units: String(window.CLEANSWAP.state.units), phase: document.body.dataset.phase,
+    reads: window.CLEANSWAP.state.log.filter(e => e.kind === 'RATE').length
+  }));
+  check('rate: a quote that is still current is not read again',
+    FQ.requests.length === fqBefore && fsOut.reads === 0, fqBefore + ' -> ' + FQ.requests.length);
+  check('rate: and the swap is priced by it, in one tap',
+    fsOut.units === '47500000' && fsOut.phase === 'locking', fsOut.units + ' / ' + fsOut.phase);
+  await FS.c.close();
+
+  /* (c) The fresh read comes back split: the tap approves nothing, and no
+      wallet sees a lock. */
+  const DQT = { usd: 95000, requests: [] };
+  const DST = await rateSwapPage(DQT, 'c3');
+  DQT.coinbase = 130000;                                   /* 37% apart */
+  await DST.p.evaluate(() => { window.CLEANSWAP.state.priceAt = Date.now() - 120000; });
+  await DST.p.click('#primary');
+  await DST.p.waitForTimeout(1500);
+  const dsOut = await DST.p.evaluate(() => ({
+    phase: document.body.dataset.phase, units: window.CLEANSWAP.state.units,
+    pstate: window.CLEANSWAP.state.pstate,
+    toast: document.getElementById('toast').textContent,
+    locks: window.CLEANSWAP.state.log.filter(e => e.kind === 'LOCK' || e.kind === 'APPROVE').length
+  }));
+  check('rate: a quote that comes back split approves nothing',
+    dsOut.phase === 'idle' && dsOut.units === null && dsOut.pstate === 'disagree',
+    dsOut.phase + ' / ' + String(dsOut.units) + ' / ' + dsOut.pstate);
+  check('rate: it says which of the two happened, and that nothing was sent',
+    /Two price sources disagree/.test(dsOut.toast) && /Nothing was sent/.test(dsOut.toast), dsOut.toast);
+  check('rate: no lock was built and no wallet saw a call', dsOut.locks === 0, String(dsOut.locks));
+  check('rate: no page errors through the split read', DST.errs.length === 0, DST.errs.join(' | '));
+  await DST.c.close();
+
+  /* (d) A rehearsal is a stand-in escrow: an old quote prices a screen there,
+      it does not move money, and Practice is not held up for it. */
+  const PR2 = await freshPage(390, 844);
+  const pr2 = PR2.p;
+  await pr2.click('[data-act="sampleInv"]');
+  await pr2.waitForFunction(() => /^lnbc/.test(document.getElementById('invIn').value), null, { timeout: 5000 });
+  await pr2.click('[data-act="sampleAddr"]');
+  await pr2.evaluate(() => { window.CLEANSWAP.state.priceAt = Date.now() - 200000; });
+  const prReads = () => PR2.reqs.filter(u => /api\/v1\/prices|v2\/prices\/BTC-USD/.test(u)).length;
+  const prBefore = prReads();
+  await pr2.click('#primary');
+  await pr2.waitForFunction(() => document.body.dataset.phase !== 'idle', null, { timeout: 10000 });
+  check('rate: a rehearsal is not held up by an old quote, and reads nothing',
+    prReads() === prBefore, prBefore + ' -> ' + prReads());
+  check('rate: no page errors in the rehearsal', PR2.errs.length === 0, PR2.errs.join(' | '));
+  await PR2.c.close();
+
+  /* (e) A code states an amount the other side locks: it is written from a
+      current quote, so an old one is read again before the code is made. */
+  const CQ = { usd: 95000, requests: [] };
+  const CQW = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const cqp = await CQW.newPage();
+  const cqErrs = [];
+  cqp.on('pageerror', e => cqErrs.push(e.message));
+  cqp.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) cqErrs.push(m.text()); });
+  await quoteMock(cqp, CQ);
+  await cqp.goto(URL, { waitUntil: 'load' });
+  await cqp.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  CQ.usd = 100000;                                        /* the market moved */
+  await cqp.evaluate(() => { window.CLEANSWAP.state.priceAt = Date.now() - 120000; });
+  const cqBefore = CQ.requests.length;
+  await cqp.click('[data-act="qrCode"]');
+  await cqp.waitForFunction(() => !!window.CLEANSWAP.state.qrInv, null, { timeout: 10000 });
+  const cqOut = await cqp.evaluate(() => ({
+    code: window.CLEANSWAP.state.qrInv,
+    reads: window.CLEANSWAP.state.log.filter(e => e.kind === 'RATE').map(e => e.text)
+  }));
+  let cqBody = null;
+  try { cqBody = JSON.parse(Buffer.from(String(cqOut.code).replace(/^cleanswap:/, ''), 'base64url').toString('utf8')); }
+  catch (e) { cqBody = null; }
+  check('code: a code is priced by a fresh quote, so both sources are read again first',
+    CQ.requests.length === cqBefore + 2, cqBefore + ' -> ' + CQ.requests.length);
+  check('code: the amount in the code is the fresh quote\'s, not the stale one\'s',
+    !!cqBody && String(cqBody.u) === '50000000' && String(cqBody.s) === '50000',
+    cqBody ? JSON.stringify({ s: cqBody.s, u: cqBody.u }) : String(cqOut.code).slice(0, 40));
+  check('code: the log says the read was made before the code, and why',
+    cqOut.reads.length === 1 && /before a code priced the swap/.test(cqOut.reads[0]), cqOut.reads.join(' | '));
+  check('code: no page errors through the code\'s fresh read', cqErrs.length === 0, cqErrs.join(' | '));
+  await CQW.close();
+
+  /* ------------- 16c. Practice terms do not follow the switch to Wallet --- */
+  /* A rehearsal's window, pinned hash and agreed amount were agreed for the
+     stand-in escrow. Carried into Wallet they would price and lock on a chain
+     against terms no chain ever saw, so the switch clears them - and keeps
+     what this side typed for itself. */
+  const SWA = await freshPage(390, 844);
+  const swa = SWA.p;
+  const hSw = '0x' + crypto.createHash('sha256').update(Buffer.from('c7'.repeat(32), 'hex')).digest('hex');
+  const ownSw = await swa.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hSw);
+  await swa.fill('#invIn', ownSw);
+  await swa.fill('#addrIn', PARTNER);
+  const t2Sw = Math.floor(Date.now() / 1000) + 7200;
+  await swa.evaluate(c => window.CLEANSWAP.applyCode(c),
+    swapCodeOf({ dir: 'u2b', sats: 50000, units: 60000000, t2: t2Sw, h: hSw, locker: PARTNER }));
+  await swa.waitForTimeout(250);
+  const swIn = await swa.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return { t2: S.t2, expectH: S.expectH, units: String(S.units), codeTerms: !!S.codeTerms, dir: S.direction };
+  });
+  check('mode: a Practice code puts its window, pin and amount on the phone',
+    swIn.t2 === t2Sw && String(swIn.expectH).toLowerCase() === hSw.toLowerCase() &&
+    swIn.units === '60000000' && swIn.codeTerms === true, JSON.stringify(swIn));
+  await swa.click('#modeWallet');
+  await swa.waitForTimeout(350);
+  const swOut = await swa.evaluate(() => {
+    const S = window.CLEANSWAP.state;
+    return {
+      mode: S.mode, t2: S.t2, expectH: S.expectH, units: S.units, codeTerms: S.codeTerms,
+      locker: S.locker, funder: S.funder, codeWarn: S.codeWarn, sats: S.sats,
+      inv: document.getElementById('invIn').value, addr: document.getElementById('addrIn').value,
+      logged: S.log.some(e => /switch to Wallet left the Practice terms/.test(e.text))
+    };
+  });
+  check('mode: the switch to Wallet clears the Practice code\'s terms',
+    swOut.mode === 'wallet' && swOut.t2 === null && swOut.expectH === null &&
+    swOut.units === null && swOut.codeTerms === null && swOut.locker === '' && swOut.logged,
+    JSON.stringify({ t2: swOut.t2, expectH: swOut.expectH, units: swOut.units, logged: swOut.logged }));
+  check('mode: the amount this side picked and what it typed itself stay',
+    swOut.sats === 50000 && swOut.inv === ownSw && swOut.addr === PARTNER,
+    swOut.sats + ' / ' + swOut.inv.slice(0, 12) + ' / ' + swOut.addr);
+  check('mode: no page errors through the switch', SWA.errs.length === 0, SWA.errs.join(' | '));
+  await SWA.c.close();
+
+  /* Nothing came from a code, so nothing is cleared: the switch says nothing. */
+  const SWB = await freshPage(390, 844);
+  const swb = SWB.p;
+  const ownB = await swb.evaluate(() => window.CLEANSWAP.mintInvoice({
+    paymentHash: '0x' + 'd1'.repeat(32), sats: 50000, expiry: 6 * 3600 }));
+  await swb.fill('#invIn', ownB);
+  await swb.fill('#addrIn', PARTNER);
+  await swb.click('#modeWallet');
+  await swb.waitForTimeout(300);
+  const swbOut = await swb.evaluate(() => ({
+    inv: document.getElementById('invIn').value,
+    addr: document.getElementById('addrIn').value,
+    cleared: window.CLEANSWAP.state.log.some(e => /switch to Wallet left the Practice terms/.test(e.text))
+  }));
+  check('mode: a switch with no Practice terms to clear changes nothing and says nothing',
+    swbOut.inv === ownB && swbOut.addr === PARTNER && swbOut.cleared === false, JSON.stringify(swbOut));
+  await SWB.c.close();
 
   /* ------------- 17. a token the chain has not confirmed is not a token --- */
   /* The gate opens a swap on a token the chain has counted: 'ok' and nothing
