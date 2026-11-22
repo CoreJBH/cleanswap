@@ -2406,6 +2406,81 @@ const view = (pg) => pg.evaluate(() => {
   await twp.screenshot({ path: path.join(SHOTS, 'v64-smart-wallet.png') });
   await TW.c.close();
 
+  /* The same question through a wallet in the page: the account this page is
+     handed is a relaying key, and the escrow's Locked event names the smart
+     wallet that actually funded the swap. The id has to come from the event,
+     or the page would look up an escrow entry nobody ever made. */
+  const OWNER = '0xc0ffee0000000000000000000000000000000002';
+  const SA2 = '0x2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e';
+  const INP = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await INP.addInitScript((acct) => {
+    window.__calls = [];
+    window.ethereum = {
+      request: function (o) {
+        const p = o.params || [];
+        if (o.method === 'eth_chainId') return Promise.resolve('0x66eee');
+        if (o.method === 'eth_accounts' || o.method === 'eth_requestAccounts') return Promise.resolve([acct]);
+        if (o.method === 'eth_sendTransaction') {
+          const h = '0x' + String(window.__calls.length + 1).padStart(64, '0');
+          window.__calls.push({ to: p[0].to, data: p[0].data, hash: h, from: p[0].from });
+          return Promise.resolve(h);
+        }
+        return Promise.reject(new Error('unexpected ' + o.method));
+      }
+    };
+  }, OWNER);
+  const inp = await INP.newPage();
+  const inpErrs = [];
+  inp.on('pageerror', e => inpErrs.push(e.message));
+  await inp.goto(URL, { waitUntil: 'load' });
+  await inp.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await inp.click('#modeWallet');
+  await inp.click('#swapDir');
+  await inp.waitForTimeout(300);
+  const H9 = '0x' + crypto.createHash('sha256').update(Buffer.from('62'.repeat(32), 'hex')).digest('hex');
+  const inv9 = await inp.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), H9);
+  await inp.fill('#addrIn', PARTNER);
+  await inp.fill('#invIn', inv9);
+  await inp.click('#chainRow');
+  await inp.fill('#contractIn', CONTRACT);
+  await inp.fill('#tokenIn', TOKEN);
+  await inp.fill('#rpcIn', RPC);
+  await inp.click('[data-act="saveSetup"]');
+  await inp.waitForTimeout(1000);
+  await inp.click('#chainRow');
+  await inp.waitForTimeout(250);
+  const t2_9 = Math.floor(Date.now() / 1000) + 7200;
+  const units9 = await inp.evaluate((t) => { window.CLEANSWAP.state.t2 = t; return window.CLEANSWAP.usdtUnits(); }, t2_9);
+  const hApprove = '0x' + '1'.padStart(64, '0');
+  const hLock = '0x' + '2'.padStart(64, '0');
+  const id9 = swapIdOf({ hashlock: H9, sender: SA2, receiver: PARTNER, token: TOKEN, amount: units9, timelock: t2_9 });
+  CHAIN.receipts[hApprove] = { status: '0x1' };
+  CHAIN.receipts[hLock] = {
+    status: '0x1',
+    logs: [{
+      address: CONTRACT,
+      topics: [LOCKED_TOPIC, id9,
+        '0x' + '0'.repeat(24) + SA2.slice(2), '0x' + '0'.repeat(24) + PARTNER.slice(2)],
+      data: '0x' + [hexAddr(TOKEN), hexWord(units9), hexB32(H9), hexWord(t2_9)].join('')
+    }]
+  };
+  CHAIN.records[id9.toLowerCase()] = {
+    hashlock: H9, amount: units9, timelock: t2_9, token: TOKEN,
+    sender: SA2, receiver: PARTNER, claimed: false, refunded: false
+  };
+  await inp.click('#primary');
+  await inp.waitForTimeout(3200);
+  const iw = await view(inp);
+  check('in-page wallet: the lock is read as the escrow saw it, not as the wallet named it',
+    iw.phase === 'paid' && iw.chainState === 'locked', iw.phase + ' / ' + iw.chainState);
+  check('in-page wallet: the funding address is the one in the Locked event',
+    (await inp.evaluate(() => window.CLEANSWAP.state.funder)) === SA2,
+    await inp.evaluate(() => String(window.CLEANSWAP.state.funder || window.CLEANSWAP.state.me)));
+  check('in-page wallet: the wallet never signed for that address',
+    await inp.evaluate((o) => window.__calls.every(c => String(c.from).toLowerCase() === o), OWNER));
+  check('in-page wallet: no page errors', inpErrs.length === 0, inpErrs.join(' | '));
+  await INP.close();
+
   /* A code states terms, and zero is not a term: a rate that has not loaded
      cannot become "0 USDT" in a code the other phone would refuse. */
   const ZR = await freshPage(390, 844);

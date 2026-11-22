@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-W856ejQVpKm3XMPWQcKRDUrh4sdKi93HqpBxHYyWRSU='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vYtaDZQeNT7TyEQZlaRQ7KyU4F+Yp+RJWpcYcKvX2sY=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-B+6BVkyAjKj/6ODE0nWZwXOsBXZO2GfLPxz1VTYtIUc='; style-src 'sha256-qCY24uVZFeBT7ayYjlYCyYmOaRjaIhY9n3a8rJfofYU='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -2489,7 +2489,21 @@ contract CleanSwapHTLC {
         busy(true);
         return waitReceipt(h);
       })
-      .then(function () { busy(false); return refreshChain(); })
+      .then(function (rc) {
+        /* The escrow's Locked event names the address it saw as its sender.
+           When that is not the account the wallet handed this page (a smart
+           contract wallet, a relayer), the event is the address that funded
+           the swap, and the id is built from it. */
+        var ev = readLockedLog(rc);
+        if (ev && lockedLogFits(ev)) {
+          S.funder = ev.sender;
+          if (normHex(ev.sender) !== normHex(S.me)) {
+            log('LOCK', 'the escrow was funded from ' + short(ev.sender, 6) + ', read from its Locked event');
+          }
+        }
+        busy(false);
+        return refreshChain();
+      })
       .then(function (c) { lockedMine(c); })
       .catch(function (e) { busy(false); walletFail(e); });
   }

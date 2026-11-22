@@ -1370,7 +1370,21 @@
         busy(true);
         return waitReceipt(h);
       })
-      .then(function () { busy(false); return refreshChain(); })
+      .then(function (rc) {
+        /* The escrow's Locked event names the address it saw as its sender.
+           When that is not the account the wallet handed this page (a smart
+           contract wallet, a relayer), the event is the address that funded
+           the swap, and the id is built from it. */
+        var ev = readLockedLog(rc);
+        if (ev && lockedLogFits(ev)) {
+          S.funder = ev.sender;
+          if (normHex(ev.sender) !== normHex(S.me)) {
+            log('LOCK', 'the escrow was funded from ' + short(ev.sender, 6) + ', read from its Locked event');
+          }
+        }
+        busy(false);
+        return refreshChain();
+      })
       .then(function (c) { lockedMine(c); })
       .catch(function (e) { busy(false); walletFail(e); });
   }
