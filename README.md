@@ -855,9 +855,13 @@ nothing.
 * A `cleanswap:` code carries terms only. It is not a web address, has no host, and is never built
   from the page's own URL - and it never changes the setup: the chain and the escrow in a code are
   requirements that must already match, not settings that get written.
-* A swap lives in the page: reloading it forgets it, and the Android shell keeps nothing of it in
-  the instance state either. The Setup panel is the only thing kept, in one `localStorage` key -
-  with one escrow, token and endpoint list per network.
+* A running swap in Wallet mode is put away in one `localStorage` key (`cleanswap.swap.v1`) so a
+  page Android killed while a wallet was in front comes back to it: the terms, the window, the
+  amount, the addresses and the transaction hashes - **and never the payment secret**, which is not
+  part of the terms. Settling, a refund, `Back` and a reset remove the record; one for another
+  network or another escrow is not acted on, and one is dropped after 30 days. Setup is the other
+  key, with one escrow, token and endpoint list per network. A practice swap is never written. The
+  Android shell still keeps nothing of a swap in the instance state.
 * A BOLT11 invoice's signature is checked, but a BOLT11 invoice names no payee unless it carries an
   `n` tag: without one, the key is recovered from the signature, which proves the invoice was not
   edited, not who made it. The `n` tag, when present, is verified against and must be low-S.
