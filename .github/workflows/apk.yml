@@ -1,7 +1,26 @@
-# Build cleanswap.apk from the single-file web app.
-# GitHub cannot accept workflow files from this repository's automation, so this
-# file is tracked here: copy it to .github/workflows/build-apk.yml to enable the
-# build (push or "Run workflow").
+# Build the signed cleanswap.apk from the single-file web app.
+# The workflow GitHub runs is .github/workflows/apk.yml; this file is the copy
+# kept in the tree because a push from the app cannot write .github/workflows/.
+# Paste it over .github/workflows/apk.yml (name it apk.yml) once the four
+# signing secrets exist, and every push to main or v* tag builds a signed
+# release APK instead of a debug one.
+#
+# The APK is signed with the release key, never the debug key: a debug signature
+# cannot update an installed release, and each CI runner would make a different
+# one. The key comes from four repository secrets (Settings -> Secrets and
+# variables -> Actions); when one is missing the Gradle gate stops the build
+# before any APK exists, and this file stops it even earlier when the keystore is
+# not there at all.
+#   CLEANSWAP_KEYSTORE_BASE64     base64 of the .jks file: base64 -w0 release.jks
+#   CLEANSWAP_KEYSTORE_PASSWORD
+#   CLEANSWAP_KEY_ALIAS
+#   CLEANSWAP_KEY_PASSWORD
+#
+# Adding those four secrets is not enough by itself: the automation still cannot
+# write .github/workflows/, so this file has to be pasted into that folder by
+# hand (the same one-click commit URL the setup notes give) before a push builds
+# a signed release APK. Until then a secret-less run fails at the keystore step
+# and produces no APK, which is the intended shape of "not ready".
 name: Build Android APK
 
 on:
@@ -49,18 +68,40 @@ jobs:
           cp dist/cleanswap.html android/app/src/main/assets/index.html
           ls -l android/app/src/main/assets/index.html
 
-      - name: Assemble debug APK
+      - name: Write the release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CLEANSWAP_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::CLEANSWAP_KEYSTORE_BASE64 is not set: a release APK is signed with the release key only."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/cleanswap-release.jks"
+          echo "CLEANSWAP_KEYSTORE=$RUNNER_TEMP/cleanswap-release.jks" >> "$GITHUB_ENV"
+
+      - name: Assemble signed release APK
         working-directory: android
-        run: gradle assembleDebug --no-daemon --stacktrace
+        env:
+          CLEANSWAP_KEYSTORE_PASSWORD: ${{ secrets.CLEANSWAP_KEYSTORE_PASSWORD }}
+          CLEANSWAP_KEY_ALIAS: ${{ secrets.CLEANSWAP_KEY_ALIAS }}
+          CLEANSWAP_KEY_PASSWORD: ${{ secrets.CLEANSWAP_KEY_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Collect APK
         run: |
           set -euo pipefail
-          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)"
+          APK="$(find android/app/build/outputs/apk/release -name '*.apk' -print -quit)"
           test -n "$APK"
           cp "$APK" cleanswap.apk
           ls -l cleanswap.apk
           sha256sum cleanswap.apk
+
+      - name: Check the APK carries the release signature
+        run: |
+          set -euo pipefail
+          BT="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -maxdepth 1 -mindepth 1 -type d | sort | tail -1)"
+          "$BT/apksigner" verify --print-certs cleanswap.apk | head -6
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
