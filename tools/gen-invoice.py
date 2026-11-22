@@ -5,7 +5,7 @@ The invoice is built from the BOLT 11 spec's construction by hand (bech32 HRP,
 35-bit timestamp, tagged 'p'/'d'/'x' fields, a 65-byte secp256k1 signature) so
 that `test/headless.js` can decode it in the app and compare `payment_hash`
 against the value printed here. It is signed with the app's practice key, the
-same one src/app.js uses for its own sample invoices: the app verifies every
+same one src/modules/crypto.js uses for its own sample invoices: the app verifies every
 invoice it reads, so a fixture with a made-up signature would be refused.
 """
 import hashlib
@@ -14,7 +14,7 @@ import hmac
 CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
 
-# The practice key, in src/app.js as PRACTICE_KEY. It holds nothing.
+# The practice key, in src/modules/crypto.js as PRACTICE_KEY. It holds nothing.
 PRACTICE_KEY = bytes.fromhex('2f1c8bd6a4e0793d5c1b8a6f47e293d0c5b8f17a26d4e9038b7c15fa6d2e4093')
 P = 2 ** 256 - 2 ** 32 - 977
 N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141

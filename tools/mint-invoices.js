@@ -10,7 +10,9 @@ const fs = require('fs');
 const { chromium } = require(process.env.PLAYWRIGHT_PKG || 'playwright');
 
 const ROOT = path.resolve(__dirname, '..');
-const APP = path.resolve(ROOT, '..', '..', 'ln-usdt-swap.html');
+/* The test build: the page without the shipped handle, plus the one the suite
+   signs its sample invoices with (build.py --test). */
+const APP = path.resolve(ROOT, 'build', 'cleanswap.test.html');
 const OUT = path.join(ROOT, 'build', 'js-invoices.json');
 
 const CASES = [

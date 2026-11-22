@@ -27,11 +27,12 @@ JAVA = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'com', 'jbitm
 MANIFEST = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
 NSC = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res', 'xml', 'network_security_config.xml')
 GRADLE = os.path.join(ROOT, 'android', 'app', 'build.gradle.kts')
-# The workflow GitHub actually runs lives here. android/ci/apk-release.yml is the
-# copy kept in the tree only because a push cannot write .github/workflows/;
-# testing that copy proved a workflow nobody ran.
-CI = os.path.join(ROOT, '.github', 'workflows', 'apk.yml')
-CI_PREPARED = os.path.join(ROOT, 'android', 'ci', 'apk-release.yml')
+# The workflow GitHub actually runs lives here, and it is the signed-release
+# one. android/ci/apk-release.yml is a byte-for-byte copy kept in the tree
+# because a push from the app cannot write .github/workflows/; the two are
+# compared below, so the copy cannot drift from the workflow that runs.
+CI = os.path.join(ROOT, 'android', 'ci', 'apk-release.yml')
+CI_LIVE = os.path.join(ROOT, '.github', 'workflows', 'apk.yml')
 
 fails = []
 CHECKS = [0]
@@ -169,9 +170,11 @@ def main():
           'isMinifyEnabled = true' in gradle and 'isShrinkResources = true' in gradle
           and 'isDebuggable = false' in gradle)
 
-    # --- the workflow GitHub runs, read where GitHub runs it ----------------
-    check('ci: the file under test is the workflow GitHub reads',
-          os.path.abspath(CI) == os.path.join(ROOT, '.github', 'workflows', 'apk.yml'), CI)
+    # --- the workflow this repository maintains ------------------------------
+    # GitHub reads .github/workflows/apk.yml, and the app's automation has no
+    # `workflows` permission: a push touching that path is refused. So the file
+    # this repository maintains and can change is android/ci/apk-release.yml,
+    # and the live one is compared with it below instead of being assumed.
     check('ci: it runs on a push to main, on tags and by hand',
           'branches: [main]' in ci and 'tags: ["v*"]' in ci and 'workflow_dispatch' in ci)
     check('ci: it builds the page from source and stages it into the APK',
@@ -180,38 +183,38 @@ def main():
           'upload-artifact' in ci and 'cleanswap.apk' in ci and 'if-no-files-found: error' in ci)
     check('ci: every working-directory line has its value after a space',
           'working-directory:android' not in ci and 'working-directory: android' in ci)
-    # What it packages is read from the file, not assumed: the day the four
-    # signing secrets exist this file may become the signed release, and until
-    # then it is a debug build that must not pretend to be one.
-    signed = 'assembleRelease' in ci
-    check('ci: the variant it assembles is written in the file',
-          signed or 'assembleDebug' in ci, 'release' if signed else 'debug')
-    check('ci: a release build here would also carry the keystore and stop without it',
-          (not signed) or ('CLEANSWAP_KEYSTORE_BASE64' in ci and 'is not set' in ci))
-    check('ci: no release signature is claimed by a debug build',
-          signed or ('apksigner' not in ci and 'CLEANSWAP_KEYSTORE' not in ci))
-    check('ci: the APK is collected from the folder of the variant built',
-          ('outputs/apk/release' in ci) if signed else ('outputs/apk/debug' in ci),
-          'release' if signed else 'debug')
+    # The one thing this file builds is the signed release.
+    check('ci: it assembles the release variant', 'assembleRelease' in ci)
+    check('ci: nothing in it assembles a debug APK', 'assembleDebug' not in ci,
+          'assembleRelease only' if 'assembleRelease' in ci else 'no assemble task')
+    check('ci: the APK is collected from the release folder only',
+          'outputs/apk/release' in ci and 'outputs/apk/debug' not in ci)
+    check('ci: a run whose keystore secret is missing stops before any APK exists',
+          'CLEANSWAP_KEYSTORE_BASE64' in ci and 'is not set' in ci and 'exit 1' in ci)
+    check('ci: it verifies the release signature before the APK goes up', 'apksigner' in ci)
+    # What it runs is pinned: a tag can be moved, a commit SHA cannot.
+    uses = re.findall(r'^\s*-?\s*uses:\s*(\S+)', ci, re.M)
+    unpinned = [u for u in uses if not re.match(r'^[\w.-]+/[\w.-]+(/[\w.-]+)?@[0-9a-f]{40}$', u)]
+    check('ci: every action it runs is pinned to a full commit SHA',
+          bool(uses) and not unpinned, ', '.join(uses) if not unpinned else ', '.join(unpinned))
+    check('ci: every pinned SHA says which release it came from',
+          all(re.search(r'uses:\s*' + re.escape(u) + r'\s+#\s*v\d', ci) for u in uses if '@' in u),
+          ', '.join(uses))
 
-    # --- the signed-release workflow kept ready to paste -------------------
-    prepared = open(CI_PREPARED, encoding='utf-8').read()
-    check('ci: a signed-release workflow is kept ready at android/ci/apk-release.yml',
-          bool(prepared), CI_PREPARED)
-    check('ci: it assembles the release variant and no debug one',
-          'assembleRelease' in prepared and 'assembleDebug' not in prepared)
-    check('ci: it writes the keystore from a secret and stops when that is missing',
-          'CLEANSWAP_KEYSTORE_BASE64' in prepared and 'is not set' in prepared)
-    check('ci: it collects the APK from the release folder',
-          'outputs/apk/release' in prepared and 'outputs/apk/debug' not in prepared)
-    check('ci: it verifies the release signature before the APK goes up',
-          'apksigner' in prepared)
-    check('ci: the prepared file answers the same triggers as the live one',
-          'branches: [main]' in prepared and 'tags: ["v*"]' in prepared and 'workflow_dispatch' in prepared)
-    if not signed:
-        print('NOTE the live workflow assembles a debug APK; the signed release workflow is'
-              ' android/ci/apk-release.yml, waiting for the keystore secrets and a paste into'
-              ' .github/workflows/apk.yml')
+    # --- and what GitHub actually reads, when this checkout has it ----------
+    live = open(CI_LIVE, encoding='utf-8').read() if os.path.exists(CI_LIVE) else ''
+    if live == ci:
+        check('ci: the workflow GitHub reads is this file, byte for byte', True, 'identical')
+    elif not live:
+        print('NOTE .github/workflows/apk.yml is not in this checkout. GitHub runs whatever is'
+              ' there; android/ci/apk-release.yml is the file to paste into it.')
+    else:
+        debug = 'assembleDebug' in live
+        print('NOTE .github/workflows/apk.yml differs from android/ci/apk-release.yml'
+              + (' and still assembles a debug APK' if debug else '')
+              + ": the app's automation cannot write workflows, so the signed-release file has to be"
+              ' pasted over it by hand (or the GitHub App given the workflows permission).'
+              ' Until then GitHub builds what that file says.')
 
     print('%d/%d shell checks passed' % (CHECKS[0] - len(fails), CHECKS[0]))
     return 1 if fails else 0

@@ -8,7 +8,9 @@
 const path = require('path');
 const http = require('http');
 const { chromium } = require(process.env.PLAYWRIGHT_PKG || 'playwright');
-const APP = path.resolve(__dirname, '..', '..', '..', 'ln-usdt-swap.html');
+/* The test build: these pictures are made by driving the page's own handle,
+   which only the test build carries (build.py --test). */
+const APP = path.resolve(__dirname, '..', 'build', 'cleanswap.test.html');
 const DOCS = path.resolve(__dirname, '..', 'docs');
 const SHOTS = path.resolve(__dirname, '..', 'shots');
 

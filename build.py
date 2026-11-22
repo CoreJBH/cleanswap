@@ -3,8 +3,18 @@
 
 Everything is inlined - CSS, the QR encoder, the BOLT11/BOLT12 codec, the app
 and the Solidity reference source - so the built page makes no requests except
-the optional BTC/USD quote from mempool.space. Also writes dist/cleanswap.html
-for repository distribution.
+the optional BTC/USD quotes from two public price APIs. Also writes
+dist/cleanswap.html for repository distribution.
+
+The page is one script, built out of src/modules/ in the order listed below:
+each module is a responsibility, and the whole list is concatenated inside one
+closure, so the shipped artifact is still a single HTML file with one inline
+script and the same hash-pinned CSP.
+
+`--test` builds the same page with the window handle the verification suites
+drive (bridge-test.js instead of bridge-prod.js) and writes it to
+build/cleanswap.test.html. The production page exposes one entry - acceptCode -
+and no state.
 
 The build refuses to emit a page that contains Hangul: the repository and the
 UI are English only, and this is the last gate before a byte reaches dist/.
@@ -20,13 +30,34 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, 'src')
+MODULES = os.path.join(SRC, 'modules')
 CONTRACTS = os.path.join(HERE, 'contracts')
 ASSETS = os.path.join(HERE, 'assets')
 BUILD = os.path.join(HERE, 'build')
 OUT = os.path.abspath(os.path.join(HERE, '..', '..', 'ln-usdt-swap.html'))
 DIST = os.path.join(HERE, 'dist', 'cleanswap.html')
+TEST_OUT = os.path.join(BUILD, 'cleanswap.test.html')
 APK_ASSET = os.path.join(HERE, 'android', 'app', 'src', 'main', 'assets', 'index.html')
 HANGUL = re.compile(r'[\uac00-\ud7af]')
+
+# The order the modules are read in. Function declarations hoist across the
+# whole closure, so this is about the top-level statements that run in order:
+# the constants and the state come first, and the boot module starts the page.
+ORDER = [
+    'core.js',        # constants, the state object, hashing, formatting, the log
+    'storage.js',     # the setup, and the swap a killed page can pick up again
+    'chain.js',       # the swap id, endpoints, the clock, escrow ABI and reads
+    'wallet.js',      # an EIP-1193 wallet, the calls it sends, a pasted receipt
+    'crypto.js',      # secp256k1, bech32, the BOLT11 / BOLT12 codecs
+    'swap.js',        # escrow calldata, the swap code, the inputs it is read from
+    'gate.js',        # the one gate a tap has to pass
+    'render.js',      # the three-step screen and the gate under it
+    'actions.js',     # what a tap does, the rehearsal, codes arriving, the QR
+    'price.js',       # the BTC/USD quote, cross-checked between two APIs
+    'ui.js',          # the setup panel, the event wiring and the ACT table
+    'boot.js',        # wiring the page and starting it
+]
+BRIDGE = {'prod': 'bridge-prod.js', 'test': 'bridge-test.js'}
 
 
 SOLC = os.environ.get('SOLC') or (glob.glob(os.path.join(HERE, '.tools', 'solc-linux-amd64-*')) or [None])[0]
@@ -75,6 +106,21 @@ def sample(tag):
     return mod.build() if tag == 'bolt11' else mod.build_offer()
 
 
+def app_source(mode):
+    """src/app.js with its modules spliced in, in ORDER, for a build mode."""
+    shell = read(SRC, 'app.js')
+    if '/*__MODULES__*/' not in shell:
+        sys.exit('ERROR: src/app.js has no module marker')
+    names = ORDER + [BRIDGE[mode]]
+    parts = []
+    for name in names:
+        body = read(MODULES, name).strip()
+        if not body:
+            sys.exit('ERROR: module %s is empty' % name)
+        parts.append(body)
+    return shell.replace('/*__MODULES__*/', '\n\n'.join(parts))
+
+
 def inline_hashes(html):
     """The CSP source lists for the page's own script and style blocks.
 
@@ -93,11 +139,11 @@ def inline_hashes(html):
     return ' '.join(one(s) for s in scripts), ' '.join(one(s) for s in styles)
 
 
-def main():
+def page(mode):
     tpl = read(SRC, 'index.template.html')
     css = read(SRC, 'app.css')
     qr = read(SRC, 'qr.js').strip()
-    app = read(SRC, 'app.js').strip()
+    app = app_source(mode)
     sol = read(CONTRACTS, 'CleanSwapHTLC.sol').strip()
     code = escrow_bytecode()
 
@@ -131,6 +177,26 @@ def main():
     missing = re.findall(r'/\*__[A-Z0-9]+__\*/', out)
     if missing:
         sys.exit('ERROR: unsubstituted tokens: %s' % ', '.join(sorted(set(missing))))
+    if HANGUL.search(out):
+        sys.exit('ERROR: built page contains Hangul')
+    return out
+
+
+def main():
+    mode = 'prod'
+    for arg in sys.argv[1:]:
+        if arg == '--test':
+            mode = 'test'
+        else:
+            sys.exit('ERROR: unknown argument %s (only --test)' % arg)
+    out = page(mode)
+
+    if mode == 'test':
+        os.makedirs(BUILD, exist_ok=True)
+        with open(TEST_OUT, 'w', encoding='utf-8') as f:
+            f.write(out)
+        print('wrote %s (%d bytes)' % (TEST_OUT, len(out.encode('utf-8'))))
+        return
 
     with open(OUT, 'w', encoding='utf-8') as f:
         f.write(out)
@@ -147,8 +213,6 @@ def main():
     with open(APK_ASSET, 'w', encoding='utf-8') as f:
         f.write(out)
     print('wrote %s (%d bytes)' % (APK_ASSET, len(out.encode('utf-8'))))
-    if HANGUL.search(out):
-        sys.exit('ERROR: built page contains Hangul')
 
 
 if __name__ == '__main__':

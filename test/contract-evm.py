@@ -429,9 +429,12 @@ check('lock: and the record is there once the money has arrived',
 
 # ---- the app's own encoding ------------------------------------------------
 # The UI builds lock() calldata in the browser. These two checks tie that
-# encoding to this ABI: the selector constants in src/app.js have to hash to the
-# signature, and the calldata the page emitted has to decode to the swap fields.
-src = open(os.path.join(ROOT, 'src', 'app.js'), encoding='utf-8').read()
+# encoding to this ABI: the selector constants in the app's source have to hash
+# to the signature, and the calldata the page emitted has to decode to the swap
+# fields. The app is one script built from src/modules/, and the escapes live in
+# core.js; every module is searched, so a moved table is still found.
+src = ''.join(open(os.path.join(ROOT, 'src', 'modules', f), encoding='utf-8').read()
+              for f in sorted(os.listdir(os.path.join(ROOT, 'src', 'modules'))))
 m = re.search(r"SEL = \{(.*?)\}", src, re.S)
 table = dict(re.findall(r"(\w+): '([0-9a-f]{8})'", m.group(1))) if m else {}
 want = {
@@ -443,7 +446,7 @@ want = {
     'approve': 'approve(address,uint256)',
     'allowance': 'allowance(address,address)'
 }
-check('app: the selector table is in src/app.js', bool(table), ', '.join(sorted(table)))
+check('app: the selector table is in src/modules/', bool(table), ', '.join(sorted(table)))
 check('app: every selector the page sends equals keccak of the contract signature',
       bool(table) and all(table.get(k) == selector(v).hex() for k, v in want.items()),
       ', '.join('%s %s/%s' % (k, table.get(k), selector(v).hex()) for k, v in want.items() if table.get(k) != selector(v).hex()) or 'all match')

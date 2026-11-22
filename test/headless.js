@@ -48,7 +48,11 @@ const crypto = require('crypto');
 
 const PKG = process.env.PLAYWRIGHT_PKG || 'playwright';
 const { chromium } = require(PKG);
-const APP = path.resolve(__dirname, '..', '..', '..', 'ln-usdt-swap.html');
+/* The suite drives the test build: the same page with the window handle the
+   checks reach through (build.py --test). The production page is loaded by the
+   exposure section at the end, where what it leaves on the window is checked. */
+const APP = path.resolve(__dirname, '..', 'build', 'cleanswap.test.html');
+const PROD = path.resolve(__dirname, '..', 'dist', 'cleanswap.html');
 const SHOTS = path.resolve(__dirname, '..', 'shots');
 const BUILD = path.resolve(__dirname, '..', 'build');
 /* BOLT #11's own test vectors: real invoices signed by the spec's key, so the
@@ -208,6 +212,9 @@ const http = require('http');
 const CONTRACT = '0x9d1f4c7a2b8e6035f4a7c1d9028be35f7a6c4d18';
 const TOKEN = '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9';
 const PARTNER = '0x3d0f6a8c72b41e95d8a3c0671f2b4e8d90c5a761';
+/* keccak256("Locked(bytes32,address,address,address,uint256,bytes32,uint256)"),
+   the escrow's own event: the only place the page learns who funded a lock. */
+const LOCKED_TOPIC = '0x14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf';
 const CHAIN = {
   chainId: '0x66eee',                 /* Arbitrum Sepolia */
   block: 0x2f0000,
@@ -505,10 +512,24 @@ const view = (pg) => pg.evaluate(() => {
      arrived. Tests that need the offline guess set the state themselves - and
      the one that proves a guess cannot lock real USDT does exactly that. */
   const QUOTE_USD = 95000;
-  async function quoteMock(p, usd) {
-    await p.route('**/api/v1/prices', route => route.fulfill({
+  /* The page reads two quotes: mempool.space's own price index and Coinbase's
+     spot price, and it uses them only when they agree. Both are answered by a
+     route here, so the page's own loadRate() lands on what a test set - and a
+     test can make one of them fail, or have the two answer a different market
+     (quoteMock(p, { usd: 95000, coinbase: 120000 })). */
+  async function quoteMock(p, opts) {
+    const o = typeof opts === 'number' ? { usd: opts } : (opts || {});
+    const usd = o.usd == null ? QUOTE_USD : o.usd;
+    const coin = o.coinbase == null ? usd : o.coinbase;
+    if (o.failMempool) await p.route('**/api/v1/prices', route => route.abort());
+    else await p.route('**/api/v1/prices', route => route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ time: Math.floor(Date.now() / 1000), USD: usd || QUOTE_USD })
+      body: JSON.stringify({ time: Math.floor(Date.now() / 1000), USD: usd })
+    }));
+    if (o.failCoinbase) await p.route('**/v2/prices/BTC-USD/spot', route => route.abort());
+    else await p.route('**/v2/prices/BTC-USD/spot', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ data: { base: 'BTC', currency: 'USD', amount: String(coin) } })
     }));
   }
 
@@ -524,7 +545,7 @@ const view = (pg) => pg.evaluate(() => {
     p.on('console', m => {
       if (m.type() === 'error' && !/Failed to load resource/i.test(m.text())) errs.push('console: ' + m.text());
     });
-    p.on('requestfailed', r => { if (!/mempool\.space/.test(r.url())) failed.push(r.url()); });
+    p.on('requestfailed', r => { if (!/mempool\.space|coinbase\.com/.test(r.url())) failed.push(r.url()); });
     await p.goto(URL, { waitUntil: 'load' });
     await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
     await p.waitForTimeout(250);
@@ -681,7 +702,7 @@ const view = (pg) => pg.evaluate(() => {
   check('practice: the sentence names what arrived', /You received [\d,.]+ USDT\./.test(w.say), w.say);
   check('practice: the steps fold away once settled', !w.steps && !w.presets && !w.terms, String(w.steps));
   check('practice: a rehearsal adds nothing to Recent', !w.history && w.rows === 0, String(w.rows));
-  const remote = A.reqs.filter(u => /^https?:/i.test(u) && !/mempool\.space/.test(u));
+  const remote = A.reqs.filter(u => /^https?:/i.test(u) && !/mempool\.space|coinbase\.com/.test(u));
   check('practice: a whole rehearsal talks to no chain and no wallet', remote.length === 0,
     remote.slice(0, 3).join(',') || 'no request left the phone');
   await page.screenshot({ path: path.join(SHOTS, 'v51-done.png') });
@@ -1187,7 +1208,14 @@ const view = (pg) => pg.evaluate(() => {
     hashlock: t5.H, amount: t5.units, timelock: t5.t2, token: TOKEN,
     sender: LOCKER5, receiver: t5.addr, claimed: false, refunded: false
   };
-  CHAIN.receipts[lockTx] = { status: '0x1' };
+  /* The receipt is where the page learns who funded the escrow: the escrow's
+     own Locked event, whose sender is the address it saw as msg.sender. */
+  CHAIN.receipts[lockTx] = { status: '0x1', logs: [{
+    address: CONTRACT,
+    topics: [LOCKED_TOPIC, id5,
+      '0x' + '0'.repeat(24) + LOCKER5.slice(2), '0x' + '0'.repeat(24) + t5.addr.slice(2)],
+    data: '0x' + [hexAddr(TOKEN), hexWord(t5.units), hexB32(t5.H), hexWord(t5.t2)].join('')
+  }] };
   /* the lock call itself, as the wallet signed it: the app reads its terms,
      so a lock against another hash can never be read as this swap's */
   CHAIN.txs[lockTx] = {
@@ -2329,7 +2357,6 @@ const view = (pg) => pg.evaluate(() => {
   /* keccak-256, which both EIP-55 and the escrow's Locked event are made of.
      Measured against the digest of the empty string and the four addresses the
      standard prints, so the page's hash is not its own only witness. */
-  const LOCKED_TOPIC = '0x14442dbf5e9aa943f3b7681bdf4e57c3256930c69ccc137263150f7e01bd51cf';
   const EIP55 = ['0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed',
     '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359',
     '0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB',
@@ -2699,9 +2726,12 @@ const view = (pg) => pg.evaluate(() => {
     await ntp.evaluate(() => window.CLEANSWAP.state.log.some(e => /window came from/.test(e.text))));
   check('terms: no page errors through the event path', NT.errs.length === 0, NT.errs.join(' | '));
 
-  /* The same gap, but a receipt with no log at all: a plain wallet's lock
-     call carries the terms itself, and the window is read out of the
-     calldata the escrow was called with. */
+  /* The same gap, with a receipt that carries no Locked event at all. It used
+     to fall back to the transaction's own sender - but a receipt's `from` is
+     the key or bundler that relayed the call, not the address the escrow saw
+     (a smart contract wallet is the sender while the relay key is `from`), so
+     a lock with no event is not this swap's lock. Nothing is read from it, and
+     nothing on the screen changes. */
   await ntp.evaluate(() => window.CLEANSWAP.reset());
   await ntp.waitForTimeout(200);
   await ntp.fill('#invIn', inv10);
@@ -2724,19 +2754,19 @@ const view = (pg) => pg.evaluate(() => {
   await ntp.click('[data-act="useLockTx"]');
   await ntp.waitForTimeout(2200);
   const nw11 = await view(ntp);
-  check('terms: a plain lock call fills the window from its own calldata',
-    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === t2_11,
-    String(await ntp.evaluate(() => window.CLEANSWAP.state.t2)));
-  check('terms: the funding address comes from the transaction',
-    (await ntp.evaluate(() => window.CLEANSWAP.state.funder)) === EOA10,
-    await ntp.evaluate(() => String(window.CLEANSWAP.state.funder)));
-  check('terms: the escrow reads as locked under the terms the call carried',
-    /USDT locked/.test(nw11.chainTxt), nw11.chainTxt);
-  check('terms: no page errors through the calldata path', NT.errs.length === 0, NT.errs.join(' | '));
+  check('terms: a receipt with no lock event names no funder',
+    (await ntp.evaluate(() => window.CLEANSWAP.state.funder)) === '' &&
+    (await ntp.evaluate(() => window.CLEANSWAP.state.t2)) === null,
+    await ntp.evaluate(() => window.CLEANSWAP.state.funder + ' / ' + window.CLEANSWAP.state.t2));
+  check('terms: and the calldata in the transaction is not read in its place',
+    !/USDT locked/.test(nw11.chainTxt), nw11.chainTxt);
+  check('terms: the refusal says the transaction is not this swap\u2019s lock',
+    nw11.toast === 'That transaction is not the lock for this swap', nw11.toast);
+  check('terms: no page errors through the empty-log path', NT.errs.length === 0, NT.errs.join(' | '));
 
-  /* And when nothing on chain says what the terms are, the screen says what
-     is missing instead of a chain error that would send the person looking
-     at the wrong thing. */
+  /* And when the escrow has no terms to read under at all, the screen says
+     what is missing instead of a chain error that would send the person
+     looking at the wrong thing. */
   await ntp.evaluate(() => window.CLEANSWAP.reset());
   await ntp.waitForTimeout(200);
   await ntp.fill('#invIn', inv10);
@@ -2745,6 +2775,9 @@ const view = (pg) => pg.evaluate(() => {
   const lockTx12 = '0x' + 'd3'.repeat(32);
   CHAIN.receipts[lockTx12] = { logs: [] };
   CHAIN.txs[lockTx12] = { from: EOA10, to: CONTRACT, input: '0x' };
+  /* the funding address is known (a partner's code named it) but the window is
+     not: there is no id to read the escrow under */
+  await ntp.evaluate((who) => { window.CLEANSWAP.state.locker = who; }, EOA10);
   await ntp.fill('#lockTxIn', lockTx12);
   await ntp.click('[data-act="useLockTx"]');
   await ntp.waitForTimeout(1400);
@@ -3473,6 +3506,15 @@ const view = (pg) => pg.evaluate(() => {
       body: JSON.stringify({ time: Math.floor(Date.now() / 1000), USD: QUOTE_USD })
     });
   });
+  /* The second quote is held open too: a price is only a price when both
+     sources are in, and this test is about the moment none of them is. */
+  await dlp.route('**/v2/prices/BTC-USD/spot', async (route) => {
+    await quoteHeld;
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ data: { base: 'BTC', currency: 'USD', amount: String(QUOTE_USD) } })
+    });
+  });
   const t2dl = Math.floor(Date.now() / 1000) + 7200;
   const hobbledLink = swapCodeOf({ dir: 'u2b', sats: 50000, units: 60000000, t2: t2dl });
   await dlp.goto(URL + '?' + hobbledLink, { waitUntil: 'domcontentloaded' });
@@ -4192,7 +4234,12 @@ const view = (pg) => pg.evaluate(() => {
     hashlock: tV.H, amount: tV.units, timelock: tV.t2, token: TOKEN,
     sender: LOCKERV, receiver: tV.addr, claimed: false, refunded: false
   };
-  CHAIN.receipts[lockTxV] = { status: '0x1' };
+  CHAIN.receipts[lockTxV] = { status: '0x1', logs: [{
+    address: CONTRACT,
+    topics: [LOCKED_TOPIC, idV,
+      '0x' + '0'.repeat(24) + LOCKERV.slice(2), '0x' + '0'.repeat(24) + tV.addr.slice(2)],
+    data: '0x' + [hexAddr(TOKEN), hexWord(tV.units), hexB32(tV.H), hexWord(tV.t2)].join('')
+  }] };
   CHAIN.txs[lockTxV] = {
     from: LOCKERV, to: CONTRACT,
     input: '0x91644b2b' + hexB32(tV.H) + hexWord(tV.t2) + hexAddr(tV.addr) + hexAddr(tV.token) + hexWord(tV.units)
@@ -4341,6 +4388,350 @@ const view = (pg) => pg.evaluate(() => {
     opDone.phase === 'settled' && opDone.op === '', JSON.stringify(opDone));
   check('lock: no page errors through the claim', opErrs.length === 0, opErrs.join(' | '));
   await OPC.close();
+
+  /* ------------- 15. what a shipped page leaves on the window ------------ */
+  /* The page in dist/ is the one the APK ships and the one anyone downloads.
+     Its window carries one entry - acceptCode, the one the host shell calls
+     when another app hands a swap code over - and nothing else: no state to
+     read the terms from, no action to drive a claim with, no test handle. The
+     suite itself drives the test build, which is where that handle lives. */
+  const EXP = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ex = await EXP.newPage();
+  await quoteMock(ex);
+  const exErrs = [];
+  ex.on('pageerror', e => exErrs.push(e.message));
+  await ex.goto('file://' + PROD, { waitUntil: 'load' });
+  await ex.waitForFunction(() => !!window.CLEANSWAP, null, { timeout: 20000 });
+  await ex.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.acceptCode, null, { timeout: 5000 });
+  const surf = await ex.evaluate(() => {
+    const CS = window.CLEANSWAP || {};
+    const want = ['state', 'applyCode', 'approve', 'paid', 'reset', 'backToForm', 'loadTx',
+      'settleByChain', 'checkChain', 'decodeBolt11', 'mintInvoice', 'swapCode', 'readInvoice',
+      'validate', 'render', 'startWatch', 'chainProbe', 'loadSetup', 'saveSetup'];
+    return {
+      keys: Object.keys(CS).sort().join(','),
+      accept: typeof CS.acceptCode,
+      reachable: want.filter(k => CS[k] !== undefined),
+      guarded: /guardedState|secretHeld/.test(document.documentElement.innerHTML),
+      html: document.documentElement.innerHTML.length
+    };
+  });
+  check('exposure: the shipped page leaves one entry on the window, acceptCode',
+    surf.keys === 'acceptCode' && surf.accept === 'function', surf.keys + ' / ' + surf.accept);
+  check('exposure: no state object to read a swap out of', surf.reachable.indexOf('state') < 0, surf.reachable.join(','));
+  check('exposure: no action or helper to drive a swap with', surf.reachable.length === 0, surf.reachable.join(','));
+  check('exposure: the test handle is not in the shipped file at all', surf.guarded === false, String(surf.guarded));
+  /* and the one entry works: a code handed over from another app lands */
+  const exCode = swapCodeOf({ dir: 'btc2u', sats: 50000, units: 45000000, t2: Math.floor(Date.now() / 1000) + 7200 });
+  await ex.evaluate(c => window.CLEANSWAP.acceptCode(c), exCode);
+  await ex.waitForTimeout(400);
+  const exScreen = await ex.evaluate(() => ({
+    dir: document.body.dataset.dir,
+    sendUnit: document.getElementById('sendUnit').textContent,
+    sats: document.getElementById('sendAmt').textContent
+  }));
+  check('exposure: acceptCode still puts a code on the screen',
+    exScreen.dir === 'u2b' && exScreen.sendUnit === 'USDT' && exScreen.sats === '45.00',
+    JSON.stringify(exScreen));
+  check('exposure: the shipped page booted without an error', exErrs.length === 0, exErrs.join(' | '));
+  await EXP.close();
+  /* The other half of the same fact: the handle exists only in the test build,
+     which is why the production page has none. */
+  const testSrc = fs.readFileSync(APP, 'utf8');
+  const prodSrc = fs.readFileSync(PROD, 'utf8');
+  check('exposure: the test build is the one that carries the handle',
+    /guardedState/.test(testSrc) && !/guardedState/.test(prodSrc),
+    'test ' + /guardedState/.test(testSrc) + ' / prod ' + /guardedState/.test(prodSrc));
+
+  /* ------------- 16. one price is one answer; two are a cross-check ------ */
+  /* The rate decides how much USDT changes hands, so it is read from two
+     independent public quotes and used only when they agree. A context is made
+     for each shape of the pair - both in, one in, both in and apart, neither
+     in - and the page's own loadRate() answers each. */
+  async function pricePage(opts) {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await c.newPage();
+    await quoteMock(p, opts);
+    const errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    await p.goto(URL, { waitUntil: 'load' });
+    await p.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+    return { c, p, errs };
+  }
+  const PL = await pricePage({ usd: 95000, coinbase: 95000 });
+  const plv = await PL.p.evaluate(() => ({
+    state: window.CLEANSWAP.state.pstate, price: window.CLEANSWAP.state.price,
+    rate: document.getElementById('rateTxt').textContent,
+    dot: document.getElementById('rateDot').className
+  }));
+  check('price: two quotes that agree are one live rate',
+    plv.state === 'live' && plv.price === 95000 && /(^|\s)dot\s+live$/.test(plv.dot),
+    plv.state + ' / ' + plv.price + ' / ' + plv.dot);
+  check('price: and the live rate needs no sentence beside it',
+    /^1 BTC ≈ 95,000 USDT$/.test(plv.rate), plv.rate);
+  check('price: the live quote is taken as the mean of the two answers',
+    await PL.p.evaluate(async () => {
+      const v = window.CLEANSWAP.priceVerdict([{ usd: 90000 }, { usd: 90800 }]);
+      return v.state === 'live' && v.price === 90400;
+    }));
+  await PL.c.close();
+
+  const PS1 = await pricePage({ usd: 95000, failCoinbase: true });
+  const psv = await PS1.p.evaluate(() => ({
+    state: window.CLEANSWAP.state.pstate, price: window.CLEANSWAP.state.price,
+    rate: document.getElementById('rateTxt').textContent,
+    walletMissing: (() => { const s = window.CLEANSWAP.state.mode; window.CLEANSWAP.state.mode = 'wallet'; const q = window.CLEANSWAP.quoteMissing(); window.CLEANSWAP.state.mode = s; return q; })()
+  }));
+  check('price: one source answering is still a quote, and it is used',
+    psv.state === 'single' && psv.price === 95000, psv.state + ' / ' + psv.price);
+  check('price: the rate line says it was not cross-checked',
+    /· one quote$/.test(psv.rate), psv.rate);
+  check('price: a wallet swap may still be priced by it', psv.walletMissing === false, String(psv.walletMissing));
+  await PS1.c.close();
+
+  const PD1 = await pricePage({ usd: 95000, coinbase: 120000 });
+  const pdv = await PD1.p.evaluate(() => ({
+    state: window.CLEANSWAP.state.pstate, price: window.CLEANSWAP.state.price,
+    rate: document.getElementById('rateTxt').textContent,
+    walletMissing: (() => { const s = window.CLEANSWAP.state.mode; window.CLEANSWAP.state.mode = 'wallet'; const q = window.CLEANSWAP.quoteMissing(); window.CLEANSWAP.state.mode = s; return q; })()
+  }));
+  check('price: two quotes 26% apart are not a rate at all',
+    pdv.state === 'disagree' && pdv.price === null, pdv.state + ' / ' + String(pdv.price));
+  check('price: the screen says so instead of showing a price',
+    /^1 BTC ≈ — USDT · quotes disagree$/.test(pdv.rate), pdv.rate);
+  check('price: and no wallet swap is priced from them', pdv.walletMissing === true, String(pdv.walletMissing));
+  await PD1.p.click('#modeWallet');
+  await PD1.p.waitForTimeout(300);
+  await PD1.p.click('#primary');
+  await PD1.p.waitForTimeout(600);
+  const pdTap = await PD1.p.evaluate(() => ({
+    toast: document.getElementById('toast').textContent,
+    phase: document.body.dataset.phase,
+    logged: window.CLEANSWAP.state.log.some(e => /two price quotes disagreed/.test(e.text))
+  }));
+  check('price: a tap on Approve names the disagreement and sends nothing',
+    /Two price sources disagree/.test(pdTap.toast) && pdTap.phase === 'idle', pdTap.toast + ' / ' + pdTap.phase);
+  check('price: the log keeps the refusal', pdTap.logged === true, String(pdTap.logged));
+  check('price: the disagreement is plain English', !JARGON.test(pdTap.toast), pdTap.toast);
+  check('price: no page errors through the disagreement', PD1.errs.length === 0, PD1.errs.join(' | '));
+  await PD1.c.close();
+
+  const PO = await pricePage({ failMempool: true, failCoinbase: true });
+  const pov = await PO.p.evaluate(() => {
+    const s = window.CLEANSWAP.state.mode; window.CLEANSWAP.state.mode = 'wallet';
+    const q = window.CLEANSWAP.quoteMissing(); window.CLEANSWAP.state.mode = s;
+    return {
+      state: window.CLEANSWAP.state.pstate, price: window.CLEANSWAP.state.price,
+      rate: document.getElementById('rateTxt').textContent, walletMissing: q
+    };
+  });
+  check('price: neither source answering is the offline guess', pov.state === 'offline' && pov.price === 90000, pov.state + ' / ' + pov.price);
+  check('price: and no wallet swap is priced by the guess', pov.walletMissing === true, String(pov.walletMissing));
+  await PO.c.close();
+
+  /* ------------- 17. a token the chain has not confirmed is not a token --- */
+  /* The gate opens a swap on a token the chain has counted: 'ok' and nothing
+     else. 'wrong' was already refused; 'not read yet' and 'the chain did not
+     answer' are silence, and silence is not a yes. */
+  const TG = await freshPage(390, 844);
+  const tg = TG.p;
+  await tg.click('#modeWallet');
+  await tg.waitForTimeout(200);
+  await tg.click('#swapDir');
+  const hTg = '0x' + dig('e1'.repeat(32));
+  const invTg = await tg.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hTg);
+  await tg.fill('#invIn', invTg);
+  await tg.fill('#addrIn', PARTNER);
+  await openSetupOn(tg);
+  await tg.fill('#contractIn', CONTRACT);
+  await tg.fill('#tokenIn', TOKEN);
+  await tg.fill('#rpcIn', RPC);
+  await tg.click('[data-act="saveSetup"]');
+  await tg.waitForTimeout(1300);
+  const gateJudge = (state) => tg.evaluate(async (st) => {
+    const CS = window.CLEANSWAP;
+    const was = CS.state.tokenState;
+    CS.state.tokenState = st;
+    const r = await CS.validate();
+    CS.state.tokenState = was;
+    return { ok: r.ok, code: r.code, msg: r.msg };
+  }, state);
+  const gOk = await gateJudge('ok');
+  check('gate: a token the chain counted is a swap this page will approve', gOk.ok === true, gOk.code + ' / ' + gOk.msg);
+  const gNever = await gateJudge('');
+  check('gate: a token that was never read is refused, not assumed',
+    gNever.ok === false && /has not been read/.test(gNever.msg), gNever.ok + ' / ' + gNever.msg);
+  const gUnread = await gateJudge('unread');
+  check('gate: a token the chain did not answer about is refused too',
+    gUnread.ok === false && /did not answer/.test(gUnread.msg), gUnread.ok + ' / ' + gUnread.msg);
+  check('gate: the two refusals are plain English and name the token',
+    !JARGON.test(gNever.msg) && !JARGON.test(gUnread.msg) && /USDT token/.test(gUnread.msg),
+    gUnread.msg);
+  /* A tap is not left standing there: it reads the token once, and the gate
+     judges what the chain said. */
+  await tg.evaluate(() => { window.CLEANSWAP.state.tokenState = ''; });
+  CHAIN.tokenDecimals = 6;
+  await tg.click('#primary');
+  await tg.waitForTimeout(2500);
+  const tgTap = await tg.evaluate(() => ({
+    tokenState: window.CLEANSWAP.state.tokenState, phase: window.CLEANSWAP.state.phase,
+    toast: document.getElementById('toast').textContent
+  }));
+  check('gate: a tap reads an unread token before the gate judges it',
+    tgTap.tokenState === 'ok' && tgTap.phase !== 'idle', tgTap.tokenState + ' / ' + tgTap.phase);
+  check('gate: no page errors through the token gate', TG.errs.length === 0, TG.errs.join(' | '));
+  await TG.c.close();
+
+  /* ------------- 18. the swap a killed page comes back to ------------------ */
+  /* An external wallet is another app: the phone switches to it, and Android
+     may kill this WebView while it is in front. The terms of a running swap
+     are put away in one localStorage key so the page comes back to its swap
+     instead of an empty form - and never with the payment secret in it. */
+  const RC = await freshPage(390, 844);
+  const rc = RC.p;
+  await rc.click('#modeWallet');
+  await rc.click('#swapDir');
+  await rc.waitForTimeout(250);
+  const preR = '0x' + 'e7'.repeat(32);
+  const hR = '0x' + dig('e7'.repeat(32));
+  const invResume = await rc.evaluate(h => window.CLEANSWAP.mintInvoice({ paymentHash: h, sats: 50000, expiry: 6 * 3600 }), hR);
+  await rc.fill('#invIn', invResume);
+  await rc.fill('#addrIn', PARTNER);
+  await openSetupOn(rc);
+  await rc.fill('#contractIn', CONTRACT);
+  await rc.fill('#tokenIn', TOKEN);
+  await rc.fill('#rpcIn', RPC);
+  await rc.click('[data-act="saveSetup"]');
+  await rc.waitForTimeout(1300);
+  await rc.click('#primary');
+  await rc.waitForTimeout(1400);
+  const mid = await rc.evaluate(() => {
+    const raw = window.localStorage.getItem('cleanswap.swap.v1');
+    const s = window.CLEANSWAP.state;
+    return {
+      phase: s.phase, rec: raw ? JSON.parse(raw) : null, raw: String(raw || ''),
+      H: s.H, t2: s.t2, units: s.units
+    };
+  });
+  check('resume: a swap with a wallet about to open is put away first',
+    mid.phase === 'locking' && !!mid.rec, mid.phase + ' / ' + (mid.rec ? 'record' : 'none'));
+  check('resume: the record carries the terms a recovery needs',
+    mid.rec && mid.rec.H === mid.H && mid.rec.t2 === mid.t2 && mid.rec.units === mid.units &&
+    mid.rec.phase === 'locking' && mid.rec.direction === 'u2b' && mid.rec.net === 'testnet',
+    mid.rec ? [mid.rec.phase, mid.rec.direction, String(mid.rec.H).slice(0, 10), mid.rec.t2].join(' / ') : 'none');
+  check('resume: the payment secret is not in the record',
+    mid.rec && !('secret' in mid.rec) && !/preimage/i.test(mid.raw) && !mid.raw.includes(preR.slice(2)),
+    mid.rec ? Object.keys(mid.rec).join(',') : 'none');
+
+  /* the page is killed and starts again: the phone opens on the swap */
+  await rc.reload({ waitUntil: 'load' });
+  await rc.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await rc.waitForTimeout(1500);
+  const back = await rc.evaluate(() => {
+    const s = window.CLEANSWAP.state;
+    return {
+      mode: s.mode, phase: s.phase, H: s.H, t2: s.t2, units: s.units,
+      inv: document.getElementById('invIn').value,
+      addr: document.getElementById('addrIn').value,
+      toast: document.getElementById('toast').textContent,
+      logged: s.log.some(e => /picked up again|in the middle of is back/.test(e.text)),
+      secret: s.secretHeld
+    };
+  });
+  check('resume: the page comes back in wallet mode on the same swap',
+    back.mode === 'wallet' && back.phase === 'locking' && back.H === mid.H && back.t2 === mid.t2,
+    [back.mode, back.phase, String(back.H).slice(0, 10), back.t2].join(' / '));
+  check('resume: the terms are back in the fields the page reads them from',
+    back.inv === invResume && back.addr === PARTNER, back.inv.slice(0, 12) + '… / ' + back.addr);
+  check('resume: the person is told the swap came back',
+    /is back/i.test(back.toast), back.toast);
+  check('resume: the log says where it came from', back.logged === true, String(back.logged));
+  check('resume: and the recovered page holds no secret it never had', back.secret === false, String(back.secret));
+
+  /* the lock lands after the recovery: its hash goes into the record, and the
+     record is dropped the moment the swap settles */
+  const lockTxR = '0x' + 'e8'.repeat(32);
+  const tR = await rc.evaluate(() => ({ H: window.CLEANSWAP.state.H, units: window.CLEANSWAP.state.units, t2: window.CLEANSWAP.state.t2 }));
+  const idR = swapIdOf({ hashlock: tR.H, sender: PARTNER, receiver: PARTNER, token: TOKEN, amount: tR.units, timelock: tR.t2 });
+  CHAIN.records[idR.toLowerCase()] = {
+    hashlock: tR.H, amount: tR.units, timelock: tR.t2, token: TOKEN,
+    sender: PARTNER, receiver: PARTNER, claimed: false, refunded: false
+  };
+  CHAIN.receipts[lockTxR] = { status: '0x1', logs: [{
+    address: CONTRACT,
+    topics: [LOCKED_TOPIC, idR,
+      '0x' + '0'.repeat(24) + PARTNER.slice(2), '0x' + '0'.repeat(24) + PARTNER.slice(2)],
+    data: '0x' + [hexAddr(TOKEN), hexWord(tR.units), hexB32(tR.H), hexWord(tR.t2)].join('')
+  }] };
+  await rc.click('[data-act="openTx"]');
+  await rc.fill('#txIn', lockTxR);
+  await rc.click('[data-act="loadTx"]');
+  await rc.waitForTimeout(2600);
+  const afterLock = await rc.evaluate(() => {
+    const raw = window.localStorage.getItem('cleanswap.swap.v1');
+    return { phase: window.CLEANSWAP.state.phase, rec: raw ? JSON.parse(raw) : null };
+  });
+  check('resume: the lock a recovered swap takes is written into it',
+    afterLock.phase === 'paid' && afterLock.rec && afterLock.rec.phase === 'paid' &&
+    String(afterLock.rec.lockTx).toLowerCase() === lockTxR, afterLock.phase + ' / ' + (afterLock.rec ? afterLock.rec.phase : 'none'));
+  CHAIN.records[idR.toLowerCase()].claimed = true;
+  await rc.evaluate(() => { const b = document.querySelector('[data-act="checkChain"]'); if (b) b.click(); });
+  await until(rc, () => document.body.dataset.phase === 'settled', 20000);
+  await rc.waitForTimeout(600);
+  const settledR = await rc.evaluate(() => ({
+    phase: window.CLEANSWAP.state.phase, rec: window.localStorage.getItem('cleanswap.swap.v1')
+  }));
+  check('resume: a settled swap leaves nothing to recover',
+    settledR.phase === 'settled' && settledR.rec === null, settledR.phase + ' / ' + String(settledR.rec));
+
+  /* Back and a reset take the record with them: neither leaves a swap the
+     next page would come back to. */
+  const midRec = JSON.stringify({
+    v: 1, at: Math.floor(Date.now() / 1000), net: 'testnet', direction: 'u2b', phase: 'paying',
+    sats: 50000, units: 47500000, H: '0x' + 'aa'.repeat(32), id: null, t1: 100, t2: Math.floor(Date.now() / 1000) + 3600,
+    addr: PARTNER, inv: invResume, locker: '', funder: '', lockTx: '', claimTx: '', contract: CONTRACT, token: TOKEN
+  });
+  await rc.evaluate((rec) => { window.localStorage.setItem('cleanswap.swap.v1', rec); }, midRec);
+  await rc.reload({ waitUntil: 'load' });
+  await rc.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await rc.waitForTimeout(1200);
+  const payingBack = await rc.evaluate(() => ({ phase: window.CLEANSWAP.state.phase, mode: window.CLEANSWAP.state.mode }));
+  check('resume: a page killed while the payer was paying comes back on the payment',
+    payingBack.phase === 'paying' && payingBack.mode === 'wallet', payingBack.phase + ' / ' + payingBack.mode);
+  check('resume: and the swap it came back to is the one the record described',
+    (await rc.evaluate(() => String(window.CLEANSWAP.state.H))) === '0x' + 'aa'.repeat(32),
+    await rc.evaluate(() => String(window.CLEANSWAP.state.H).slice(0, 12)));
+  await rc.evaluate(() => document.querySelector('[data-act="back"]').click());
+  await rc.waitForTimeout(500);
+  check('resume: Back leaves no swap for the next page to come back to',
+    (await rc.evaluate(() => window.localStorage.getItem('cleanswap.swap.v1'))) === null,
+    String(await rc.evaluate(() => window.localStorage.getItem('cleanswap.swap.v1'))));
+
+  /* A record that is stale, or that describes another escrow, is not acted
+     on: a page does not come back to a swap it cannot read the money of. */
+  const stale = JSON.parse(midRec);
+  stale.at = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+  stale.H = '0x' + 'ab'.repeat(32);
+  await rc.evaluate((rec) => { window.localStorage.setItem('cleanswap.swap.v1', rec); }, JSON.stringify(stale));
+  await rc.reload({ waitUntil: 'load' });
+  await rc.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await rc.waitForTimeout(1200);
+  const staleBack = await rc.evaluate(() => ({ phase: window.CLEANSWAP.state.phase, mode: window.CLEANSWAP.state.mode }));
+  check('resume: a record older than its 30 days is not picked up',
+    staleBack.phase === 'idle' && staleBack.mode === 'practice', staleBack.phase + ' / ' + staleBack.mode);
+  const otherEsc = JSON.parse(midRec);
+  otherEsc.H = '0x' + 'ac'.repeat(32);
+  otherEsc.contract = '0x' + '77'.repeat(20);
+  await rc.evaluate((rec) => { window.localStorage.setItem('cleanswap.swap.v1', rec); }, JSON.stringify(otherEsc));
+  await rc.reload({ waitUntil: 'load' });
+  await rc.waitForFunction(() => window.CLEANSWAP && window.CLEANSWAP.state.pstate !== 'loading', null, { timeout: 20000 });
+  await rc.waitForTimeout(1200);
+  const otherBack = await rc.evaluate(() => ({ phase: window.CLEANSWAP.state.phase, mode: window.CLEANSWAP.state.mode }));
+  check('resume: a record for another escrow is left where it is',
+    otherBack.phase === 'idle' && otherBack.mode === 'practice', otherBack.phase + ' / ' + otherBack.mode);
+  await rc.evaluate(() => window.localStorage.removeItem('cleanswap.swap.v1'));
+  check('resume: no page errors through the recovery', RC.errs.length === 0, RC.errs.join(' | '));
+  await RC.c.close();
 
   await browser.close();
 
