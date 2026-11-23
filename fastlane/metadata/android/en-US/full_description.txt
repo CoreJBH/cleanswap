@@ -18,7 +18,7 @@ The terms travel as a code, not as a web address: "Share code" copies a cleanswa
 
 On chain: the USDT leg runs on Arbitrum (Sepolia for rehearsal, One for real swaps) against the CleanSwapHTLC contract, which is small, readable and in the source repository, compiled with solc 0.8.26; its creation bytecode ships in the page for the deploy hand-off to Remix. A swap window can be set from 30 minutes to 7 days, and a Lightning invoice has to stay payable at least an hour past it, so paying into the last minutes of the escrow cannot hand the sats over with nothing left to claim.
 
-No fees and no custodian: a swap pays only the network fees of its own two legs. No accounts, no analytics, no crash reporting, no advertising, no trackers, no Google Play Services and no third-party SDKs. The app talks to the two things it must, the Lightning invoice you were given and the Arbitrum JSON-RPC endpoints, and nothing else.
+No fees and no custodian: a swap pays only the network fees of its own two legs. No accounts, no analytics, no crash reporting, no advertising, no trackers, no Google Play Services and no third-party SDKs. The app reads a BTC/USD quote from mempool.space and Coinbase and believes a number only when the two agree within 2%, reads the escrow through the Arbitrum endpoints you configure, and sends nothing else anywhere. The Lightning invoice is never uploaded: it is opened in a wallet or copied.
 
 CleanSwap is free software under the MIT license. Every string, test and comment in the source is English, and the app interface is English too.
 
