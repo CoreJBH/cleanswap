@@ -163,7 +163,13 @@ def main():
     check('gradle: a release task without the key stops instead of building',
           'releasePackagingTasks' in gradle and 'throw GradleException' in gradle)
     check('gradle: the gate does not touch debug builds or the tests',
-          'if (asked.isEmpty() || hasReleaseSigning) return@whenReady' in gradle)
+          'if (asked.isEmpty() || hasReleaseSigning || unsignedReleaseRequested) return@whenReady' in gradle)
+    # F-Droid signs what it builds with its own key, so it asks for an unsigned
+    # release artifact by name. Nothing infers that from a missing key: only the
+    # exact property, set to true, opens the gate.
+    check('gradle: an unsigned release needs -Pcleanswap.unsignedRelease=true',
+          'gradleProperty("cleanswap.unsignedRelease")' in gradle
+          and 'equals("true", ignoreCase = true)' in gradle)
     check('gradle: the release build type uses the release signature when it exists',
           'if (hasReleaseSigning)' in gradle and 'signingConfigs.getByName("release")' in gradle)
     check('gradle: a release APK is minified, shrunk and never debuggable',
