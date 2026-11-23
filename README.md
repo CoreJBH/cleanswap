@@ -12,7 +12,7 @@
   <img alt="solc 0.8.26" src="https://img.shields.io/badge/contract-solc%200.8.26-0f9d6e">
   <img alt="tests passing" src="https://img.shields.io/badge/tests-618%20passing-0f9d6e">
   <img alt="arbitrum" src="https://img.shields.io/badge/chain-Arbitrum%20Sepolia%20%2F%20One-0f9d6e">
-  <img alt="android 0.6.12" src="https://img.shields.io/badge/android-0.6.12-0f9d6e">
+  <img alt="android 0.6.13" src="https://img.shields.io/badge/android-0.6.13-0f9d6e">
   <img alt="english only" src="https://img.shields.io/badge/UI-English%20only-0f9d6e">
 </p>
 
@@ -493,6 +493,20 @@ tree in modules instead of one 4,746-line file.
 
 `versionCode 21`, `versionName 0.6.12`.
 
+`v0.6.13` is the same app under the owner's own package name.
+
+* **The package is `com.corejbh.cleanswap`.** The shell, its `namespace` and the ProGuard keep
+  rules moved from `com.jbitmstr.cleanswap` with the handle, and the web page, the swap code and the
+  `cleanswap:` scheme are untouched: the terms, the escrow and the QR are the same bytes. Nothing in
+  the app reads the package name, so no behaviour follows from it.
+* **It installs beside v0.6.12, not over it.** Android treats a different `applicationId` as a
+  different app: v0.6.13 appears next to the old one, and what v0.6.12 kept on the phone (its
+  `Recent` list) stays with v0.6.12. A swap running on the old build is finished there; the new one
+  starts from nothing, which is the point of a package with the owner's name on it. Uninstalling
+  v0.6.12 afterwards removes its data too.
+
+`versionCode 22`, `versionName 0.6.13`.
+
 ## What it does
 
 * **The same three steps as ever.** `1 Partner's Lightning invoice` (a hold invoice that states its
@@ -733,7 +747,7 @@ test/
                              one https document, mixed content off, release signing fail-closed
   verify-english.py          Hangul must be 0 in every text file, path and commit
   run-all.sh                 everything above with the right env
-android/                     WebView wrapper (com.jbitmstr.cleanswap, v0.6.10, versionCode 19)
+android/                     WebView wrapper (com.corejbh.cleanswap, v0.6.13, versionCode 22)
 ```
 
 ## Build
@@ -810,8 +824,8 @@ that network's set, and nothing typed for one is read while the other is selecte
 
 ## Android wrapper
 
-`android/` is a dependency-free `WebView` shell (package `com.jbitmstr.cleanswap`, `versionName
-0.6.12`, `versionCode 21`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
+`android/` is a dependency-free `WebView` shell (package `com.corejbh.cleanswap`, `versionName
+0.6.13`, `versionCode 22`). The shell owns the hand-offs the WebView cannot: `lightning:`, `bitcoin:`
 and `ethereum:` links (the EIP-681 call) become an `ACTION_VIEW` intent, so **Open in wallet**
 and the escrow call open the installed wallet instead of failing with
 `net::ERR_UNKNOWN_URL_SCHEME`; a phone with no such app gets a toast rather than a crash, and the

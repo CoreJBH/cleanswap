@@ -6,7 +6,7 @@
      another origin: no script, no style, no frame. The only requests it makes
      are the RPC calls to the endpoints it is configured with (https, or a
      node on this machine) and the optional BTC/USD quote. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YIz2EASs4tZ0i4tOwvqYV9Q//t8+9w94Q1nlSZLrDT0=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-jphKp/NYlijSEJ5z+MtWw1gmJjoPsdzS49y0sr9Rfyw='; style-src 'sha256-wN79ETnkhmajihYoVzAayh15bTpx/VtY8vq38JTGmXw='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-YIz2EASs4tZ0i4tOwvqYV9Q//t8+9w94Q1nlSZLrDT0=' 'sha256-A3g/NnRZBV0kSQSEZsOZ7T/tuUlLPqX8j0Ma6vXKJCQ=' 'sha256-muhwkVk3OB2plZAwUwWK59aupl5CtSXCancH0TZTSCA=' 'sha256-+e3ASIYHrqClk9ruudx7Ng9jHRfENc8w/kSt3lTCNmk=' 'sha256-vWC6mVXNwhNFPrz+VSqCFXcAEewh0oiQ11VEjMHg+rU='; style-src 'sha256-wN79ETnkhmajihYoVzAayh15bTpx/VtY8vq38JTGmXw='; img-src data:; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08100E">
@@ -1180,7 +1180,7 @@ contract CleanSwapHTLC {
 
   global.QR = { lastFn: function () { return build.lastFn; }, encode: encode, svg: svg, formatBits: formatBits, versionBits: versionBits, _codewords: codewords, _dataWords: dataWords, _fitVersion: fitVersion };
 })(typeof window !== 'undefined' ? window : this);</script>
-<script>/* CleanSwap v0.6.12 — Lightning bitcoin <-> USDT atomic swap in one file.
+<script>/* CleanSwap v0.6.13 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -1277,6 +1277,12 @@ contract CleanSwapHTLC {
    terms are not a real swap's: switching from Practice to Wallet clears the
    window, pinned hash, funding address and amount a Practice code put on
    screen, before a resumed swap writes its own back.
+
+   v0.6.13 carries the same page in a shell under the owner's own package name:
+   `com.corejbh.cleanswap` instead of `com.jbitmstr.cleanswap`. The page below
+   is unchanged - the terms, the escrow and the `cleanswap:` code are the same
+   bytes - and what the phone sees is a new app beside the old one, not an
+   update of it.
 
    The source is one script built out of src/modules/, one file per
    responsibility (core, storage, chain, wallet, crypto, swap, gate, render,

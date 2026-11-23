@@ -616,7 +616,7 @@ const view = (pg) => pg.evaluate(() => {
   check('content: no remote scripts or styles', !/<script[^>]+src=/i.test(html) && !/<link[^>]+rel="stylesheet"/i.test(html));
   check('content: the page holds no file:// path of its own', !/file:\/\//.test(html),
     (html.match(/file:\/\/[^"'\s]*/) || [''])[0]);
-  check('content: no web host in the page (no Pages address)', !/github\.io|jbitmstr\.github|https?:\/\/[a-z0-9.-]*cleanswap/i.test(html));
+  check('content: no web host in the page (no Pages address)', !/github\.io|jbitmstr\.github|corejbh\.github|https?:\/\/[a-z0-9.-]*cleanswap/i.test(html));
   check('content: no Hangul in the built page', !HANGUL.test(html), (html.match(HANGUL) || []).length + ' chars');
   const uiText = await page.evaluate(() => document.body.innerText);
   check('content: no Hangul in rendered text', !HANGUL.test(uiText), (uiText.match(HANGUL) || []).length + ' chars');
@@ -1394,7 +1394,7 @@ const view = (pg) => pg.evaluate(() => {
   const code = await p3.evaluate(() => window.CLEANSWAP.swapCode());
   check('code: the terms leave as a cleanswap: code', /^cleanswap:[A-Za-z0-9_-]+$/.test(code), code.slice(0, 30) + '…');
   check('code: no file path, host or name in it',
-    !/file:|http|\/|github|jbitmstr|@/i.test(code), (code.match(/(file:|http|\/|github|jbitmstr)/i) || [''])[0]);
+    !/file:|http|\/|github|jbitmstr|corejbh|@/i.test(code), (code.match(/(file:|http|\/|github|jbitmstr|corejbh)/i) || [''])[0]);
   check('code: short enough for a QR', new TextEncoder().encode(code).length <= 340,
     new TextEncoder().encode(code).length + ' bytes');
   check('code: nothing about it is taken from the page address',

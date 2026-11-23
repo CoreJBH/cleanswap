@@ -43,15 +43,15 @@ val releaseStoreMissing = releaseStore != null && !releaseStore.exists()
 val hasReleaseSigning = missingSigning.isEmpty() && !releaseStoreMissing
 
 android {
-    namespace = "com.jbitmstr.cleanswap"
+    namespace = "com.corejbh.cleanswap"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.jbitmstr.cleanswap"
+        applicationId = "com.corejbh.cleanswap"
         minSdk = 24
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.6.12"
+        versionCode = 22
+        versionName = "0.6.13"
         resourceConfigurations += listOf("en", "ko")
     }
 

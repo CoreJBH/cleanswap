@@ -1,4 +1,4 @@
-/* CleanSwap v0.6.12 — Lightning bitcoin <-> USDT atomic swap in one file.
+/* CleanSwap v0.6.13 — Lightning bitcoin <-> USDT atomic swap in one file.
 
    The screen stays out of the way: two amount cards, one plain sentence and
    one big button per step, the way a payment app reads. No symbol names, no
@@ -95,6 +95,12 @@
    terms are not a real swap's: switching from Practice to Wallet clears the
    window, pinned hash, funding address and amount a Practice code put on
    screen, before a resumed swap writes its own back.
+
+   v0.6.13 carries the same page in a shell under the owner's own package name:
+   `com.corejbh.cleanswap` instead of `com.jbitmstr.cleanswap`. The page below
+   is unchanged - the terms, the escrow and the `cleanswap:` code are the same
+   bytes - and what the phone sees is a new app beside the old one, not an
+   update of it.
 
    The source is one script built out of src/modules/, one file per
    responsibility (core, storage, chain, wallet, crypto, swap, gate, render,

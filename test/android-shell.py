@@ -23,7 +23,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-JAVA = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'com', 'jbitmstr', 'cleanswap', 'MainActivity.java')
+JAVA = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'com', 'corejbh', 'cleanswap', 'MainActivity.java')
 MANIFEST = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
 NSC = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res', 'xml', 'network_security_config.xml')
 GRADLE = os.path.join(ROOT, 'android', 'app', 'build.gradle.kts')

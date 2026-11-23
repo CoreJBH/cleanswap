@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <style name="Theme.CleanSwap" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/cs_background</item>
         <item name="android:statusBarColor">@color/cs_background</item>
         <item name="android:navigationBarColor">@color/cs_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <!-- API 27 introduced the light navigation bar. Before it the bar's buttons
+             were drawn light on whatever colour the bar had, which is the state this
+             line asks for, so the attribute is simply ignored there rather than
+             needing a second values-v27 copy of the theme. -->
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:colorAccent">#10b981</item>
     </style>

@@ -1,4 +1,4 @@
-package com.jbitmstr.cleanswap;
+package com.corejbh.cleanswap;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
