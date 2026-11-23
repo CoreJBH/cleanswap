@@ -1,0 +1,25 @@
+CleanSwap swaps bitcoin for USDT, or USDT for bitcoin, without a custodian, an account or a server of its own. Both legs are locked before either side moves: a Bitcoin-style SHA-256 hashlock ties the Lightning payment and the USDT on Arbitrum, and the same 32-byte secret settles both.
+
+Three steps, the same in both modes:
+
+1. Your partner's Lightning hold invoice (it has to state its payment hash).
+2. Your USDT address on Arbitrum.
+3. Approve.
+
+The chain is the referee. Under the three steps the app reads the escrow itself with eth_call swaps(swapId) against public Arbitrum endpoints, and compares the record field by field with the terms on the screen: hashlock, sender, receiver, token, amount, timelock. When more than one endpoint is configured, a state that money depends on is believed only when two of them answer the same thing, so one lying node cannot show a lock that is not there.
+
+Nothing completes on a tap. In wallet mode Approve is refused outright while the USDT is not in the escrow. Once the chain says "locked" the screen waits for the bitcoin payment; "I paid" starts a watch on the escrow, and the swap closes only when the contract says "claimed", or as "refunded" with the receipt saying so. The app never decides that a swap is done because someone pressed a button.
+
+Keys stay in your wallet. The app holds no key and never asks for one. With an injected wallet in the page (window.ethereum, EIP-1193) the approve, lock, claim and refund calls are sent from it, and the USDT allowance is checked first. Without one, the exact call is copied as text or opened as an EIP-681 ethereum: link for another wallet app, and the transaction hash is pasted back; the app reads the receipt itself and still judges only what the escrow says.
+
+Practice mode runs the identical screen, the same checks and the same sentences against a stand-in escrow inside the page, so the whole flow can be rehearsed without deploying a contract and without spending anything. A rehearsal is never written to the recent list, and its receipt says "Practice - simulated".
+
+The terms travel as a code, not as a web address: "Share code" copies a cleanswap: string holding both amounts, the window, the hashlock and the USDT address, and in wallet mode also the chain, the escrow and the funding address. No host, no path, nothing taken from the page URL.
+
+On chain: the USDT leg runs on Arbitrum (Sepolia for rehearsal, One for real swaps) against the CleanSwapHTLC contract, which is small, readable and in the source repository, compiled with solc 0.8.26; its creation bytecode ships in the page for the deploy hand-off to Remix. A swap window can be set from 30 minutes to 7 days, and a Lightning invoice has to stay payable at least an hour past it, so paying into the last minutes of the escrow cannot hand the sats over with nothing left to claim.
+
+No fees and no custodian: a swap pays only the network fees of its own two legs. No accounts, no analytics, no crash reporting, no advertising, no trackers, no Google Play Services and no third-party SDKs. The app talks to the two things it must, the Lightning invoice you were given and the Arbitrum JSON-RPC endpoints, and nothing else.
+
+CleanSwap is free software under the MIT license. Every string, test and comment in the source is English, and the app interface is English too.
+
+Blockchain transactions are irreversible. CleanSwap helps you check the terms, lock both sides and read the result from the chain; it cannot undo a payment, and an escrow is only as good as the terms both sides agreed to.

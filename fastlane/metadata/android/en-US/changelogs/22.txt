@@ -1,0 +1,15 @@
+First F-Droid build.
+
+* The package is com.corejbh.cleanswap, the project owner's own name. A build
+  under the earlier package (com.jbitmstr.cleanswap) stays installed beside this
+  one; finish or refund its swaps first, then uninstall it.
+* The swap is the same as before: three steps (invoice, USDT address, approve),
+  a SHA-256 hashlock, and both legs locked before either side moves.
+* The escrow is read from Arbitrum and cross-checked between two public
+  endpoints before money depends on what it says.
+* Practice mode rehearses the same screens against a stand-in escrow in the page,
+  so nothing has to be deployed or spent to try it.
+* The 0.6.0-0.6.12 security passes are included: a cleanswap: code cannot change
+  the network or write an escrow address, a Lightning offer is refused, the swap
+  id includes the address that funds the escrow, the window has a floor and a
+  ceiling, and no swap closes before the contract says claimed or refunded.
